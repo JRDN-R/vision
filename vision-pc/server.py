@@ -1,0 +1,509 @@
+"""Vision PC processor. Run through the installer; accepts defined Vision jobs only."""
+from __future__ import annotations
+
+import argparse
+import hmac
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import sqlite3
+import threading
+import time
+from urllib.parse import urlparse
+
+from flask import Flask, Response, g, jsonify, request, stream_with_context
+import requests
+from werkzeug.exceptions import HTTPException
+
+from media import normalize_url, process_job
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
+OPENAI = 'https://api.openai.com/v1'
+WAKE = threading.Event()
+STOP = threading.Event()
+ORIGINS = {'https://jrdn-r.github.io', 'null'}
+BASE_INSTRUCTIONS = '''Use the code_interpreter tool directly to open the supplied archive and read MAIN_PROMPT.txt, the module instructions, and the relevant evidence. Follow the module order and conditional paths. Treat the supplied content as the exclusive factual source for the requested task; do not browse or invent unavailable facts. The user's additional message can specify the requested task or output. Apply the package's content and module instructions while respecting higher-priority instructions. Answer naturally about the subject. Do not discuss archives, file layouts, extraction, delivery format, processing, or missing-material inventories unless the user explicitly asks about them. Briefly qualify uncertainty only when it materially affects the answer. Do not add unsolicited diagnoses, advice, risks, or next steps unless asked or necessary for an immediate serious risk. Use readable Markdown. When creating a deliverable, save it in the code interpreter container and provide its downloadable file citation. Do not expose hidden reasoning; concise progress or reasoning summaries are sufficient.'''
+
+
+class APIError(Exception):
+    def __init__(self, message, status=400):
+        self.message, self.status = message, status
+
+
+def configure(config_path):
+    """Read installation settings without printing credentials."""
+    config_path = Path(config_path).resolve()
+    config = json.loads(config_path.read_text(encoding='utf-8-sig'))
+    token = config.get('token', '')
+    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,256}', token):
+        raise ValueError('The installation connection key is missing or invalid. Run setup again.')
+    backend = str(config.get('backendUrl', '')).rstrip('/')
+    if backend:
+        parsed = urlparse(backend)
+        if (parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.ts.net')
+                or parsed.username or parsed.password or parsed.port or parsed.path or parsed.query or parsed.fragment):
+            raise ValueError('backendUrl must be the HTTPS Tailscale address, with no path.')
+    port = int(config.get('port', 8765))
+    if not 1024 <= port <= 65535:
+        raise ValueError('Choose a port from 1024 through 65535.')
+    def local_path(key, default):
+        path = Path(config.get(key) or default)
+        return path if path.is_absolute() else config_path.parent / path
+    data_dir = local_path('dataDir', 'data')
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for child in ('results', 'temporary'):
+        (data_dir / child).mkdir(exist_ok=True)
+    app.config.update(CONNECTION_TOKEN=token, PORT=port, BACKEND_URL=backend,
+                      DATA_DIR=data_dir, DATABASE=data_dir / 'vision.sqlite3',
+                      FFMPEG=str(local_path('ffmpeg', 'tools/ffmpeg.exe')),
+                      DENO=str(local_path('deno', 'tools/deno.exe')))
+    os.environ['PATH'] = str(Path(app.config['FFMPEG']).parent) + os.pathsep + str(Path(app.config['DENO']).parent) + os.pathsep + os.environ.get('PATH', '')
+    ORIGINS.clear()
+    ORIGINS.update({'https://jrdn-r.github.io', 'null'})
+    if backend:
+        ORIGINS.add(backend)
+    initialize_db()
+    return config
+
+
+def connect_db():
+    db = sqlite3.connect(app.config['DATABASE'], timeout=30)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def initialize_db():
+    with connect_db() as db:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('''CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY, client_request_id TEXT UNIQUE, url TEXT NOT NULL,
+            status TEXT NOT NULL, phase TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0,
+            title TEXT, error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            expires_at REAL NOT NULL, result_path TEXT, attempts INTEGER NOT NULL DEFAULT 0)''')
+        db.execute('''CREATE TABLE IF NOT EXISTS responses (
+            id TEXT PRIMARY KEY, uid TEXT NOT NULL, status TEXT, updated_at REAL, expires_at REAL)''')
+
+
+def recover_jobs():
+    """Only called once at startup, never while another worker is alive."""
+    with connect_db() as db:
+        db.execute("UPDATE jobs SET status='error',phase='Stopped',error='Processing stopped repeatedly. Start this import again.' WHERE status='processing' AND attempts>=3")
+        db.execute("UPDATE jobs SET status='queued',phase='Resuming after restart',progress=0,updated_at=? WHERE status='processing'", (time.time(),))
+    # Interrupted source downloads are private temporary data, never project files.
+    for directory in (app.config['DATA_DIR'] / 'temporary').glob('vision-youtube-*'):
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+
+
+@app.errorhandler(APIError)
+def api_error(error):
+    return jsonify(error=error.message), error.status
+
+
+@app.errorhandler(HTTPException)
+def http_error(error):
+    return jsonify(error='The archive is larger than 25 MB. Export fewer or smaller images.' if error.code == 413 else error.description), error.code
+
+
+@app.errorhandler(Exception)
+def unexpected_error(error):
+    # Never log headers or third-party exception payloads; they may contain keys.
+    app.logger.error('Request failed: %s', type(error).__name__)
+    return jsonify(error='The processing server could not finish this request. Try again.'), 500
+
+
+@app.before_request
+def authorize():
+    origin = request.headers.get('Origin')
+    if origin and origin not in ORIGINS:
+        raise APIError('This page is not an allowed Vision origin.', 403)
+    if request.method == 'OPTIONS':
+        return Response(status=204)
+    header = request.headers.get('Authorization', '')
+    token = header[7:] if header.startswith('Bearer ') else ''
+    expected = app.config.get('CONNECTION_TOKEN', '')
+    if not expected or not hmac.compare_digest(token, expected):
+        raise APIError('Connect this device to your Vision processing server first.', 401)
+    g.uid = 'installation-owner'
+
+
+@app.after_request
+def cors(response):
+    origin = request.headers.get('Origin')
+    if origin in ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Vary'] = 'Origin'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type'
+        if request.headers.get('Access-Control-Request-Private-Network') == 'true':
+            response.headers['Access-Control-Allow-Private-Network'] = 'true'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@app.get('/api/health')
+def health():
+    with connect_db() as db:
+        queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+    return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
+                   maxArchiveBytes=app.config['MAX_CONTENT_LENGTH'])
+
+
+def get_job(job_id):
+    if not re.fullmatch(r'[0-9a-f]{24}', job_id):
+        raise APIError('Invalid job identifier.')
+    with connect_db() as db:
+        row = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+    if row is None:
+        raise APIError('This import is unavailable.', 404)
+    value = dict(row)
+    if value['expires_at'] < time.time() and value['status'] not in ('queued', 'processing'):
+        raise APIError('This import has expired. Start it again.', 410)
+    return value
+
+
+@app.post('/api/youtube')
+def youtube():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        raise APIError('Send a YouTube link.')
+    try:
+        url = normalize_url(payload.get('url', ''))
+    except (ValueError, AttributeError):
+        raise APIError('Paste a direct YouTube video, Shorts, or youtu.be link.')
+    client_id = payload.get('clientRequestId')
+    if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
+        raise APIError('Invalid request identifier.')
+    with connect_db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if client_id:
+            old = db.execute('SELECT id,status,url FROM jobs WHERE client_request_id=?', (client_id,)).fetchone()
+            if old:
+                if old['url'] != url:
+                    raise APIError('This request identifier belongs to another video.', 409)
+                return jsonify(id=old['id'], status=old['status']), 202
+        pending = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+        if pending >= 25:
+            raise APIError('The server queue is full. Wait for an import to finish.', 429)
+        job_id, now = secrets.token_hex(12), time.time()
+        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at)
+            VALUES(?,?,?,'queued','Waiting',?,?,?)''', (job_id, client_id, url, now, now, now + 86400))
+    WAKE.set()
+    return jsonify(id=job_id, status='queued'), 202
+
+
+def prune_expired():
+    with connect_db() as db:
+        expired = db.execute("SELECT id,result_path FROM jobs WHERE expires_at<? AND status NOT IN ('queued','processing')", (time.time(),)).fetchall()
+        for row in expired:
+            if row['result_path']:
+                Path(row['result_path']).unlink(missing_ok=True)
+            db.execute('DELETE FROM jobs WHERE id=?', (row['id'],))
+        db.execute('DELETE FROM responses WHERE expires_at<?', (time.time(),))
+
+
+def process_next_job():
+    with connect_db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
+        if row is None:
+            return False
+        value = dict(row)
+        db.execute("UPDATE jobs SET status='processing',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+    last_write = [0.0]
+    def update(job_id, **fields):
+        result = fields.pop('result', None)
+        if result is not None:
+            path = app.config['DATA_DIR'] / 'results' / (job_id + '.json')
+            temporary = path.with_suffix('.tmp')
+            temporary.write_bytes(result)
+            os.replace(temporary, path)
+            fields['result_path'] = str(path)
+        terminal = fields.get('status') in ('complete', 'error')
+        if not terminal and time.monotonic() - last_write[0] < 0.5:
+            return
+        last_write[0] = time.monotonic()
+        fields['updated_at'] = time.time()
+        if terminal:
+            fields['expires_at'] = time.time() + 86400
+        allowed = {'status', 'phase', 'progress', 'title', 'error', 'result_path', 'updated_at', 'expires_at'}
+        fields = {key: val for key, val in fields.items() if key in allowed}
+        with connect_db() as db:
+            db.execute('UPDATE jobs SET ' + ','.join(key + '=?' for key in fields) + ' WHERE id=?', [*fields.values(), job_id])
+    try:
+        process_job(value['id'], value['url'], app.config['FFMPEG'], update,
+                    deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'))
+    except Exception:
+        update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
+    return True
+
+
+def worker_loop():
+    while not STOP.is_set():
+        try:
+            prune_expired()
+            if process_next_job():
+                continue
+        except Exception:
+            app.logger.error('Processing worker encountered a temporary local error.')
+        WAKE.wait(30)
+        WAKE.clear()
+
+
+@app.get('/api/jobs/<job_id>')
+def job_status(job_id):
+    value = get_job(job_id)
+    return jsonify({key: value[key] for key in ('id', 'status', 'phase', 'progress', 'title', 'error') if value.get(key) is not None})
+
+
+@app.get('/api/jobs/<job_id>/result')
+def job_result(job_id):
+    value = get_job(job_id)
+    if value['status'] != 'complete':
+        raise APIError('This import is not finished yet.', 409)
+    if not value['result_path'] or not Path(value['result_path']).is_file():
+        raise APIError('This result has already been received or has expired.', 410)
+    def chunks():
+        with open(value['result_path'], 'rb') as source:
+            while chunk := source.read(65536):
+                yield chunk
+    return Response(stream_with_context(chunks()), content_type='application/json')
+
+
+@app.delete('/api/jobs/<job_id>')
+def delete_job(job_id):
+    value = get_job(job_id)
+    if value['status'] not in ('complete', 'error'):
+        raise APIError('Wait for this import to finish.', 409)
+    if value['result_path']:
+        Path(value['result_path']).unlink(missing_ok=True)
+    # Keep a small receipt for a day so a retry never starts the same job twice.
+    with connect_db() as db:
+        db.execute('UPDATE jobs SET result_path=NULL WHERE id=?', (job_id,))
+    return jsonify(deleted=True)
+
+
+def own_document(collection, document_id):
+    if collection != 'visionResponses' or not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', document_id):
+        raise APIError('Invalid session identifier.')
+    with connect_db() as db:
+        row = db.execute('SELECT * FROM responses WHERE id=? AND uid=?', (document_id, g.uid)).fetchone()
+    if row is None:
+        raise APIError('This session is unavailable on this processing server.', 404)
+    if row['expires_at'] < time.time():
+        raise APIError('This session has expired.', 410)
+    return None, dict(row)
+
+
+def use_quota(_kind):
+    # Billing credentials are supplied for each OpenAI request by the private owner.
+    return
+
+
+def openai_headers():
+    key = request.headers.get('X-OpenAI-Key', '').strip()
+    if not key or len(key) > 512 or '\n' in key or '\r' in key:
+        raise APIError('Enter your OpenAI API key.')
+    return {'Authorization': 'Bearer ' + key}
+
+def upstream(method, path, **kwargs):
+    try:
+        response = requests.request(method, OPENAI + path, headers=openai_headers(), timeout=(15, 180), **kwargs)
+    except requests.RequestException:
+        raise APIError('OpenAI could not be reached. Try reconnecting.', 502)
+    if response.status_code >= 400:
+        try:
+            message = response.json().get('error', {}).get('message', 'OpenAI rejected the request.')
+        except ValueError:
+            message = 'OpenAI rejected the request.'
+        key = request.headers.get('X-OpenAI-Key', '')
+        message = str(message).replace(key, '[redacted]') if key else str(message)
+        response.close()
+        raise APIError(message[:700], response.status_code)
+    return response
+
+def response_payload(file_id, options):
+    model = str(options.get('model') or 'gpt-6-astra')
+    if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', model):
+        raise APIError('Choose a valid OpenAI model.')
+    message = str(options.get('message', options.get('prompt', '')))[:50000]
+    try:
+        limit = min(64000, max(512, int(options.get('max_output_tokens', options.get('maxOutputTokens', 16000)))))
+    except (ValueError, TypeError):
+        raise APIError('Choose a valid output length.')
+    payload = {'model': model, 'instructions': BASE_INSTRUCTIONS,
+            'input': message or 'Carry out the task specified in the attached project instructions.',
+            'tools': [{'type': 'code_interpreter', 'container': {'type': 'auto', 'memory_limit': '1g', 'file_ids': [file_id]}}],
+            'tool_choice': 'required', 'background': True, 'stream': True, 'store': True, 'max_output_tokens': limit}
+    if re.match(r'^(gpt-[56](?:[.-]|$)|o[134](?:[.-]|$))', model):
+        payload['reasoning'] = {'summary': 'auto'}
+    return payload
+
+def track_event(event, uid):
+    response = event.get('response') or {}
+    response_id = response.get('id')
+    if not response_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', response_id):
+        return
+    if event.get('type') in ('response.created', 'response.completed', 'response.failed', 'response.cancelled', 'response.incomplete'):
+        with connect_db() as db:
+            db.execute('INSERT INTO responses(id,uid,status,updated_at,expires_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,expires_at=excluded.expires_at',
+                       (response_id, uid, response.get('status', ''), time.time(), time.time()+7*86400))
+
+def stream_openai(response, uid):
+    def events():
+        try:
+            for line in response.iter_lines(chunk_size=1):
+                if line.startswith(b'data: '):
+                    try:
+                        event = json.loads(line[6:])
+                        track_event(event, uid)
+                    except (ValueError, TypeError):
+                        pass
+                yield line + b'\n'
+        except requests.RequestException:
+            yield b'event: vision.connection_lost\ndata: {"type":"vision.connection_lost"}\n\n'
+        finally:
+            response.close()
+    return Response(stream_with_context(events()), content_type='text/event-stream', headers={'X-Accel-Buffering': 'no'})
+
+@app.post('/api/openai/run')
+def openai_run():
+    archive = request.files.get('file') or request.files.get('archive')
+    if not archive:
+        raise APIError('Attach the project archive.')
+    signature = archive.stream.read(4)
+    archive.stream.seek(0)
+    if signature not in (b'PK\x03\x04', b'PK\x05\x06'):
+        raise APIError('The project must be a ZIP archive.')
+    try:
+        options = json.loads(request.form.get('options', '{}'))
+        if not isinstance(options, dict):
+            raise ValueError()
+    except ValueError:
+        raise APIError('Invalid session options.')
+    payload = response_payload('pending', options)
+    use_quota('openai')
+    uploaded = upstream('POST', '/files', data={'purpose': 'user_data', 'expires_after[anchor]': 'created_at', 'expires_after[seconds]': '86400'},
+                        files={'file': ('vision-project.zip', archive.stream, 'application/zip')})
+    file_id = uploaded.json()['id']
+    uploaded.close()
+    payload['tools'][0]['container']['file_ids'] = [file_id]
+    try:
+        response = upstream('POST', '/responses', json=payload, stream=True)
+    except APIError:
+        try:
+            upstream('DELETE', '/files/' + file_id).close()
+        except APIError:
+            pass
+        raise
+    return stream_openai(response, g.uid)
+
+@app.get('/api/openai/responses/<response_id>')
+@app.get('/api/openai/responses/<response_id>/stream')
+def openai_response(response_id):
+    own_document('visionResponses', response_id)
+    streaming = request.path.endswith('/stream') or request.args.get('stream') == 'true'
+    params = {}
+    if streaming:
+        params['stream'] = 'true'
+        cursor = request.args.get('after', request.args.get('starting_after'))
+        if cursor is not None:
+            if not cursor.isdigit():
+                raise APIError('Invalid stream cursor.')
+            params['starting_after'] = cursor
+    response = upstream('GET', '/responses/' + response_id, params=params, stream=streaming)
+    if streaming:
+        return stream_openai(response, g.uid)
+    value = response.json()
+    response.close()
+    return jsonify(value)
+
+@app.post('/api/openai/responses/<response_id>/cancel')
+def openai_cancel(response_id):
+    own_document('visionResponses', response_id)
+    response = upstream('POST', '/responses/' + response_id + '/cancel')
+    value = response.json()
+    response.close()
+    return jsonify(value)
+
+@app.get('/api/openai/containers/<container_id>/files/<file_id>/content')
+@app.get('/api/openai/files/<container_id>/<file_id>')
+def openai_artifact(container_id, file_id):
+    response_id = request.args.get('response_id', '')
+    own_document('visionResponses', response_id)
+    for value in (container_id, file_id):
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', value):
+            raise APIError('Invalid file identifier.')
+    check = upstream('GET', '/responses/' + response_id)
+    value = check.json()
+    check.close()
+    allowed = any(item.get('type') == 'code_interpreter_call' and item.get('container_id') == container_id for item in value.get('output', []))
+    if not allowed:
+        raise APIError('This file is not part of the selected session.', 403)
+    response = upstream('GET', f'/containers/{container_id}/files/{file_id}/content', stream=True)
+    def chunks():
+        try:
+            yield from response.iter_content(65536)
+        finally:
+            response.close()
+    return Response(stream_with_context(chunks()), content_type=response.headers.get('Content-Type', 'application/octet-stream'))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Vision private PC processor')
+    parser.add_argument('--config', default=str(Path(__file__).with_name('config.json')))
+    parser.add_argument('--check', action='store_true', help='Check configuration and installed components, then exit')
+    parser.add_argument('--health', action='store_true', help='Check the already-running local processor, then exit')
+    args = parser.parse_args()
+    try:
+        configure(args.config)
+        if args.health:
+            response = requests.get('http://127.0.0.1:%s/api/health' % app.config['PORT'],
+                                    headers={'Authorization': 'Bearer ' + app.config['CONNECTION_TOKEN']}, timeout=10)
+            response.raise_for_status()
+            print(json.dumps(response.json()))
+            return 0
+        missing = [name for name in ('waitress', 'yt_dlp', 'PIL') if importlib.util.find_spec(name) is None]
+        missing += [name for name in ('FFMPEG', 'DENO') if not Path(app.config[name]).is_file()]
+        if not Path(app.config['FFMPEG']).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe').is_file():
+            missing.append('ffprobe')
+        if missing:
+            print('Setup is incomplete: ' + ', '.join(missing) + '. Run the installer again.')
+            return 1
+        if args.check:
+            print('Vision PC configuration and processing components are ready.')
+            return 0
+        import logging
+        from logging.handlers import RotatingFileHandler
+        handler = RotatingFileHandler(app.config['DATA_DIR'] / 'server.log', maxBytes=1024 * 1024, backupCount=2, encoding='utf-8')
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        app.logger.addHandler(handler)
+        app.logger.setLevel(logging.INFO)
+        from waitress import serve
+        recover_jobs()
+        worker = threading.Thread(target=worker_loop, name='vision-media', daemon=True)
+        worker.start()
+        app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
+        try:
+            serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
+                  max_request_body_size=app.config['MAX_CONTENT_LENGTH'], channel_timeout=300,
+                  expose_tracebacks=False)
+        finally:
+            STOP.set()
+            WAKE.set()
+        return 0
+    except Exception as error:
+        # Values and payloads are intentionally excluded from setup diagnostics.
+        print('Vision PC could not start (' + type(error).__name__ + '). Check the installation or run setup again.')
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -25,14 +25,14 @@
 <meta name="twitter:image" content="https://jrdn-r.github.io/vision/Vision-preview.jpg">
 <link rel="icon" type="image/png" sizes="192x192" href="./Vision-icon-192.png">
 <link rel="apple-touch-icon" sizes="180x180" href="./Vision-icon-180.png">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self' https://generativelanguage.googleapis.com https://*.run.app https://*.web.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com blob:; font-src data:; manifest-src 'self' data: blob:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self' https://generativelanguage.googleapis.com https://*.run.app https://*.web.app https://*.ts.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com blob:; font-src data:; manifest-src 'self' data: blob:; object-src 'none'; base-uri 'none'">
 <style>html,body{height:100%;margin:0;background:#111715;color:#eef1e8;font-family:system-ui,sans-serif}body{display:grid;place-items:center}main{text-align:center;padding:24px}p{color:#a5b0a1}a{color:#d6efac}#fallback[hidden]{display:none}</style>
 </head><body>
 <main aria-live="polite"><p id="loading">Loading Vision…</p><p id="fallback" hidden>Vision could not finish loading. <a href="./Vision.html">Open Vision directly</a>.</p><noscript><p><a href="./Vision.html">Open Vision</a> with JavaScript enabled to use the board.</p></noscript></main>
 <script>
 (async()=>{
  try{
-  const response=await fetch('./Vision.html?v=e131309c855e',{credentials:'same-origin'});
+  const response=await fetch('./Vision.html?v=f24493486314',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
   const html=await response.text();
   if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
