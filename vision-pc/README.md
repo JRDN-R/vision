@@ -1,81 +1,102 @@
-# Vision private PC processor
+# Vision PC processor
 
-Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links. Phones, the website, and downloaded HTML can use the same private processor. Firebase and Google Cloud are not needed in this mode. Gemini/OpenAI still use their online APIs when requested.
+Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links. The website, downloaded HTML, and Vision copies hosted elsewhere can use this processor over the internet when public access is enabled. Firebase and Google Cloud are not needed. Gemini/OpenAI still use their online APIs when requested.
 
-The setup script downloads the application and its own private runtime automatically. You do not need to install Python or Node separately. This is an application background process, not a Windows Sandbox VM and not an unrestricted remote shell.
+The setup script downloads the application and its own private runtime. You do not need to install Python or Node separately. This is an application background process, not a Windows Sandbox VM or an unrestricted remote shell.
 
-## 1. Run this on the Windows PC
+## Enable web access on an already installed PC
 
-Download [Setup-Vision-PC.ps1](https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1) into **Downloads**. Right-click **Windows PowerShell** in Start and select **Run as administrator**. Paste:
+On the Windows processor PC, open **Windows PowerShell > Run as administrator** and paste:
+
+```powershell
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action EnablePublic
+```
+
+If Tailscale displays an approval link, open it and enable **Funnel** for this PC. If the script stops while waiting, complete approval and run the same command again.
+
+This updates only the processor application files, reuses the installed runtime and tools, and keeps the existing address and access token. It enables public HTTPS with Tailscale Funnel and permits requests from local HTML, GitHub Pages, and other Vision hosts. **Devices using Vision do not need Tailscale. Only the Windows processor PC needs it.**
+
+Vision HTML with the connection settings already embedded connects automatically; no connection file import or setup popup is required. Older copies without those settings can import the generated connection file once, or be replaced with a new download. Publishing the website alone cannot enable Funnel on the Windows PC; the command above performs that one-time change.
+
+Public access is saved in `C:\ProgramData\VisionPC\config.json`. Future `Setup` and `Start` actions preserve it. The background Funnel connection and processor startup task resume after Windows restarts. Setup checks the local processor and its HTTPS endpoint before reporting success; the final public reachability check is to open Vision from another device with Tailscale turned off.
+
+## Install on a new PC
+
+Download [Setup-Vision-PC.ps1](https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1) into **Downloads**. Open **Windows PowerShell > Run as administrator** and paste:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\Setup-Vision-PC.ps1"
 ```
 
-This execution-policy setting applies only to that process; it does not change your system policy.
+The execution-policy setting applies only to this process. Setup installs the processor in `C:\ProgramData\VisionPC`, adds the startup task, and installs Tailscale if needed. Keep the window open while the initial components download. When Tailscale displays a sign-in or HTTPS approval link, open it and complete that step. You can rerun setup; it preserves the existing token.
 
-Setup installs the private processor in `C:\ProgramData\VisionPC`, adds a startup task, and installs Tailscale if needed. The initial download may take several minutes. Keep the window open until setup finishes.
+A new installation initially uses **private Tailscale Serve**. Run the **Enable web access** command above to allow internet access from any Vision HTML. If you keep the initial private mode, each client device needs Tailscale connected to the same private network; browsers may also require local-network permission.
 
-When Tailscale displays a sign-in link, open it and sign in. If it asks you to enable HTTPS, approve that for your private network. If setup stops while waiting for either step, finish the browser step and run the same command again; it keeps the existing connection token.
+## Keep the processor available
 
-The script checks both the local processor and private HTTPS before reporting success. It will not replace another application's existing Tailscale Serve configuration.
+In **Settings > System > Power & sleep**, set sleep to **Never while plugged in**. The screen may turn off. The processor starts automatically with Windows; no open terminal or logged-in desktop is required. A powered-off or sleeping PC must be turned on or woken. After an ordinary internet interruption, Tailscale reconnects when the PC is back online.
 
-## 2. Keep the processor available
+To start the processor and restore its saved HTTPS mode manually, run from administrator PowerShell:
 
-In **Settings > System > Power & sleep**, set sleep to **Never while plugged in**. The screen may turn off. The processor starts automatically with Windows and does not require an open terminal or a logged-in Windows desktop. A powered-off, sleeping, disconnected, or restarting computer will be unavailable until it returns.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action Start
+```
 
-## 3. Connect your phone or another computer
+## Connection files and access
 
-Install [Tailscale](https://tailscale.com/download) on each device using Vision and sign in to the **same account/private network**. Turn its connection on.
+The script writes two files to the Windows Desktop:
 
-Setup writes two text files to the Windows Desktop:
+- **Vision-Connection.txt:** the address, access token, and public/private access setting. Vision can embed these settings in its HTML. Anyone holding that token can use the available processor.
+- **Vision-Connection-public.txt:** connection mode and check results without the token, for troubleshooting.
 
-- **Vision-Connection.txt:** your private connection settings, including an access token. Transfer it privately to your own device, then import it in Vision's connection settings. You can also paste the JSON between its BEGIN/END markers.
-- **Vision-Connection-public.txt:** the server address and connection check results, without the token. Send this one if you want help connecting. This report does not grant access by itself.
+To import settings manually, click the **Vision logo > Processor connection > Import connection file** and select `Vision-Connection.txt`. This is optional when the HTML already contains the settings.
 
-In Vision, click the **Vision logo**, open **Processor connection**, choose **Import connection file**, and select the private connection file. Click **Connect**. Use the same connection on the website and in a newly downloaded HTML copy. Each device must remain connected to Tailscale. A browser may ask to allow local-network access; allow it for Vision to reach your private server.
-
-No router port forwarding is required. The processor listens only on the PC's loopback address; Tailscale Serve provides the private HTTPS route. Access requires both the private network connection and Vision's random access token. The text file with that token should not be committed to GitHub, pasted into a public issue, or sent for support.
+No router port forwarding is needed. The application listens only on the PC's loopback address. Tailscale provides HTTPS through private Serve or public Funnel; the application checks the access token in both modes. The installer refuses to replace unrelated Tailscale routes and does not run a global Serve reset.
 
 ## What runs where
 
-The PC retrieves the YouTube media, collects available captions, makes timestamped JPEG snapshots, and prepares audio when captions are unavailable. Vision receives the results and uses its existing Gemini queue if transcription is needed. The source video is temporary. Accepted jobs are stored on the PC so an interrupted job can be retried after a restart; completed results are temporary and cleaned up. Vision reports an unavailable server when it cannot connect.
+The PC retrieves YouTube media, collects available captions, makes timestamped JPEG snapshots, and prepares audio when captions are unavailable. Vision receives the results and uses its existing Gemini queue if transcription is needed. Source video is temporary. Accepted jobs are stored on the PC so interrupted jobs can be retried after a restart; completed results are temporary and cleaned up. Vision retains waiting imports when the server is unavailable.
 
-YouTube can restrict some videos or ask for verification. Public, unrestricted videos are the intended input. A private processor does not guarantee every link can be retrieved.
+YouTube can restrict videos or ask for verification. Public, unrestricted videos are the intended input; the processor does not guarantee every link can be retrieved.
 
-## Start, stop, update, or export settings again
+## Stop, update, or export settings
 
 Run these from **administrator PowerShell** on the processor PC:
 
 ```powershell
-# Start or stop the processor without uninstalling it:
-& "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action Start
+# Stop the processor; its startup task remains enabled:
 & "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action Stop
 
-# Recheck the connection and rewrite the two Desktop text files:
+# Recheck HTTPS and rewrite the Desktop connection files:
 & "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action ExportConnection
 
-# Refresh application files and dependencies, keeping the existing token:
+# Refresh the application and dependencies, retaining token and public/private mode:
 & "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1"
 ```
 
-If local script execution is disabled, use `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` before the quoted script path, as in the initial setup command.
+If local script execution is disabled, use `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` before the quoted script path, as in the start command.
 
-Stopping the process leaves its startup task enabled. To keep it stopped across restarts, disable **Task Scheduler > Vision Private PC**. Logs are in `C:\ProgramData\VisionPC\data\server.log`. The configuration and working files are restricted to Windows administrators and SYSTEM.
+To keep the processor stopped across restarts, disable **Task Scheduler > Vision Private PC**. Logs are in `C:\ProgramData\VisionPC\data\server.log`. Configuration and working files are restricted to Windows administrators and SYSTEM.
 
-To remove Vision's processor, stop it, delete its **Vision Private PC** scheduled task, and delete `C:\ProgramData\VisionPC`. This deletes queued/completed processor data. If no other service has since taken over the route, remove only Vision's route with:
+To remove the processor, stop it, delete its **Vision Private PC** scheduled task, and delete `C:\ProgramData\VisionPC`. This deletes queued/completed processor data. If no other service has since taken over its route, remove only Vision's HTTPS route using the command matching its mode:
 
 ```powershell
+# Public mode:
+& "$env:ProgramFiles\Tailscale\tailscale.exe" funnel --https=443 off
+
+# Private mode:
 & "$env:ProgramFiles\Tailscale\tailscale.exe" serve --https=443 off
 ```
 
-Leave Tailscale installed if you use it for anything else. Do not run a global Serve reset on a PC that hosts other applications.
+Leave Tailscale installed if you use it for anything else.
 
 ## Installed components and official references
 
 - [Python embedded distribution](https://docs.python.org/3/using/windows.html#the-embeddable-package), contained inside Vision's installation.
-- [Tailscale Windows installation](https://tailscale.com/docs/install/windows/msi), [unattended mode](https://tailscale.com/docs/how-to/run-unattended), and [private HTTPS Serve](https://tailscale.com/docs/reference/tailscale-cli/serve).
-- [FFmpeg Windows builds](https://ffmpeg.org/download.html#build-windows), downloaded from the linked Gyan provider with its SHA-256 check.
+- [Tailscale Windows installation](https://tailscale.com/docs/install/windows/msi), [unattended mode](https://tailscale.com/docs/how-to/run-unattended), [private Serve](https://tailscale.com/docs/reference/tailscale-cli/serve), and [public Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel).
+- [FFmpeg Windows builds](https://ffmpeg.org/download.html#build-windows), from the linked Gyan provider with its SHA-256 check.
 - [Deno](https://docs.deno.com/runtime/getting_started/installation/), bundled for media-site processing.
 
 The installer verifies the Tailscale MSI checksum/signature and Python executable signature before running them. Application files come from this repository over HTTPS. It does not request your Windows password, Firebase credentials, or OpenAI key during setup.

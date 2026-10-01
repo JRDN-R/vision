@@ -1,11 +1,11 @@
 #requires -Version 5.1
 <#
-Vision private PC processor. Run from Windows PowerShell as Administrator.
+Vision PC processor. Run from Windows PowerShell as Administrator.
 The application downloads its own private runtime; no existing Python/Node install is needed.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','ExportConnection','Start','Stop')]
+    [ValidateSet('Setup','EnablePublic','ExportConnection','Start','Stop')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main'
@@ -69,7 +69,86 @@ function Get-Tailscale {
 }
 function Read-Configuration {
     if (-not (Test-Path -LiteralPath $ConfigPath)) { throw 'Run Setup first.' }
-    return Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $Configuration = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    if ([string]$Configuration.token -notmatch '^[A-Za-z0-9_-]{40,128}$' -or [int]$Configuration.port -ne 8765) {
+        throw 'Existing config.json is invalid. No credentials were replaced.'
+    }
+    return $Configuration
+}
+function Connect-Tailscale([string]$Executable, $Configuration) {
+    Start-Service -Name 'Tailscale'
+    $StatusText = & $Executable status --json
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the Tailscale connection status.' }
+    $Status = $StatusText | ConvertFrom-Json
+    if ($Status.BackendState -ne 'Running') {
+        Write-Host 'Sign in using the Tailscale link below to connect this PC.'
+        & $Executable up --unattended=true --timeout=3m | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Finish the Tailscale sign-in, then run this same command again.' }
+    }
+    Invoke-Checked $Executable @('set','--unattended=true') | Out-Host
+    $StatusText = & $Executable status --json
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the Tailscale connection status.' }
+    $Status = $StatusText | ConvertFrom-Json
+    $DnsName = ([string]$Status.Self.DNSName).TrimEnd('.')
+    if ($Status.BackendState -ne 'Running' -or $DnsName -notmatch '^[A-Za-z0-9.-]+\.ts\.net$') {
+        throw 'Tailscale is not connected with a DNS name yet. Complete sign-in and run the same command again.'
+    }
+    $Configuration.backendUrl = "https://$DnsName"
+    Write-Utf8 $ConfigPath ($Configuration | ConvertTo-Json)
+    return $DnsName
+}
+function Assert-VisionRoute([string]$Executable, [string]$DnsName, [bool]$PublicAccess) {
+    # Never reset or replace another application's Tailscale routes.
+    $ServeText = & $Executable serve status --json
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the existing Tailscale Serve configuration.' }
+    $ServeConfig = $ServeText | ConvertFrom-Json
+    $HasRoute = $false
+    foreach ($Entry in @($ServeConfig.Web.PSObject.Properties)) {
+        if (-not $Entry) { continue }
+        foreach ($Handler in @($Entry.Value.Handlers.PSObject.Properties)) {
+            $HasRoute = $true
+            if ($Entry.Name -ne ($DnsName + ':443') -or $Handler.Name -ne '/' -or $Handler.Value.Proxy -ne 'http://127.0.0.1:8765') {
+                throw 'This PC already has a different Tailscale Serve route. Nothing was overwritten. Describe that existing setup for help.'
+            }
+        }
+    }
+    $TcpEntries = @($ServeConfig.TCP.PSObject.Properties | Where-Object { $_ })
+    if ($TcpEntries.Count -gt 0 -and (-not $HasRoute -or $TcpEntries.Count -ne 1 -or $TcpEntries[0].Name -ne '443' -or $TcpEntries[0].Value.HTTPS -ne $true)) {
+        throw 'An existing Tailscale TCP service uses this PC. Nothing was overwritten.'
+    }
+    foreach ($Entry in @($ServeConfig.AllowFunnel.PSObject.Properties | Where-Object { $_.Value -eq $true })) {
+        if (-not $HasRoute -or $Entry.Name -ne ($DnsName + ':443')) {
+            throw 'Another Tailscale Funnel route uses this PC. Nothing was overwritten.'
+        }
+        if (-not $PublicAccess) {
+            throw 'Vision already has a public Funnel route. Run this script with -Action EnablePublic to preserve public access.'
+        }
+    }
+    if (@($ServeConfig.Foreground.PSObject.Properties | Where-Object { $_ }).Count -gt 0) {
+        throw 'An active foreground Tailscale service uses this PC. Nothing was overwritten.'
+    }
+}
+function Start-VisionRoute([string]$Executable, $Configuration) {
+    $DnsName = ([Uri]$Configuration.backendUrl).DnsSafeHost
+    $PublicAccess = ($Configuration.publicAccess -eq $true)
+    Assert-VisionRoute $Executable $DnsName $PublicAccess
+    if ($PublicAccess) {
+        Write-Host 'If Tailscale prints an approval link, open it and enable Funnel for this PC.'
+        & $Executable funnel --bg --yes --https=443 http://127.0.0.1:8765
+    } else {
+        Write-Host 'If Tailscale prints an HTTPS approval link, open it and enable HTTPS for your private network.'
+        & $Executable serve --bg --yes --https=443 http://127.0.0.1:8765
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Complete the approval at the Tailscale link, then run the same command again. Your installation and token are saved.'
+    }
+}
+function Register-ProcessorTask {
+    $TaskAction = New-ScheduledTaskAction -Execute $PythonExe -Argument ('"' + (Join-Path $InstallRoot 'server.py') + '"') -WorkingDirectory $InstallRoot
+    $Trigger = New-ScheduledTaskTrigger -AtStartup
+    $TaskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $TaskName -Action $TaskAction -Trigger $Trigger -Principal $TaskPrincipal -Settings $Settings -Description 'Vision YouTube processor. Listens only on this computer; Tailscale provides its configured HTTPS connection.' -Force | Out-Null
 }
 function Test-Processor([string]$BaseUrl, [string]$Token) {
     try {
@@ -90,18 +169,27 @@ function Export-Connection {
     $LocalOnline = Test-Processor "http://127.0.0.1:$($Config.port)" $Config.token
     $RemoteOnline = Test-Processor $Config.backendUrl $Config.token
     if (-not ($LocalOnline -and $RemoteOnline)) {
-        throw 'The processor is not reachable over its private HTTPS address yet. Keep Tailscale connected, then run Setup again.'
+        throw 'The processor is not reachable over its HTTPS address yet. Keep this PC connected, then run this script with -Action Start.'
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
-    $Connection = [ordered]@{ kind = 'private-pc'; backendUrl = $Config.backendUrl; accessToken = $Config.token }
+    $PublicAccess = ($Config.publicAccess -eq $true)
+    $Connection = [ordered]@{ kind = 'private-pc'; backendUrl = $Config.backendUrl; accessToken = $Config.token; publicAccess = $PublicAccess }
     $ConnectionJson = $Connection | ConvertTo-Json
     $PrivatePath = Join-Path $OutputDirectory 'Vision-Connection.txt'
     $PublicPath = Join-Path $OutputDirectory 'Vision-Connection-public.txt'
+    $ConnectionType = 'private-pc / Tailscale Serve HTTPS'
+    $ConnectionInstructions = 'Keep Tailscale connected on this PC and on each device using Vision.'
+    $ReportInstructions = 'Access requires Tailscale on the same private network and your Vision connection settings.'
+    if ($PublicAccess) {
+        $ConnectionType = 'private-pc / public Tailscale Funnel HTTPS'
+        $ConnectionInstructions = 'Keep this PC awake and online. Devices using Vision do not need Tailscale.'
+        $ReportInstructions = 'Access works over the internet using the Vision connection settings. Only the processor PC needs Tailscale.'
+    }
     $PrivateText = @"
-VISION PRIVATE CONNECTION - KEEP PRIVATE
-This file contains the access token for your processor. Import it into Vision on your own devices.
-Do not post this file publicly or send it for support. Send Vision-Connection-public.txt instead.
-Keep Tailscale connected on this PC and on each device using Vision.
+VISION PROCESSOR CONNECTION
+This file contains the access token for your processor. Vision HTML can embed these settings to connect automatically.
+Anyone with these settings can use the processor while it is available.
+$ConnectionInstructions
 
 --- BEGIN VISION CONNECTION ---
 $ConnectionJson
@@ -121,21 +209,22 @@ $ConnectionJson
 VISION PROCESSOR CONNECTION REPORT - NO ACCESS TOKEN
 Created: $([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) UTC
 Backend: $($Config.backendUrl)
-Connection type: private-pc / Tailscale Serve HTTPS
+Connection type: $ConnectionType
+Public access: $PublicAccess
 Local processor: online
-Private HTTPS: online
+HTTPS: online
 Startup task: $TaskName
 Installed at: $InstallRoot
 Computer: $env:COMPUTERNAME
 Windows: $([Environment]::OSVersion.VersionString)
-Access requires Tailscale on the same private network and your private Vision connection file.
+$ReportInstructions
 This report can be shared for help. It cannot authorize connections by itself.
 "@
     Write-Utf8 $PublicPath $PublicText
     Write-Host "`nReady. Connection files saved to:" -ForegroundColor Green
     Write-Host $PrivatePath
     Write-Host $PublicPath
-    Write-Host 'Import Vision-Connection.txt in Vision logo > Processor connection. Share only the -public file for help.'
+    Write-Host 'Vision HTML with these settings already embedded connects automatically. Otherwise import Vision-Connection.txt in Vision logo > Processor connection.'
 }
 
 try {
@@ -147,9 +236,65 @@ try {
         throw 'This installer needs 64-bit Windows on an Intel/AMD PC and 64-bit Windows PowerShell.'
     }
     if ($SourceRef -notmatch '^[A-Za-z0-9._-]+$') { throw 'Invalid source revision.' }
-    if ($Action -eq 'Start') { Start-ScheduledTask -TaskName $TaskName; Write-Host 'Processor started.'; exit 0 }
+    if ($Action -eq 'Start') {
+        $Config = Read-Configuration
+        $Tailscale = Get-Tailscale
+        if (-not $Tailscale) { throw 'Tailscale is missing. Run Setup again.' }
+        $DnsName = Connect-Tailscale $Tailscale $Config
+        Assert-VisionRoute $Tailscale $DnsName ($Config.publicAccess -eq $true)
+        Start-ScheduledTask -TaskName $TaskName
+        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Config.token)) { throw "The processor did not start. Check $InstallRoot\data\server.log." }
+        Start-VisionRoute $Tailscale $Config
+        Export-Connection
+        Write-Host 'Processor started. Its saved public/private connection mode has been restored.'
+        exit 0
+    }
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
+
+    if ($Action -eq 'EnablePublic') {
+        Write-Stage '1/3 Updating the installed processor for web access'
+        $Config = Read-Configuration
+        $ExistingOwner = (Get-Acl -LiteralPath $InstallRoot).GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($ExistingOwner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'The installation folder has an unexpected owner. No changes were made.' }
+        foreach ($Path in @($InstallRoot,$RuntimeDir,$ToolsDir,$DownloadDir)) {
+            if (-not (Test-Path -LiteralPath $Path) -or ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'The existing installation is incomplete or uses linked folders. Run Setup first.'
+            }
+        }
+        if (-not (Test-Path -LiteralPath $PythonExe)) { throw 'The private runtime is missing. Run Setup first.' }
+        $Tailscale = Get-Tailscale
+        if (-not $Tailscale) { throw 'Tailscale is missing. Run Setup first.' }
+        $DnsName = Connect-Tailscale $Tailscale $Config
+        Assert-VisionRoute $Tailscale $DnsName $true
+        $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
+        # Stage and check both files before stopping the existing processor. No runtime or pip reinstall.
+        foreach ($FileName in @('server.py','media.py')) {
+            Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
+        }
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'))
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
+        foreach ($FileName in @('server.py','media.py')) {
+            Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
+        }
+        $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $true -Force
+        Write-Utf8 $ConfigPath ($Config | ConvertTo-Json)
+        if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
+            Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
+        }
+        Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
+        Register-ProcessorTask
+        Start-ScheduledTask -TaskName $TaskName
+        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Config.token)) { throw "The processor did not start. Check $InstallRoot\data\server.log." }
+        Write-Stage '2/3 Enabling the persistent public HTTPS connection'
+        Start-VisionRoute $Tailscale $Config
+        Write-Stage '3/3 Checking HTTPS and exporting your connection files'
+        if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'HTTPS is not ready. Finish any Funnel approval, then run this same command again.' }
+        Export-Connection
+        Write-Host "`nReady for local HTML, GitHub Pages, and other Vision copies. Only this PC needs Tailscale." -ForegroundColor Green
+        Write-Host 'Keep this PC awake and online. The processor and Funnel resume automatically after a Windows restart.'
+        exit 0
+    }
 
     Write-Stage '1/5 Preparing the private application folder'
     if (Test-Path -LiteralPath $InstallRoot) {
@@ -173,7 +318,6 @@ try {
         Write-Utf8 $ConfigPath (([ordered]@{ token = $Token; backendUrl = ''; port = 8765 } | ConvertTo-Json))
     }
     $Config = Read-Configuration
-    if ([string]$Config.token -notmatch '^[A-Za-z0-9_-]{40,128}$' -or [int]$Config.port -ne 8765) { throw 'Existing config.json is invalid. No credentials were replaced.' }
     if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
     }
@@ -241,57 +385,16 @@ try {
         $Tailscale = Get-Tailscale
         if (-not $Tailscale) { throw 'Tailscale was not found after installation. Restart Windows, then run Setup again.' }
     }
-    Start-Service -Name 'Tailscale'
-    $StatusText = & $Tailscale status --json
-    $Status = $StatusText | ConvertFrom-Json
-    if ($Status.BackendState -ne 'Running') {
-        Write-Host 'Sign in using the Tailscale link below. Use this same account on your phone/computers.'
-        & $Tailscale up --unattended=true --timeout=3m
-        if ($LASTEXITCODE -ne 0) { throw 'Finish the Tailscale sign-in, then run this same script again.' }
-    }
-    Invoke-Checked $Tailscale @('set','--unattended=true')
-    $Status = (& $Tailscale status --json) | ConvertFrom-Json
-    $DnsName = ([string]$Status.Self.DNSName).TrimEnd('.')
-    if ($Status.BackendState -ne 'Running' -or $DnsName -notmatch '^[A-Za-z0-9.-]+\.ts\.net$') { throw 'Tailscale is not connected with a private DNS name yet. Complete sign-in and rerun Setup.' }
-    $Config.backendUrl = "https://$DnsName"
-    Write-Utf8 $ConfigPath ($Config | ConvertTo-Json)
+    $DnsName = Connect-Tailscale $Tailscale $Config
 
     Write-Stage '4/5 Starting the background processor'
-    $TaskAction = New-ScheduledTaskAction -Execute $PythonExe -Argument ('"' + (Join-Path $InstallRoot 'server.py') + '"') -WorkingDirectory $InstallRoot
-    $Trigger = New-ScheduledTaskTrigger -AtStartup
-    $TaskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $TaskName -Action $TaskAction -Trigger $Trigger -Principal $TaskPrincipal -Settings $Settings -Description 'Vision private YouTube processor. Listens only on this computer; Tailscale provides the private HTTPS connection.' -Force | Out-Null
+    Assert-VisionRoute $Tailscale $DnsName ($Config.publicAccess -eq $true)
+    Register-ProcessorTask
     Start-ScheduledTask -TaskName $TaskName
     if (-not (Wait-Processor 'http://127.0.0.1:8765' $Config.token)) { throw "The processor did not start. Check $InstallRoot\data\server.log and Task Scheduler > $TaskName." }
-
-    # Do not reset, replace or publish another application's existing Tailscale route.
-    $ServeText = & $Tailscale serve status --json
-    if ($LASTEXITCODE -ne 0) { throw 'Could not read the existing Tailscale Serve configuration.' }
-    $ServeConfig = $ServeText | ConvertFrom-Json
-    $WebEntries = @($ServeConfig.Web.PSObject.Properties)
-    $HasRoute = $false
-    foreach ($Entry in $WebEntries) {
-        if (-not $Entry) { continue }
-        foreach ($Handler in @($Entry.Value.Handlers.PSObject.Properties)) {
-            $HasRoute = $true
-            if ($Entry.Name -ne ($DnsName + ':443') -or $Handler.Name -ne '/' -or $Handler.Value.Proxy -ne 'http://127.0.0.1:8765') {
-                throw 'This PC already has a different Tailscale Serve route. Nothing was overwritten. Describe that existing setup for help.'
-            }
-        }
-    }
-    $TcpEntries = @($ServeConfig.TCP.PSObject.Properties | Where-Object { $_ })
-    if ($TcpEntries.Count -gt 0 -and (-not $HasRoute -or $TcpEntries.Count -ne 1 -or $TcpEntries[0].Name -ne '443' -or $TcpEntries[0].Value.HTTPS -ne $true)) {
-        throw 'An existing Tailscale TCP service uses this PC. Nothing was overwritten.'
-    }
-    if (@($ServeConfig.AllowFunnel.PSObject.Properties | Where-Object { $_.Value -eq $true }).Count -gt 0) {
-        throw 'Tailscale Funnel is enabled here. This installer needs a private-only route and did not modify your existing setup.'
-    }
-    Write-Host 'If Tailscale prints an HTTPS approval link, open it and enable HTTPS for your private network.'
-    & $Tailscale serve --bg --yes http://127.0.0.1:8765
-    if ($LASTEXITCODE -ne 0) { throw 'Approve HTTPS using the Tailscale link, then rerun this script. Your installation and token are saved.' }
+    Start-VisionRoute $Tailscale $Config
     Write-Stage '5/5 Checking HTTPS and exporting your connection files'
-    if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'Private HTTPS is not ready. Complete any Tailscale HTTPS approval, then run Setup again.' }
+    if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'HTTPS is not ready. Complete any Tailscale HTTPS/Funnel approval, then run Setup again.' }
     Export-Connection
     Write-Host "`nKeep this PC awake while processing. Closing this setup window is fine."
     Write-Host 'Windows Settings > System > Power & sleep > Sleep > Never (while plugged in).'

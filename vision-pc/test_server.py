@@ -39,6 +39,28 @@ class ProcessorTests(unittest.TestCase):
         response = self.client.options('/api/youtube', headers={'Origin': 'https://jrdn-r.github.io', 'Access-Control-Request-Private-Network': 'true'})
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response.headers['Access-Control-Allow-Private-Network'], 'true')
+        self.assertFalse(self.client.get('/api/health', headers=self.headers).json['publicAccess'])
+
+    def test_public_access_keeps_bearer_authentication(self):
+        config = self.root / 'config.json'
+        settings = json.loads(config.read_text())
+        settings['publicAccess'] = True
+        config.write_text(json.dumps(settings))
+        server.configure(config)
+        for origin in ('null', 'https://jrdn-r.github.io', 'https://other.example'):
+            headers = {**self.headers, 'Origin': origin}
+            response = self.client.get('/api/health', headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json['publicAccess'])
+            self.assertEqual(response.headers['Access-Control-Allow-Origin'], '*')
+            response = self.client.options('/api/youtube', headers={'Origin': origin})
+            self.assertEqual(response.status_code, 204)
+            self.assertEqual(response.headers['Access-Control-Allow-Origin'], '*')
+            self.assertIn('Authorization', response.headers['Access-Control-Allow-Headers'])
+            response = self.client.get('/api/health', headers={'Origin': origin, 'Authorization': 'Bearer invalid'})
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.headers['Access-Control-Allow-Origin'], '*')
+            self.assertEqual(self.client.get('/api/health', headers={'Origin': origin}).status_code, 401)
 
     def test_idempotency_and_restart(self):
         job_id = self.start_job()

@@ -59,6 +59,7 @@ def configure(config_path):
     for child in ('results', 'temporary'):
         (data_dir / child).mkdir(exist_ok=True)
     app.config.update(CONNECTION_TOKEN=token, PORT=port, BACKEND_URL=backend,
+                      PUBLIC_ACCESS=config.get('publicAccess') is True,
                       DATA_DIR=data_dir, DATABASE=data_dir / 'vision.sqlite3',
                       FFMPEG=str(local_path('ffmpeg', 'tools/ffmpeg.exe')),
                       DENO=str(local_path('deno', 'tools/deno.exe')))
@@ -120,7 +121,7 @@ def unexpected_error(error):
 @app.before_request
 def authorize():
     origin = request.headers.get('Origin')
-    if origin and origin not in ORIGINS:
+    if origin and not app.config.get('PUBLIC_ACCESS', False) and origin not in ORIGINS:
         raise APIError('This page is not an allowed Vision origin.', 403)
     if request.method == 'OPTIONS':
         return Response(status=204)
@@ -135,8 +136,9 @@ def authorize():
 @app.after_request
 def cors(response):
     origin = request.headers.get('Origin')
-    if origin in ORIGINS:
-        response.headers['Access-Control-Allow-Origin'] = origin
+    public_access = app.config.get('PUBLIC_ACCESS', False)
+    if public_access or origin in ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
         response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
@@ -153,6 +155,7 @@ def health():
     with connect_db() as db:
         queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
+                   publicAccess=app.config.get('PUBLIC_ACCESS', False),
                    maxArchiveBytes=app.config['MAX_CONTENT_LENGTH'])
 
 
