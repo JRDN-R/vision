@@ -20,6 +20,7 @@ import requests
 from werkzeug.exceptions import HTTPException
 
 from media import normalize_url, process_job
+from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -69,6 +70,7 @@ def configure(config_path):
     if backend:
         ORIGINS.add(backend)
     initialize_db()
+    sessions.initialize()
     return config
 
 
@@ -108,7 +110,7 @@ def api_error(error):
 
 @app.errorhandler(HTTPException)
 def http_error(error):
-    return jsonify(error='The archive is larger than 25 MB. Export fewer or smaller images.' if error.code == 413 else error.description), error.code
+    return jsonify(error=('The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/') else 'Attachments exceed 25 MB. Export fewer or smaller images.') if error.code == 413 else error.description), error.code
 
 
 @app.errorhandler(Exception)
@@ -140,8 +142,8 @@ def cors(response):
     if public_access or origin in ORIGINS:
         response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
-        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, DELETE, OPTIONS'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type'
         if request.headers.get('Access-Control-Request-Private-Network') == 'true':
             response.headers['Access-Control-Allow-Private-Network'] = 'true'
@@ -156,7 +158,8 @@ def health():
         queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
-                   maxArchiveBytes=app.config['MAX_CONTENT_LENGTH'])
+                   maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True})
 
 
 def get_job(job_id):
@@ -459,6 +462,8 @@ def openai_artifact(container_id, file_id):
     return Response(stream_with_context(chunks()), content_type=response.headers.get('Content-Type', 'application/octet-stream'))
 
 
+sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
+
 def main():
     parser = argparse.ArgumentParser(description='Vision private PC processor')
     parser.add_argument('--config', default=str(Path(__file__).with_name('config.json')))
@@ -493,14 +498,17 @@ def main():
         recover_jobs()
         worker = threading.Thread(target=worker_loop, name='vision-media', daemon=True)
         worker.start()
+        sessions.start()
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
-                  max_request_body_size=app.config['MAX_CONTENT_LENGTH'], channel_timeout=300,
+                  max_request_body_size=PROJECT_LIMIT, channel_timeout=300,
                   expose_tracebacks=False)
         finally:
             STOP.set()
             WAKE.set()
+            sessions.stop.set()
+            sessions.wake.set()
         return 0
     except Exception as error:
         # Values and payloads are intentionally excluded from setup diagnostics.

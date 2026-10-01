@@ -1,0 +1,16 @@
+const fs=require('node:fs');
+const vm=require('node:vm');
+const assert=require('node:assert/strict');
+const source=fs.readFileSync('web/console.js','utf8');
+const context=vm.createContext({escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))});
+vm.runInContext(source.slice(0,source.indexOf('// Console UI.')),context);
+const normalize=raw=>context.normalizeConsoleSession(raw);
+const old=normalize({responseId:'resp_old',model:'my-model',message:'Question',status:'completed',text:'Answer',activity:['First','Latest phase'],artifacts:[{fileId:'file_old',containerId:'cntr_old',name:'result.txt',include:true,data:'data:text/plain;base64,SGk='}]});
+assert.equal(old.version,2);assert.equal(old.runs.length,1);assert.equal(old.runs[0].legacy,true);assert.equal(old.runs[0].phase,'Latest phase');assert.equal(old.runs[0].artifacts[0].include,true);assert.equal(old.runs[0].artifacts[0].data,'data:text/plain;base64,SGk=');
+const durable=normalize({projectId:'proj_one',draft:'Next question',apiKey:'secret',runs:[{runId:'run_1',responseId:'resp_1',message:'Hi',text:'First',status:'completed',artifacts:[{id:'art_1',name:'data.csv',ready:true}]},{runId:'run_2',clientRequestId:'request_2',previousRunId:'run_1',status:'in_progress',phase:'Running code',text:'Second',createdAt:'2026-10-01T19:00:00Z',apiKey:'secret'}]});
+assert.equal(durable.runs[1].previousRunId,'run_1');assert.equal(durable.runs[1].clientRequestId,'request_2');assert.equal(durable.draft,'Next question');assert.equal(durable.projectId,'proj_one');assert.equal(durable.text,'Second');assert.equal(durable.runs[0].artifacts[0].id,'art_1');assert.equal(JSON.stringify(durable).includes('secret'),false);assert.equal(context.consolePhase(durable.runs[1]),'Running code');assert.equal(context.consoleSessionActive(durable.runs[1]),true);
+const unconfirmed=normalize({runs:[{clientRequestId:'pending_1',status:'disconnected',submissionUnknown:true,attachments:[{name:'notes.txt',size:16}]}]});assert.equal(unconfirmed.runs[0].submissionUnknown,true);assert.equal(context.consoleSessionActive(unconfirmed.runs[0]),true);
+const sanitized=normalize({runs:[{runId:'../bad',status:'unexpected',artifacts:[{id:'../bad',data:'file:///x'},{id:'valid',data:'data:text/html,unsafe'}]}]});assert.equal(sanitized.runs[0].runId,'');assert.equal(sanitized.runs[0].artifacts.length,1);assert.equal(sanitized.runs[0].artifacts[0].data,undefined);
+assert.equal(context.consoleMarkdown('<script>bad()</script>').includes('<script>'),false);
+assert.equal(context.consoleMarkdown('[bad](javascript:alert(1))').includes('href='),false);
+console.log('Chat state: legacy migration, durable run identity, key exclusion, pending submission, and safe rendering passed.');

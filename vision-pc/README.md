@@ -1,6 +1,6 @@
 # Vision PC processor
 
-Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links. The website, downloaded HTML, and Vision copies hosted elsewhere can use this processor over the internet when public access is enabled. Firebase and Google Cloud are not needed. Gemini/OpenAI still use their online APIs when requested.
+Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links, save projects, and keep API conversations running when the browser closes. The website, downloaded HTML, and Vision copies hosted elsewhere can use this processor over the internet when public access is enabled. Firebase and Google Cloud are not needed. Gemini/OpenAI still use their online APIs when requested.
 
 The setup script downloads the application and its own private runtime. You do not need to install Python or Node separately. This is an application background process, not a Windows Sandbox VM or an unrestricted remote shell.
 
@@ -21,6 +21,36 @@ This updates only the processor application files, reuses the installed runtime 
 Vision HTML with the connection settings already embedded connects automatically; no connection file import or setup popup is required. Older copies without those settings can import the generated connection file once, or be replaced with a new download. Publishing the website alone cannot enable Funnel on the Windows PC; the command above performs that one-time change.
 
 Public access is saved in `C:\ProgramData\VisionPC\config.json`. Future `Setup` and `Start` actions preserve it. The background Funnel connection and processor startup task resume after Windows restarts. Setup checks the local processor and its HTTPS endpoint before reporting success; the final public reachability check is to open Vision from another device with Tailscale turned off.
+
+## Update an installed PC for saved projects and background conversations
+
+Run this once from **administrator PowerShell** on the processor PC after downloading the updated Vision app:
+
+```powershell
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Update
+```
+
+`Update` downloads and checks the Python application components, restarts the processor, and restores its existing private/public HTTPS mode. It preserves configuration, the connection token, queued imports, saved projects, conversations, and retained files. It does not reinstall Python or video tools. The Windows update is required in addition to publishing the HTML.
+
+### Saved projects and sessions
+
+Each project has its own random project ID and secret, in addition to the publicly embedded processor connection token. The PC stores only a hash of the project secret. Projects cannot be listed or opened using the common connection token alone. The editable project file holds the secret so the same project can reopen its saves and conversations on another device; share that project file only with someone who should have access to its saved conversations.
+
+Project autosaves use a revision check. A stale device receives a conflict instead of overwriting a newer save. Project JSON can be up to 150 MiB; a message's project ZIP and attachments together can be up to 25 MiB. The API rejects common non-empty API-key fields in project JSON. Keep the OpenAI billing key in the Run settings, separate from the project.
+
+Accepted API turns are written to SQLite before responding to the browser. A PC worker submits the OpenAI **Responses API** request with background processing and consumes its stream independently. The model and Code Interpreter still run on OpenAI; the PC manages the conversation, network connection, saved files, and event history. Returning to the same project retrieves the saved transcript and reconnects to the active response. Only one turn can be active in a project at a time.
+
+The PC encrypts the submitted OpenAI key with Windows DPAPI under the installed task's Windows identity. It never returns the key in a project or run snapshot. The encrypted key is retained only while the turn or file retrieval needs recovery, then cleared after completion. Each new turn supplies a key again. Running the service under a different Windows account will prevent it from decrypting pending keys; keep using the installed SYSTEM startup task.
+
+After a PC restart, known response IDs are retrieved without creating another paid response. If a restart or network failure occurs before a response ID is safely saved, Vision marks that turn for review instead of guessing and submitting it twice. Check OpenAI usage before retrying that specific turn. Normal browser closure does not interrupt the worker.
+
+Project files, inputs, messages, and retained deliverables remain in `C:\ProgramData\VisionPC\data` until explicitly removed; the existing temporary YouTube result cleanup does not remove them. Each generated file can be retained up to 100 MiB. OpenAI containers expire, so the worker downloads generated deliverables while the container is active. Later follow-ups reuse an active container or restore retained input/output files into a new one. If the provider's earlier response has expired, locally saved conversation text supplies the context. Python variables in an expired container cannot be restored automatically.
+
+The PC must remain awake and online for new work and file retention. OpenAI can continue an accepted background response while the PC reconnects, but an extended outage can outlast provider file retention. A response can finish while a file download is unavailable; Vision reports unavailable files individually.
+
+Back up the data directory using a consistent snapshot or while the processor is stopped. A live SQLite database should not be placed directly in a Google Drive sync folder; use a backup copy if cloud backup is added later. Google Drive integration is not required or installed by this update.
 
 ## Install on a new PC
 

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+script-*.js
+web/ui.html
+.qa/

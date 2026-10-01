@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','EnablePublic','ExportConnection','Start','Stop')]
+    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main'
@@ -252,8 +252,8 @@ try {
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
 
-    if ($Action -eq 'EnablePublic') {
-        Write-Stage '1/3 Updating the installed processor for web access'
+    if ($Action -in @('EnablePublic','Update')) {
+        Write-Stage '1/3 Updating the installed processor and saved sessions'
         $Config = Read-Configuration
         $ExistingOwner = (Get-Acl -LiteralPath $InstallRoot).GetOwner([Security.Principal.SecurityIdentifier]).Value
         if ($ExistingOwner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'The installation folder has an unexpected owner. No changes were made.' }
@@ -266,18 +266,19 @@ try {
         $Tailscale = Get-Tailscale
         if (-not $Tailscale) { throw 'Tailscale is missing. Run Setup first.' }
         $DnsName = Connect-Tailscale $Tailscale $Config
-        Assert-VisionRoute $Tailscale $DnsName $true
+        $TargetPublic = ($Action -eq 'EnablePublic' -or $Config.publicAccess -eq $true)
+        Assert-VisionRoute $Tailscale $DnsName $TargetPublic
         $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-        # Stage and check both files before stopping the existing processor. No runtime or pip reinstall.
-        foreach ($FileName in @('server.py','media.py')) {
+        # Stage and check all components before stopping the existing processor. No runtime or pip reinstall.
+        foreach ($FileName in @('server.py','media.py','sessions.py')) {
             Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'))
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'))
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
-        foreach ($FileName in @('server.py','media.py')) {
+        foreach ($FileName in @('server.py','media.py','sessions.py')) {
             Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
         }
-        $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $true -Force
+        $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $TargetPublic -Force
         Write-Utf8 $ConfigPath ($Config | ConvertTo-Json)
         if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
             Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
@@ -286,12 +287,13 @@ try {
         Register-ProcessorTask
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Config.token)) { throw "The processor did not start. Check $InstallRoot\data\server.log." }
-        Write-Stage '2/3 Enabling the persistent public HTTPS connection'
+        Write-Stage '2/3 Restoring the persistent HTTPS connection'
         Start-VisionRoute $Tailscale $Config
         Write-Stage '3/3 Checking HTTPS and exporting your connection files'
         if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'HTTPS is not ready. Finish any Funnel approval, then run this same command again.' }
         Export-Connection
-        Write-Host "`nReady for local HTML, GitHub Pages, and other Vision copies. Only this PC needs Tailscale." -ForegroundColor Green
+        Write-Host "`nProcessor updated. Project saves and background conversations are ready." -ForegroundColor Green
+        if ($TargetPublic) { Write-Host 'Ready for local HTML and GitHub Pages. Only this PC needs Tailscale.' }
         Write-Host 'Keep this PC awake and online. The processor and Funnel resume automatically after a Windows restart.'
         exit 0
     }
@@ -324,7 +326,7 @@ try {
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','requirements.txt')) {
+    foreach ($FileName in @('server.py','media.py','sessions.py','requirements.txt')) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {
