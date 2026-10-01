@@ -32,7 +32,7 @@
 <script>
 (async()=>{
  try{
-  const response=await fetch('./Vision.html?v=3812864770bd',{credentials:'same-origin'});
+  const response=await fetch('./Vision.html?v=f5d4e99be18a',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
   const html=await response.text();
   if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
