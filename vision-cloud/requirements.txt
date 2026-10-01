@@ -1,0 +1,9 @@
+Flask>=3.1,<4
+gunicorn>=23,<24
+firebase-admin>=6.6,<8
+google-cloud-firestore>=2.20,<3
+google-cloud-storage>=3,<4
+google-cloud-tasks>=2.19,<3
+requests>=2.32,<3
+yt-dlp[default]>=2025.11.12
+Pillow>=11,<13

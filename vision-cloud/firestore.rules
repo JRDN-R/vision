@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The backend uses its service account; clients use only authenticated HTTPS APIs.
+    match /visionJobs/{document} { allow read, write: if false; }
+    match /visionQuotas/{document} { allow read, write: if false; }
+    match /visionResponses/{document} { allow read, write: if false; }
+  }
+}
