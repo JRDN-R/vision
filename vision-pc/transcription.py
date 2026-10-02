@@ -22,8 +22,7 @@ import subprocess
 import sys
 import threading
 import time
-
-from flask import jsonify, request
+import traceback
 
 BODY_LIMIT = 100 * 1024 * 1024
 MAX_DURATION = 8 * 3600
@@ -35,6 +34,60 @@ CHUNK_SECONDS = 900
 RESULT_LIMIT = 4 * 1024 * 1024
 MIME_FORMATS = {'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav'}
 TERMINAL = ('complete', 'error', 'cancelled')
+DIAGNOSTIC_LIMIT = 64 * 1024
+STAGES = {
+    'startup': 'starting the worker', 'dependencies': 'loading the local libraries',
+    'model': 'loading the Whisper model', 'probe': 'reading the audio',
+    'decode': 'decoding the audio', 'transcribe': 'transcribing the audio',
+    'save': 'saving the transcript',
+}
+ERROR_HELP = {
+    'dependency': 'A local transcription library could not load. Check the PC diagnostic log for the missing library or Windows runtime.',
+    'model': 'The local Whisper model could not load. Run the local transcription check on the PC.',
+    'audio': 'The PC could not read this audio section. Retry the recording; if it repeats, prepare the audio again.',
+    'duration': 'An audio section has an invalid duration. Prepare the recording again before retrying.',
+    'disk': 'Free at least 1 GB on the PC, then retry local transcription.',
+    'memory': 'The local worker ran out of memory. Close other heavy PC workloads, then retry.',
+    'permission': 'Windows blocked access to a local transcription file. Check the PC diagnostic log and retry.',
+    'timeout': 'Local transcription exceeded its time limit. Retry with a shorter recording.',
+    'speech-filter': 'The local speech filter could not load. Check the PC diagnostic log for its ONNX runtime error.',
+    'worker': 'The local transcription worker stopped. Run the local transcription check on the PC.',
+}
+
+
+class LocalRunnerError(RuntimeError):
+    """Only fixed, non-sensitive diagnostics can cross the HTTP boundary."""
+    def __init__(self, code='worker', stage='startup', exception=None, exit_code=None):
+        self.code = code if code in ERROR_HELP else 'worker'
+        self.stage = stage if stage in STAGES else 'startup'
+        details = [self.code, self.stage]
+        if isinstance(exception, str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,79}', exception):
+            details.append(exception)
+        if isinstance(exit_code, int) and exit_code:
+            details.append('exit 0x%08X' % (exit_code & 0xffffffff))
+        super().__init__(ERROR_HELP[self.code] + ' [' + ' / '.join(details) + ']')
+
+
+def failure_code(error, stage):
+    if isinstance(error, MemoryError):
+        return 'memory'
+    if isinstance(error, PermissionError):
+        return 'permission'
+    if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
+        return 'timeout'
+    if str(error) == 'low-disk-space':
+        return 'disk'
+    if str(error) in ('invalid-audio-duration', 'audio-too-long'):
+        return 'duration'
+    if stage == 'dependencies':
+        return 'dependency'
+    if stage == 'model':
+        return 'model'
+    if stage in ('probe', 'decode'):
+        return 'audio'
+    if stage == 'transcribe' and any(word in str(error).lower() for word in ('onnx', 'vad filter', 'silero')):
+        return 'speech-filter'
+    return 'worker'
 
 
 def atomic_json(path, value):
@@ -43,7 +96,16 @@ def atomic_json(path, value):
         json.dump(value, out, ensure_ascii=False, separators=(',', ':'))
         out.flush()
         os.fsync(out.fileno())
-    os.replace(temporary, path)
+    # Windows readers can temporarily deny delete-sharing while polling progress.
+    # Do not abort a long transcription for that brief sharing violation.
+    for attempt in range(6):
+        try:
+            os.replace(temporary, path)
+            break
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def timestamp(value):
@@ -168,6 +230,8 @@ class LocalTranscription:
         return client, source, validated, duration, digest.hexdigest()
 
     def register_routes(self):
+        from flask import jsonify, request
+
         @self.app.post('/api/projects/<project_id>/transcriptions')
         def local_transcription_create(project_id):
             self.sessions.project(project_id)
@@ -281,9 +345,11 @@ class LocalTranscription:
                     self.update(value['id'], only_processing=True, status='complete', phase='Ready', progress=100, result_json=result_json, error=None)
                 else:
                     raise RuntimeError('no-result')
-            except Exception:
+            except Exception as error:
                 if self.row(value['id'])['status'] != 'cancelled':
-                    self.update(value['id'], only_processing=True, status='error', phase='Stopped', error='Local transcription could not finish this audio. Check the local model installation, audio file, and available PC memory, then retry.')
+                    self.app.logger.exception('Local transcription job %s failed.', value['id'])
+                    safe = error if isinstance(error, LocalRunnerError) else LocalRunnerError(failure_code(error, 'startup'))
+                    self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=str(safe))
             return True
         finally:
             self._worker_lock.release()
@@ -299,7 +365,14 @@ class LocalTranscription:
         env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', OMP_NUM_THREADS=str(self.settings['cpuThreads']),
                    OPENBLAS_NUM_THREADS='1', MKL_NUM_THREADS=str(self.settings['cpuThreads']))
         flags = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == 'nt' else {}
-        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, **flags)
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, **flags)
+        diagnostic = bytearray()
+        def drain_errors():
+            while chunk := child.stderr.read(4096):
+                diagnostic.extend(chunk)
+                del diagnostic[:-DIAGNOSTIC_LIMIT]
+        reader = threading.Thread(target=drain_errors, name='vision-local-errors', daemon=True)
+        reader.start()
         started, previous = time.monotonic(), None
         try:
             while child.poll() is None:
@@ -315,7 +388,21 @@ class LocalTranscription:
                         self.update(value['id'], only_processing=True, phase=str(state[0])[:120], progress=min(99, max(0, float(state[1]))))
                         previous = state
             if child.returncode:
-                raise RuntimeError('local-runner-failed')
+                reader.join(timeout=2)
+                self.app.logger.error('Local transcription job %s worker exited %s. Local diagnostic:\n%s',
+                    value['id'], child.returncode, diagnostic.decode('utf-8', errors='replace'))
+                failure, progress = {}, {}
+                for name, target in (('failure.json', failure), ('progress.json', progress)):
+                    try:
+                        path = directory / name
+                        if path.stat().st_size <= 8192:
+                            data = json.loads(path.read_text(encoding='utf-8'))
+                            if isinstance(data, dict):
+                                target.update(data)
+                    except (OSError, ValueError):
+                        pass
+                raise LocalRunnerError(failure.get('code', 'worker'), progress.get('stage', 'startup'),
+                                       failure.get('exception'), child.returncode)
             path = directory / 'result.json'
             if path.stat().st_size > RESULT_LIMIT:
                 raise RuntimeError('result-too-large')
@@ -330,6 +417,9 @@ class LocalTranscription:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=5)
+            reader.join(timeout=2)
+            if not reader.is_alive():
+                child.stderr.close()
 
     def start(self):
         self.recover()
@@ -349,6 +439,10 @@ class LocalTranscription:
 
 def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None, model_factory=None):
     """Child-only implementation. All model and executable paths are trusted config."""
+    directory = Path(directory)
+    def stage(name, phase=None, progress=0):
+        atomic_json(directory / 'progress.json', {'stage': name, 'phase': phase or STAGES[name].capitalize(), 'progress': progress})
+    stage('dependencies')
     if packages:
         sys.path.insert(0, str(packages))
     if model_factory is None:
@@ -357,6 +451,7 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
     model_path, directory = Path(model_path), Path(directory)
     if not model_path.is_dir() or not (model_path / 'tokenizer.json').is_file():
         raise RuntimeError('local-model-missing')
+    stage('model')
     model = model_factory(str(model_path), device='cpu', compute_type='int8', cpu_threads=max(1, min(4, cpu_threads)),
                           num_workers=1, local_files_only=True)
     sections = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))['sections']
@@ -366,6 +461,7 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
     probe = str(Path(ffmpeg).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe'))
     actual_total = 0
     for section in sections:
+        stage('probe')
         source = directory / section['file']
         probe_result = subprocess.run([probe, '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', section['format'],
             '-i', str(source), '-show_entries', 'format=duration', '-of', 'json'], capture_output=True, timeout=60, check=True, **flags)
@@ -387,11 +483,13 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
                     raise OSError('low-disk-space')
                 wav = directory / 'working.wav'
                 try:
-                    atomic_json(directory / 'progress.json', {'phase': f'Transcribing section {index+1} of {len(sections)}', 'progress': min(99, 100 * completed / actual_total)})
+                    phase = f'Transcribing section {index+1} of {len(sections)}'
+                    stage('decode', f'Decoding section {index+1} of {len(sections)}', min(99, 100 * completed / actual_total))
                     subprocess.run([ffmpeg, '-v', 'error', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe',
                         '-f', section['format'], '-ss', str(offset), '-i', str(directory / section['file']), '-t', str(length),
                         '-vn', '-threads', '1', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav)],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=True, **flags)
+                        stdout=subprocess.DEVNULL, timeout=120, check=True, **flags)
+                    stage('transcribe', phase, min(99, 100 * completed / actual_total))
                     segments, _info = model.transcribe(str(wav), beam_size=3, vad_filter=True,
                         condition_on_previous_text=False, word_timestamps=False)
                     chunk_lines, text_size, last_progress = [], 0, 0
@@ -405,7 +503,7 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
                             raise ValueError('transcript-too-large')
                         if time.monotonic() - last_progress > 1:
                             position = min(length, max(0, float(segment.start)))
-                            atomic_json(directory / 'progress.json', {'phase': f'Transcribing section {index+1} of {len(sections)}', 'progress': min(99, 100 * (completed + position) / actual_total)})
+                            stage('transcribe', phase, min(99, 100 * (completed + position) / actual_total))
                             last_progress = time.monotonic()
                     checkpoint['chunks'][key] = chunk_lines
                     atomic_json(checkpoint_path, checkpoint)
@@ -415,8 +513,9 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
                     wav.unlink(missing_ok=True)
             lines.extend(checkpoint['chunks'][key])
             completed += length
-            atomic_json(directory / 'progress.json', {'phase': f'Transcribing section {index+1} of {len(sections)}', 'progress': min(99, 100 * completed / actual_total)})
+            stage('transcribe', f'Transcribing section {index+1} of {len(sections)}', min(99, 100 * completed / actual_total))
         result_sections.append({'start': section['start'], 'end': section['end'], 'text': '\n'.join(lines)})
+    stage('save', progress=99)
     atomic_json(directory / 'result.json', {'text': '\n\n'.join(s['text'] for s in result_sections), 'sections': result_sections})
 
 
@@ -447,7 +546,19 @@ def main():
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
     try:
         process_directory(args.process, args.model, args.threads, args.ffmpeg, args.packages)
-    except Exception:
+    except Exception as error:
+        traceback.print_exc()
+        if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+            # FFprobe captures stderr; keep it in the private PC log only.
+            print(error.stderr.decode('utf-8', errors='replace')[-8192:], file=sys.stderr)
+        try:
+            progress = json.loads((Path(args.process) / 'progress.json').read_text(encoding='utf-8'))
+            atomic_json(Path(args.process) / 'failure.json', {
+                'code': failure_code(error, progress.get('stage', 'startup')),
+                'exception': type(error).__name__,
+            })
+        except (OSError, ValueError):
+            pass
         return 1
     return 0
 

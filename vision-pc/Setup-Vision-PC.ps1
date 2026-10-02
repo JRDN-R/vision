@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription')]
+    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main'
@@ -384,6 +384,15 @@ try {
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
     if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
+    if ($Action -eq 'CheckLocalTranscription') {
+        Assert-InstalledProcessor
+        $CheckScript = Join-Path $InstallRoot 'setup_local.py'
+        if (-not (Test-Path -LiteralPath $CheckScript)) { throw 'Run -Action Update once to install the local transcription check.' }
+        $LocalLog = Join-Path $InstallRoot ('data\local-check-' + [Guid]::NewGuid().ToString('N'))
+        Invoke-LocalLogged @($CheckScript,'--check-server',$ConfigPath) $LocalLog
+        Write-Host 'The installed background processor passed. Retry your recording in Vision.' -ForegroundColor Green
+        exit 0
+    }
     if ($Action -eq 'EnableLocalTranscription') {
         $Config = Read-Configuration
         Assert-InstalledProcessor
@@ -428,12 +437,12 @@ try {
         Assert-VisionRoute $Tailscale $DnsName $TargetPublic
         $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
         # Stage and check all components before stopping the existing processor. No runtime or pip reinstall.
-        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py')) {
+        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py')) {
             Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'))
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'),(Join-Path $DownloadDir 'setup_local.py'))
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
-        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py')) {
+        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py')) {
             Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
         }
         $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $TargetPublic -Force
@@ -484,7 +493,7 @@ try {
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','requirements.txt')) {
+    foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py','requirements.txt')) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {

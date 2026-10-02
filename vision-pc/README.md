@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Ins
 
 This action also stages the current processor application, so a separate `Update` is not needed first. It downloads about 486 MB of model files plus optional Python packages from PyPI. Allow several minutes and at least a few GB of temporary free space. The model is the fixed [Systran/faster-whisper-small.en](https://huggingface.co/Systran/faster-whisper-small.en/tree/d1d751a5f8271d482d14ca55d9e2deeebbae577f) revision `d1d751a5f8271d482d14ca55d9e2deeebbae577f`.
 
-The existing processor keeps running during installation and model validation. Optional packages and model files go into their own directories under `C:\ProgramData\VisionPC\plugins` and `models`; the base runtime packages are not replaced. The installer performs an offline model load and short CPU inference before enabling anything. Activation restores the previous application and configuration if the restarted processor fails its health check. It retains the connection token, projects, conversations, startup task, and Tailscale route. A failed download or validation leaves the previous processor running; diagnostic logs and unused download directories are retained for troubleshooting.
+The existing processor keeps running during installation and model validation. Optional packages and model files go into their own directories under `C:\ProgramData\VisionPC\plugins` and `models`; the base runtime packages are not replaced. The installer checks offline model loading, short CPU inference, WAV decoding and the speech filter before enabling anything. Activation restores the previous application and configuration if the restarted processor fails its health check. It retains the connection token, projects, conversations, startup task, and Tailscale route. A failed download or validation leaves the previous processor running; diagnostic logs and unused download directories are retained for troubleshooting.
 
 After the command reports success, refresh Vision and select **Local PC** for transcription. Use a fresh HTML download for an older local copy. The PC must be awake and reachable while transferring audio and processing work. Model inference uses the already downloaded files, with online model downloads disabled at runtime. The model does English transcription with timestamps; timestamps can be approximate, and speaker labels are not provided. Review names, numbers, overlapping voices, music, and noisy speech before relying on the transcript.
 
@@ -69,6 +69,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\Vision
 Disabling the model does not stop separate YouTube imports, conversations, or other Windows applications. To stop all Vision work during a service, use the existing `Stop` action and later `Start`. Automatic service-hour scheduling is not configured.
 
 `InstallLocalTranscription` makes a fresh isolated installation each time; use `EnableLocalTranscription` for routine re-enabling. Logs are `C:\ProgramData\VisionPC\data\local-*.log`. On Windows, [CTranslate2 requires the Microsoft Visual C++ runtime](https://opennmt.net/CTranslate2/installation.html). If validation reports a missing runtime DLL, install or repair Microsoft's supported x64 runtime, then rerun installation. This script does not install a system Python, GPU drivers, CUDA, or the Visual C++ runtime, and it does not change the Windows password or login settings. The installer has static and isolated model checks; it has not been executed on this particular Windows PC by the developer.
+
+### If installation passes but a recording fails
+
+Update the processor code and run its background-worker check from administrator PowerShell. This reuses the installed model and optional packages; it does not download them again. `Update` briefly restarts the processor, so run it outside a service or important active work.
+
+```powershell
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Update
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action CheckLocalTranscription
+```
+
+The check submits generated WAV and MP3 silence to the running local processor, using the same queue and Windows task identity as a real recording. It checks decoding, Whisper, the ONNX speech filter, and the saved result, without calling an AI API. It keeps one small diagnostic project and reuses it. If the PC is busy and the check times out, it cancels only its own test job.
+
+New failed jobs show the failed stage and a diagnostic code in Activity; click **Retry** after updating to replace an older generic error. Detailed worker exceptions are retained in the private `data\server.log` (including native worker exit codes). The check prints only its own worker diagnostic. Model paths and raw exceptions are not returned to the web app. A successful generated-audio check confirms the processing path; it does not validate a particular recording or its transcript quality.
 
 ### Saved projects and sessions
 

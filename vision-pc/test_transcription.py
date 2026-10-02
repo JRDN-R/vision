@@ -1,5 +1,7 @@
 """Local transcription contract checks; no models, downloads or cloud requests."""
 import base64
+from contextlib import redirect_stderr
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import server
+import setup_local
 import transcription as local
 
 
@@ -126,7 +129,7 @@ class TranscriptionTests(unittest.TestCase):
 
     def test_terminal_errors_are_sanitized_without_any_cloud_fallback(self):
         job = self.submit().json['id']
-        with patch.object(self.service, 'run_local', side_effect=RuntimeError('secret /private/path sk-bad')), patch.object(server.requests, 'request') as network:
+        with self.assertLogs(server.app.logger, level='ERROR'), patch.object(self.service, 'run_local', side_effect=RuntimeError('secret /private/path sk-bad')), patch.object(server.requests, 'request') as network:
             self.assertTrue(self.service.work_once())
         network.assert_not_called()
         state = self.status(job).json
@@ -134,6 +137,68 @@ class TranscriptionTests(unittest.TestCase):
         self.assertNotIn('secret', state['error'])
         self.assertNotIn('/private', state['error'])
         self.assertEqual(self.submit().json['id'], job)
+
+    def test_windows_progress_sharing_violation_is_retried(self):
+        path = self.root / 'progress.json'
+        local.atomic_json(path, {'progress': 1})
+        replace = os.replace
+        count = 0
+        def temporarily_locked(source, target):
+            nonlocal count
+            count += 1
+            if count < 3:
+                self.assertEqual(json.loads(path.read_text()), {'progress': 1})
+                raise PermissionError('Windows sharing violation')
+            replace(source, target)
+        with patch.object(local.os, 'replace', side_effect=temporarily_locked), patch.object(local.time, 'sleep'):
+            local.atomic_json(path, {'progress': 2})
+        self.assertEqual(count, 3)
+        self.assertEqual(json.loads(path.read_text()), {'progress': 2})
+        with patch.object(local.os, 'replace', side_effect=PermissionError('persistent denial')) as denied, patch.object(local.time, 'sleep'):
+            with self.assertRaises(PermissionError):
+                local.atomic_json(path, {'progress': 3})
+        self.assertEqual(denied.call_count, 6)
+
+    def test_real_child_error_is_logged_bounded_and_returned_without_private_details(self):
+        # Exercise actual pipes, child exception reporting and parent cleanup.
+        (self.packages / 'faster_whisper' / '__init__.py').write_text(
+            "import sys\nsys.stderr.write('discard-this-prefix' + 'x'*200000 + '\\n')\n"
+            "raise ImportError('missing test DLL /private/path sk-private')\n")
+        job = self.submit().json['id']
+        with self.assertLogs(server.app.logger, level='ERROR') as logs:
+            self.assertTrue(self.service.work_once())
+        error = self.status(job).json['error']
+        self.assertIn('dependency / dependencies / ImportError', error)
+        self.assertIn('exit 0x00000001', error)
+        self.assertNotIn('/private', error)
+        self.assertNotIn('sk-private', error)
+        diagnostic = next(record.getMessage() for record in logs.records if 'worker exited' in record.getMessage())
+        self.assertIn('missing test DLL', diagnostic)
+        self.assertNotIn('discard-this-prefix', diagnostic)
+        self.assertLess(len(diagnostic), local.DIAGNOSTIC_LIMIT + 200)
+        self.service.prune()
+        self.assertIn('ImportError', self.status(job).json['error'])
+
+    def test_native_exit_keeps_last_stage_and_exit_code(self):
+        (self.packages / 'faster_whisper' / '__init__.py').write_text('import os\nos._exit(37)\n')
+        job = self.submit().json['id']
+        with self.assertLogs(server.app.logger, level='ERROR'):
+            self.service.work_once()
+        error = self.status(job).json['error']
+        self.assertIn('dependencies', error)
+        self.assertIn('exit 0x00000025', error)
+
+    def test_check_output_excludes_other_jobs_logs(self):
+        log = self.root / 'server.log'
+        log.write_text('2026-10-02 00:00:00 ERROR unrelated private information\n'
+                       '2026-10-02 00:01:00 ERROR Local transcription job abc worker exited 1. Local diagnostic:\n'
+                       'Traceback for generated check\nImportError: test DLL missing\n'
+                       '2026-10-02 00:02:00 ERROR other job private information\n')
+        output = io.StringIO()
+        with redirect_stderr(output):
+            setup_local.print_worker_diagnostic(log, 'abc')
+        self.assertIn('test DLL missing', output.getvalue())
+        self.assertNotIn('private information', output.getvalue())
 
     def test_validation_size_queue_disk_limits(self):
         for invalid in (float('nan'), float('inf'), True, '1', None):
