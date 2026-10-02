@@ -1,7 +1,7 @@
 """Rebuild the portable app, preserving its bundled media runtimes and artwork.
 
-Vision.html is also the asset template. All editable application code lives here;
-the builder replaces the final application script and the first style element.
+Vision.html supplies the existing bundled assets. Editable document structure,
+application code, and styles live under web/ and can be published independently.
 No credential or embedded runtime is printed by this command.
 """
 from pathlib import Path
@@ -10,27 +10,40 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'board.js', 'handoff.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'board.css', 'handoff.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css']
 
 
 def build():
     source = (ROOT / 'Vision.html').read_text(encoding='utf-8')
+    # Keep large, unchanged offline runtimes out of routine source uploads.
+    # SHA-addressed placeholders also prevent a missing or changed asset from
+    # silently producing a broken portable download.
+    bundles = {hashlib.sha256(m[1].encode('utf-8')).hexdigest(): m[1]
+               for m in re.finditer(r'<script\b[^>]*>([\s\S]*?)</script>', source)}
+    assets = {hashlib.sha256(m[0].encode('utf-8')).hexdigest(): m[0]
+              for m in re.finditer(r'''data:[^\s"'<>]+''', source) if len(m[0]) > 500}
+    template = (WEB / 'document.html').read_text(encoding='utf-8')
+    def restore(match):
+        kind, digest = match.groups()
+        value = (bundles if kind == 'BUNDLE' else assets).get(digest)
+        if value is None:
+            raise ValueError('Missing preserved asset: ' + kind + ' ' + digest)
+        return value
+    source = re.sub(r'\{\{VISION_(BUNDLE|ASSET)_([a-f0-9]{64})\}\}', restore, template)
     chunks = [(WEB / name).read_text(encoding='utf-8') for name in SCRIPTS]
     # Boot only after all optional interfaces and persistence hooks are installed.
     chunks = [re.sub(r'\nrenderAll\(\);\s*$', '\n', part) for part in chunks]
     script = '\n'.join(chunks) + '\nrenderAll();\n})();\n'
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
-    scripts = list(re.finditer(r'<script\b[^>]*>([\s\S]*?)</script>', source))
-    target = scripts[-1]
-    if 'const APP_SOURCE=' not in target.group(1):
-        raise ValueError('Could not locate the application script')
-    source = source[:target.start(1)] + script + source[target.end(1):]
+    if source.count('{{VISION_APPLICATION}}') != 1:
+        raise ValueError('Expected one application script placeholder')
+    source = source.replace('{{VISION_APPLICATION}}', script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
-    source, count = re.subn(r'(<style\b[^>]*>)[\s\S]*?(</style>)', lambda m: m[1] + css + m[2], source, count=1)
-    if count != 1:
-        raise ValueError('Could not locate the application stylesheet')
+    if source.count('{{VISION_STYLES}}') != 1:
+        raise ValueError('Expected one stylesheet placeholder')
+    source = source.replace('{{VISION_STYLES}}', css)
     (ROOT / 'Vision.html').write_text(source, encoding='utf-8')
     digest = hashlib.sha256(source.encode('utf-8')).hexdigest()
     index = ROOT / 'index.html'

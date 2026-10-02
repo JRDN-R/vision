@@ -86,6 +86,7 @@ board.addEventListener('click',e=>{if(mobileQuery.matches&&e.pointerType!=='mous
 
 board.addEventListener('pointerdown',e=>{if(busy||ioBusy||e.target.closest('.tools,.bottom-bar,.board-history,#empty,.attach-node,.sidebar-toggle,.add-node,.refresh-notice,.prompt-editor,.prompt-resize'))return;
  const card=e.target.closest('.node'),n=card&&nodeById(card.dataset.id);
+ if(e.button===0&&!space){const label=e.target.closest('.wire-condition');if(label){e.preventDefault();e.stopPropagation();setConnectionConditional(label.dataset.from,label.dataset.to,false);return;}const end=e.target.closest('.wire-end-hit');if(end){const edge=state.edges.find(v=>v.from===end.dataset.from&&v.to===end.dataset.to);if(edge){e.preventDefault();e.stopPropagation();board.focus({preventScroll:true});action=null;startConnection({nodeId:end.dataset.side==='out'?edge.from:edge.to,side:end.dataset.side,reconnect:edge},e);return;}}}
  if(e.button===0&&!space){const hit=connectorHit(e.clientX,e.clientY);if(hit){e.preventDefault();e.stopPropagation();board.focus({preventScroll:true});action=null;if(pending&&hit.side!==pending.side){finishConnection(hit);return;}startConnection(hit,e);return;}}
  if(e.button===1||space||tool==='hand'){e.preventDefault();pending=null;drawCables();action={type:'pan',startX:e.clientX,startY:e.clientY,x:state.view.x,y:state.view.y};return;}if(e.button!==0)return;board.focus({preventScroll:true});pending=null;const wire=e.target.closest('.wire-hit');if(wire){selectConnection(wire.dataset.from,wire.dataset.to);return;}if(n){const previous=selected;selectNode(n.id);if(e.target.closest('.caption-focus'))return;if(e.target.closest('.node-head')){e.preventDefault();checkpoint();action={type:'node',id:n.id,start:screenToWorld(e.clientX,e.clientY),x:n.x,y:n.y};return;}if(e.target.closest('.canvas-wrap')){const p=imagePoint(e,n);if(!p.inside)return;e.preventDefault();if(tool==='select'||tool==='eraser'){const hit=hitMark(n,p);selectedMark=hit;updateMarkSelection();if(!hit)return;if(tool==='eraser'){checkpoint();n.annotations=n.annotations.filter(a=>a.id!==hit);selectedMark=null;renderNode(n);markDirty();return;}checkpoint();action={type:'moveMark',id:n.id,mark:hit,start:p,original:cloneAnnotation(n.annotations.find(a=>a.id===hit))};return;}checkpoint();const a={id:uid(),type:tool,x1:p.x,y1:p.y,x2:p.x,y2:p.y,color:$('markColor').value,width:Number($('markWidth').value)/1000};if(tool==='pen')a.points=[{x:p.x,y:p.y}];n.annotations.push(a);selectedMark=null;action={type:'draw',id:n.id,mark:a.id};renderNode(n);return;}return;}pending=null;selectNode(null);action={type:'pan',startX:e.clientX,startY:e.clientY,x:state.view.x,y:state.view.y};e.preventDefault();});
 window.addEventListener('pointermove',e=>{const r=board.getBoundingClientRect();if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)lastPointer={x:e.clientX,y:e.clientY};if(pending){pending.point={x:e.clientX-r.left,y:e.clientY-r.top};drawCables();}if(!action)return;const n=nodeById(action.id);if(action.type==='pan'){state.view.x=action.x+e.clientX-action.startX;state.view.y=action.y+e.clientY-action.startY;updateView();}else if(action.type==='node'&&n){const p=screenToWorld(e.clientX,e.clientY);n.x=action.x+p.x-action.start.x;n.y=action.y+p.y-action.start.y;const el=document.getElementById('node-'+n.id);el.style.left=n.x+'px';el.style.top=n.y+'px';drawCables();markDirty();}else if(n){const p=imagePoint(e,n),a=n.annotations.find(a=>a.id===action.mark);if(!a)return;if(action.type==='draw'){let x=p.x,y=p.y;if(e.shiftKey&&['ellipse','rect'].includes(a.type)){const side=Math.min(Math.abs(x-a.x1),Math.abs(y-a.y1)*n.height/n.width);x=a.x1+Math.sign(x-a.x1)*side;y=a.y1+Math.sign(y-a.y1)*side*n.width/n.height;}a.x2=x;a.y2=y;if(a.type==='pen')a.points.push({x,y});}else{const orig=action.original,b=annotationBounds(orig);const dx=clamp(p.x-action.start.x,-b.x1,1-b.x2),dy=clamp(p.y-action.start.y,-b.y1,1-b.y2);a.x1=orig.x1+dx;a.x2=orig.x2+dx;a.y1=orig.y1+dy;a.y2=orig.y2+dy;if(orig.points)a.points=orig.points.map(p=>({x:p.x+dx,y:p.y+dy}));}renderNode(n);markDirty();}});
@@ -95,11 +96,11 @@ board.addEventListener('wheel',e=>{if(e.target.closest('.tools,.prompt-editor'))
 board.addEventListener('contextmenu',e=>{e.preventDefault();pending=null;selectedMark=null;drawCables();updateMarkSelection();});
 function readFile(file){return new Promise((res,rej)=>{const reader=new FileReader();reader.onload=()=>res(reader.result);reader.onerror=()=>rej(new Error('Could not read '+file.name));reader.readAsDataURL(file);});}
 async function importImages(files,location){if(ioBusy||busy)return;const list=Array.from(files).filter(f=>f.type.startsWith('image/')||/\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name));if(!list.length){toast('Use PNG, JPG, WebP, GIF, BMP, or AVIF images.',true);return;}ioBusy=true;const center=location||lastPointer||{x:board.getBoundingClientRect().left+board.clientWidth/2,y:board.getBoundingClientRect().top+board.clientHeight/2};const p=screenToWorld(center.x,center.y),added=[],errors=[];toast('Adding images…');for(const file of list){try{if(!/^(image\/(png|jpeg|jpg|webp|gif|bmp|avif))$/i.test(file.type)&&!(/\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name)&&!file.type))throw new Error('Unsupported format: '+file.name);let src=await readFile(file);if(!/^data:image\//i.test(src)){const ext=file.name.split('.').pop().toLowerCase(),mime={jpg:'jpeg',jpeg:'jpeg',png:'png',webp:'webp',gif:'gif',bmp:'bmp',avif:'avif'}[ext];if(mime)src=src.replace(/^data:[^;,]*/, 'data:image/'+mime);}const img=await R.loadImage(src);added.push({id:uid(),kind:'image',prompt:'',title:file.name.replace(/\.[^.]+$/,''),src,width:img.naturalWidth,height:img.naturalHeight,x:p.x-170+(added.length%3)*405,y:p.y-100+Math.floor(added.length/3)*430,caption:'',annotations:[],attachments:[]});}catch(e){errors.push(file.name+': '+e.message);}}if(added.length){checkpoint();state.nodes.push(...added);autoConnectModules(added);added.forEach(createNode);markDirty();updateSequence();selectNode(added[added.length-1].id);setTool(tool);if(added.length>1)fitBoard();}ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());toast(errors.length?`${added.length} added. ${errors.join(' ')}`:`${added.length} image${added.length===1?'':'s'} added. Drag either connector to adjust the order.`,!!errors.length);}
-document.addEventListener('paste',e=>{if(document.querySelector('dialog[open]'))return;const files=Array.from(e.clipboardData?.items||[]).filter(i=>i.kind==='file'&&i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();importImages(files);}});
+document.addEventListener('paste',e=>{if(document.querySelector('dialog[open]')||isBoardTextEditing(e.target))return;const files=Array.from(e.clipboardData?.files||[]),text=e.clipboardData?.getData('text/plain')||'';if(files.length){e.preventDefault();importBoardFiles(files);}else if(text.trim()){e.preventDefault();createTextModule(text);}});
 board.addEventListener('dragenter',e=>{if(Array.from(e.dataTransfer?.types||[]).includes('Files'))e.preventDefault();});
 board.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';const card=e.target.closest('.node');world.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'));if(card)card.classList.add('drop-target');});
 board.addEventListener('dragleave',e=>{if(!board.contains(e.relatedTarget))world.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'));});
-board.addEventListener('drop',e=>{e.preventDefault();world.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'));const files=e.dataTransfer.files,card=e.target.closest('.node');if(card){attachFiles(card.dataset.id,files);return;}if(files.length===1&&/\.(json|framewire|zip)$/i.test(files[0].name))openProject(files[0]);else if(Array.from(files).every(f=>videoFile(f)||f.type.startsWith('image/')||/\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name)))importMedia(files,{x:e.clientX,y:e.clientY});else if(selected)attachFiles(selected,files);else toast('Create a node with + Node, then drop files onto it.',true);});
+board.addEventListener('drop',e=>{e.preventDefault();world.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'));const files=e.dataTransfer.files,card=e.target.closest('.node');if(card&&files.length){attachFiles(card.dataset.id,files);return;}const location={x:e.clientX,y:e.clientY};if(files.length===1&&/\.(vision\.json|framewire)$/i.test(files[0].name))openProject(files[0]);else if(files.length)importBoardFiles(files,location);else{const text=e.dataTransfer.getData('text/plain');if(text.trim())createTextModule(text,{location});}});
 window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>e.preventDefault());
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 function finite(v,a,b,fallback){return typeof v==='number'&&Number.isFinite(v)?clamp(v,a,b):fallback;}
@@ -114,7 +115,7 @@ $('nodeTitle').onfocus=$('captionInput').onfocus=$('projectTitle').onfocus=()=>c
 const settings=[['fontSize','fontSize',16,80],['captionPadding','padding',10,100],['minCaption','minCaption',0,300],['captionAlign','align']];for(const [id,key,min,max]of settings)$(id).onchange=()=>{checkpoint();state.settings[key]=key==='align'?$(id).value:clamp(Number($(id).value)||min,min,max);syncSettings();state.nodes.forEach(renderNode);markDirty();};
 document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{pending=null;drawCables();setTool(b.dataset.tool);});document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{$('markColor').value=b.dataset.color;applyMarkStyle();});function applyMarkStyle(){const n=nodeById(selected),a=n?.annotations.find(a=>a.id===selectedMark);if(a){checkpoint();a.color=$('markColor').value;a.width=Number($('markWidth').value)/1000;renderNode(n);markDirty();}}$('markColor').onchange=applyMarkStyle;$('markWidth').oninput=()=>{$('markWidthValue').textContent=$('markWidth').value;};$('markWidth').onchange=applyMarkStyle;
 $('deleteNode').onclick=()=>{selectedMark=null;deleteSelection();};$('clearMarks').onclick=()=>{const n=nodeById(selected);if(n?.annotations.length){checkpoint();n.annotations=[];selectedMark=null;renderNode(n);markDirty();}};$('disconnectBtn').onclick=()=>{if(!selected)return;checkpoint();state.edges=state.edges.filter(e=>e.from!==selected&&e.to!==selected);markDirty();updateSequence();drawCables();syncModuleInspector();};$('undoBtn').onclick=()=>undo();$('redoBtn').onclick=()=>undo(true);$('zoomIn').onclick=()=>zoomTo(state.view.scale*1.25);$('zoomOut').onclick=()=>zoomTo(state.view.scale/1.25);$('fitBtn').onclick=fitBoard;$('resetZoom').onclick=()=>zoomTo(1);$('helpBtn').onclick=()=>$('helpDialog').showModal();$('closeHelp').onclick=$('helpDone').onclick=()=>$('helpDialog').close();
-window.addEventListener('keydown',e=>{const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)||document.activeElement?.isContentEditable;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveProject();return;}if(document.querySelector('dialog[open]')||busy||ioBusy)return;if(editing)return;const key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();undo(e.shiftKey);return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();undo(true);return;}if(e.ctrlKey||e.metaKey||e.altKey)return;if(key===' '){space=true;e.preventDefault();}else if(key==='escape'){pending=null;selectedMark=null;selectedEdge=null;action=null;setTool('select');drawCables();updateMarkSelection();}else if(key==='delete'||key==='backspace'){e.preventDefault();deleteSelection();}else if(key==='f')fitBoard();else if({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key])setTool({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key]);});window.addEventListener('keyup',e=>{if(e.key===' ')space=false;});window.addEventListener('resize',updateView);
+window.addEventListener('keydown',e=>{const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)||document.activeElement?.isContentEditable;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveProject();return;}if(document.querySelector('dialog[open]')||busy||ioBusy)return;if(editing)return;const key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();undo(e.shiftKey);return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();undo(true);return;}if(e.ctrlKey||e.metaKey||e.altKey)return;if(key==='tab'&&typeof navigateBoardModule==='function'&&navigateBoardModule(e.shiftKey)){e.preventDefault();return;}if(key===' '){space=true;e.preventDefault();}else if(key==='escape'){pending=null;selectedMark=null;selectedEdge=null;action=null;setTool('select');drawCables();updateMarkSelection();}else if(key==='delete'||key==='backspace'){e.preventDefault();deleteSelection();}else if(key==='f')fitBoard();else if({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key])setTool({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key]);});window.addEventListener('keyup',e=>{if(e.key===' ')space=false;});window.addEventListener('resize',updateView);
 // Audio is sent only to the chosen transcription provider; Local PC is the default.
 let attachmentTarget=null, transcriptionQueue=[], transcriptionJob=null, sessionApiKey=window.JEWCredential?.key||'';
 const mediaExtensions=/\.(mp3|mp2|wav|wave|m4a|aac|flac|ogg|oga|opus|aiff|aif|wma|mp4|m4v|mov|webm|mkv|avi|mpeg|mpg|3gp|mts|m2ts)$/i;
@@ -149,7 +150,7 @@ $('sidebarClose').onclick=()=>{setSidebar(false);$('sidebarToggle').focus();};
 setSidebar(sidebarOpen);
 
 // Module and branching board behavior.
-let branchHintShown=false,nodePosterPromise=null;
+let nodePosterPromise=null;
 const cardWidth=n=>n?.kind==='node'&&!n.promptEditing?220:340;
 function orderedNodes(){
  const degree=new Map(state.nodes.map(n=>[n.id,0])),next=new Map(state.nodes.map(n=>[n.id,[]])),rank=new Map(state.nodes.map((n,i)=>[n.id,i]));
@@ -160,11 +161,16 @@ function orderedNodes(){
 }
 function orderedChains(){return state.nodes.length?[orderedNodes()]:[];}
 function portPoint(n,out){return{x:state.view.x+(n.x+(out?cardWidth(n):0))*state.view.scale,y:state.view.y+(n.y+63)*state.view.scale};}
+function edgeIsConditional(edge,edges=state.edges){return typeof edge.conditionEnabled==='boolean'?edge.conditionEnabled:!!String(edge.condition||'').trim()||edges.filter(e=>e.from===edge.from).length>1;}
+function wireHandlePoint(a,b,side){
+ const bend=Math.max(75,Math.abs(b.x-a.x)*.45),t=side==='out'?.17:.83,u=1-t;
+ return{x:u*u*u*a.x+3*u*u*t*(a.x+bend)+3*u*t*t*(b.x-bend)+t*t*t*b.x,y:u*u*u*a.y+3*u*u*t*a.y+3*u*t*t*b.y+t*t*t*b.y};
+}
 function drawCables(){
- let s='';for(const e of state.edges){const a=nodeById(e.from),b=nodeById(e.to);if(!a||!b)continue;const ap=portPoint(a,true),bp=portPoint(b,false),d=pathFor(ap,bp),active=selectedEdge===e.from+'|'+e.to,branch=state.edges.filter(v=>v.from===e.from).length>1||!!e.condition;
- s+=`<path class="wire${active?' active':''}${branch?' branch':''}" d="${d}" marker-end="url(#wireArrow)"/><path class="wire-hit" data-from="${escapeHTML(e.from)}" data-to="${escapeHTML(e.to)}" d="${d}"/>`;
- if(active){for(const [side,p]of [['out',ap],['in',bp]])s+=`<circle class="wire-end" cx="${p.x}" cy="${p.y}" r="8" data-side="${side}"/><circle class="wire-end-hit" cx="${p.x}" cy="${p.y}" r="22" data-side="${side}"/>`;}
- if(branch){const label=e.condition?'IF: '+e.condition:'IF: set condition';s+=`<text class="wire-label" x="${(ap.x+bp.x)/2}" y="${(ap.y+bp.y)/2-10}" text-anchor="middle">${escapeHTML(label.length>48?label.slice(0,45)+'…':label)}</text>`;}
+ let s='';for(const e of state.edges){const a=nodeById(e.from),b=nodeById(e.to);if(!a||!b||pending?.reconnect?.from===e.from&&pending.reconnect.to===e.to)continue;const ap=portPoint(a,true),bp=portPoint(b,false),d=pathFor(ap,bp),active=selectedEdge===e.from+'|'+e.to,branch=edgeIsConditional(e),data=`data-from="${escapeHTML(e.from)}" data-to="${escapeHTML(e.to)}"`;
+ s+=`<path class="wire${active?' active':''}${branch?' branch':''}" d="${d}" marker-end="url(#wireArrow)"/><path class="wire-hit" ${data} d="${d}"/>`;
+ for(const side of ['out','in']){const p=wireHandlePoint(ap,bp,side);s+=`<circle class="wire-end${active?' active':''}" cx="${p.x}" cy="${p.y}" r="${active?7:5}"/><circle class="wire-end-hit" ${data} data-side="${side}" cx="${p.x}" cy="${p.y}" r="22" role="button" tabindex="0" aria-label="Move ${side==='out'?'start':'end'} of connection from ${escapeHTML(a.title)} to ${escapeHTML(b.title)}"><title>Drag to move this end. Release on empty space to keep the connection.</title></circle>`;}
+ if(branch){const label=e.condition?'IF: '+e.condition:'IF: set condition',short=label.length>48?label.slice(0,45)+'…':label,x=(ap.x+bp.x)/2,y=(ap.y+bp.y)/2-10,w=Math.min(330,short.length*6+18);s+=`<g class="wire-condition" ${data} role="button" tabindex="0" aria-label="Make this path unconditional"><title>Click to remove IF. Turn it back on in Paths.</title><rect class="wire-condition-hit" x="${x-w/2}" y="${y-22}" width="${w}" height="44" rx="8"/><text class="wire-label" x="${x}" y="${y}" text-anchor="middle">${escapeHTML(short)}</text></g>`;}
  }$('wirePaths').innerHTML=s;let d='';if(pending){const n=nodeById(pending.nodeId);if(n)d=pending.side==='out'?pathFor(portPoint(n,true),pending.point):pathFor(pending.point,portPoint(n,false));}$('pendingWire').setAttribute('d',d);
 }
 // Connector coordinates stay in screen pixels so touch targets never shrink with zoom.
@@ -174,6 +180,7 @@ function connectorHit(clientX,clientY,side=null,reconnecting=true){
  const active=reconnecting&&selectedEdge&&state.edges.find(e=>e.from+'|'+e.to===selectedEdge);
  const consider=(n,s,edge=null)=>{if(!n||side&&s!==side||s==='in'&&n===state.nodes[0]&&!state.edges.some(e=>e.to===n.id))return;const p=portPoint(n,s==='out'),d=Math.hypot(p.x-x,p.y-y);if(d<=Math.max(23,10*state.view.scale)&&d<distance){best={nodeId:n.id,side:s,reconnect:edge};distance=d;}};
  if(active){consider(nodeById(active.from),'out',active);consider(nodeById(active.to),'in',active);if(best)return best;}
+ if(reconnecting){for(const edge of state.edges){const a=nodeById(edge.from),b=nodeById(edge.to);if(!a||!b)continue;for(const s of ['out','in']){if(side&&side!==s)continue;const p=wireHandlePoint(portPoint(a,true),portPoint(b,false),s),d=Math.hypot(p.x-x,p.y-y);if(d<=22&&d<distance){best={nodeId:s==='out'?edge.from:edge.to,side:s,reconnect:edge};distance=d;}}}if(best)return best;}
  for(const n of state.nodes){consider(n,'in');consider(n,'out');}return best;
 }
 function startConnection(hit,e){
@@ -194,8 +201,8 @@ function connect(from,to,replace=null){
  if(!connectionAllowed(from,to,remaining)){toast('That connection would create a loop.',true);return false;}
  if(replace&&replace.from===from&&replace.to===to){pending=null;drawCables();return true;}
  if(remaining.some(e=>e.from===from&&e.to===to)){pending=null;drawCables();if(replace)toast('Those modules are already connected. The original path was kept.');return !replace;}
- checkpoint();state.edges=[...remaining,{from,to,condition:replace?.condition||''}];pending=null;selectedEdge=null;markDirty();updateSequence();drawCables();syncModuleInspector();
- if(state.edges.filter(e=>e.from===from).length>1){selectConnection(from,to);if(!branchHintShown){branchHintShown=true;toast('Splitting paths creates IF statements. Set a condition for each outgoing path.');}}else toast(replace?'Connection moved.':'Modules connected.');
+ checkpoint();state.edges=[...remaining,{from,to,condition:replace?.condition||'',conditionEnabled:replace?edgeIsConditional(replace):false}];pending=null;selectedEdge=null;markDirty();updateSequence();drawCables();syncModuleInspector();
+ toast(replace?'Connection moved.':'Modules connected. Both paths can run; add IF only when needed.');
  return true;
 }
 function autoConnectionSource(added=[]){
@@ -204,17 +211,17 @@ function autoConnectionSource(added=[]){
 }
 function autoConnectModules(added){
  let source=autoConnectionSource(added);
- for(const n of added){if(source&&connectionAllowed(source.id,n.id))state.edges.push({from:source.id,to:n.id,condition:''});source=n;}
+ for(const n of added){if(source&&connectionAllowed(source.id,n.id))state.edges.push({from:source.id,to:n.id,condition:'',conditionEnabled:false});source=n;}
 }
 function updateSequence(){
  const order=orderedNodes();$('sequenceCount').textContent=order.length;$('empty').classList.toggle('hidden',!!order.length);$('boardStats').textContent=`${order.length} modules · ${state.nodes.reduce((sum,n)=>sum+(n.attachments||[]).filter(a=>!a.metadataOnly).length,0)} files`;$('exportBtn').disabled=!order.length;$('flowList').innerHTML='';
- order.forEach((n,i)=>{const b=document.createElement('button');b.className='flow-row';b.innerHTML=`<small>${String(i+1).padStart(2,'0')}</small><span>${escapeHTML(n.title)}${state.edges.filter(e=>e.from===n.id).length>1?' · IF paths':''}</span>`;b.onclick=()=>{selectNode(n.id);state.view.x=board.clientWidth/2-(n.x+cardWidth(n)/2)*state.view.scale;state.view.y=90-n.y*state.view.scale;updateView();};$('flowList').appendChild(b);const el=document.getElementById('node-'+n.id);if(el){el.querySelector('.order-number').textContent=String(i+1).padStart(2,'0');el.querySelector('.node-title').textContent=n.title;const input=el.querySelector('.in');input.hidden=n===state.nodes[0]&&!state.edges.some(e=>e.to===n.id);input.classList.toggle('connected',state.edges.some(e=>e.to===n.id));el.querySelector('.out').classList.toggle('connected',state.edges.some(e=>e.from===n.id));}});
- const split=state.nodes.some(n=>state.edges.filter(e=>e.from===n.id).length>1);$('flowNote').textContent=split?'Numbering lists all modules once. IF conditions decide which paths the model follows. Click a cable to edit its condition.':order.length?'Drag either connector to link modules. Select a cable, then drag either end to move it.':'Add an image, video, or blank node to begin.';
+ order.forEach((n,i)=>{const b=document.createElement('button');b.className='flow-row';b.innerHTML=`<small>${String(i+1).padStart(2,'0')}</small><span>${escapeHTML(n.title)}${state.edges.filter(e=>e.from===n.id).length>1?(state.edges.some(e=>e.from===n.id&&edgeIsConditional(e))?' · IF paths':' · parallel paths'):''}</span>`;b.onclick=()=>focusBoardNode(n.id);$('flowList').appendChild(b);const el=document.getElementById('node-'+n.id);if(el){el.querySelector('.order-number').textContent=String(i+1).padStart(2,'0');el.querySelector('.node-title').textContent=n.title;const input=el.querySelector('.in');input.hidden=n===state.nodes[0]&&!state.edges.some(e=>e.to===n.id);input.classList.toggle('connected',state.edges.some(e=>e.to===n.id));el.querySelector('.out').classList.toggle('connected',state.edges.some(e=>e.from===n.id));}});
+ const split=state.nodes.some(n=>state.edges.filter(e=>e.from===n.id).length>1);$('flowNote').textContent=split?'Parallel paths run together. Add IF in Paths only when a connection needs a condition. Tap an IF label to remove it.':order.length?'Drag the small handle at either wire end to move it. Release on empty space to keep its original connection.':'Add an image, video, or blank node to begin.';
 }
 function syncModuleInspector(){
  const n=nodeById(selected);$('modulePrompt').value=n?.prompt||'';$('modulePaths').innerHTML='';
- if(n){for(const e of state.edges.filter(e=>e.from===n.id)){const b=document.createElement('button');b.className='flow-row full';b.textContent=(e.condition?'IF '+e.condition:state.edges.filter(v=>v.from===n.id).length>1?'IF: set condition':'Next')+' → '+nodeById(e.to)?.title;b.onclick=()=>selectConnection(e.from,e.to);$('modulePaths').appendChild(b);}}
- const edge=state.edges.find(e=>e.from+'|'+e.to===selectedEdge);$('branchEditor').classList.toggle('hidden',!edge);if(edge){$('branchTitle').textContent=nodeById(edge.from).title+' → '+nodeById(edge.to).title;$('branchCondition').value=edge.condition||'';}
+ if(n){for(const e of state.edges.filter(e=>e.from===n.id)){const b=document.createElement('button');b.className='flow-row full';b.textContent=(edgeIsConditional(e)?(e.condition?'IF '+e.condition:'IF: set condition'):'Next')+' → '+nodeById(e.to)?.title;b.onclick=()=>selectConnection(e.from,e.to);$('modulePaths').appendChild(b);}}
+ const edge=state.edges.find(e=>e.from+'|'+e.to===selectedEdge);$('branchEditor').classList.toggle('hidden',!edge);if(edge){$('branchTitle').textContent=nodeById(edge.from).title+' → '+nodeById(edge.to).title;$('branchCondition').value=edge.condition||'';const toggle=$('branchConditional');if(toggle)toggle.checked=edgeIsConditional(edge);$('branchCondition').disabled=!edgeIsConditional(edge);}
 }
 function selectConnection(from,to){selectNode(null);selectedEdge=from+'|'+to;syncModuleInspector();drawCables();setSidebar(true);}
 async function nodePoster(){
@@ -237,14 +244,14 @@ async function attachFiles(id,files){
 function removeAttachment(n,a){if(busy||ioBusy)return;checkpoint();const removed=new Set([a.id]);for(const f of n.attachments)if(f.videoOf===a.id||f.transcriptOf===a.id)removed.add(f.id);n.attachments=n.attachments.filter(f=>!removed.has(f.id));if(n.videoSourceId===a.id)n.videoSourceId=null;pruneTranscriptionQueue();markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
 function renderAttachments(){
  const host=$('attachmentsList');host.innerHTML='';const n=nodeById(selected);$('attachmentCount').textContent=(n?.attachments||[]).filter(a=>!a.metadataOnly).length;$('addAttachments').disabled=!n;if(!n)return;
- for(const a of n.attachments||[]){if(a.role==='video-frame')continue;const row=document.createElement('div');row.className='attachment-row';const info=document.createElement('div');info.className='attachment-info';const name=document.createElement('span');name.textContent=a.name;name.title=a.name;info.appendChild(name);const meta=document.createElement('small'),shots=n.attachments.filter(f=>f.videoOf===a.id&&f.role==='video-frame').length;meta.textContent=videoFile(a)?`${shots} screenshots · ${a.snapshotsStatus||'not processed'} · video not stored`:(a.metadataOnly&&isAudioSource(a)?'Audio removed · transcript saved':readableBytes(a.size))+(a.transcriptOf?' · transcript · '+(a.status||'pending'):a.status?' · '+a.status:'');info.appendChild(meta);row.appendChild(info);const buttons=document.createElement('div');buttons.className='attachment-actions';if(a.data){const down=document.createElement('button');down.textContent='↓';down.title='Download attachment';down.onclick=()=>download(new Blob([bytesFromDataURL(a.data)],{type:a.mime}),R.safeFilename(a.name));buttons.appendChild(down);if(mediaFile(a)){const tr=document.createElement('button');tr.textContent='Text';tr.title='Transcribe audio again';tr.onclick=()=>offerTranscription(n.id,[a.id]);buttons.appendChild(tr);}}const remove=document.createElement('button');remove.textContent='×';remove.title='Remove file and its generated screenshots/transcript';remove.onclick=()=>removeAttachment(n,a);buttons.appendChild(remove);row.appendChild(buttons);host.appendChild(row);
+ for(const a of n.attachments||[]){if(a.role==='video-frame')continue;const row=document.createElement('div');row.className='attachment-row';const info=document.createElement('div');info.className='attachment-info';const name=document.createElement('span');name.textContent=a.name;name.title=a.name;info.appendChild(name);const meta=document.createElement('small'),shots=n.attachments.filter(f=>f.videoOf===a.id&&f.role==='video-frame').length;meta.textContent=videoFile(a)?`${shots} screenshots · ${a.snapshotsStatus||'not processed'} · ${n.pcVideo?.sourceId===a.id?(n.pcVideo.preview?'small preview on PC · original omitted':n.pcVideo.previewDeleted?'PC preview removed · original omitted':'PC preview pending · original omitted'):'video not stored'}`:(a.metadataOnly&&isAudioSource(a)?'Audio removed · transcript saved':readableBytes(a.size))+(a.transcriptOf?' · transcript · '+(a.status||'pending'):a.status?' · '+a.status:'');info.appendChild(meta);row.appendChild(info);const buttons=document.createElement('div');buttons.className='attachment-actions';if(a.data){const down=document.createElement('button');down.textContent='↓';down.title='Download attachment';down.onclick=()=>download(new Blob([bytesFromDataURL(a.data)],{type:a.mime}),R.safeFilename(a.name));buttons.appendChild(down);if(mediaFile(a)){const tr=document.createElement('button');tr.textContent='Text';tr.title='Transcribe audio again';tr.onclick=()=>offerTranscription(n.id,[a.id]);buttons.appendChild(tr);}}const remove=document.createElement('button');remove.textContent='×';remove.title='Remove file and its generated screenshots/transcript';remove.onclick=()=>removeAttachment(n,a);buttons.appendChild(remove);row.appendChild(buttons);host.appendChild(row);
  }if(!n.attachments.length){const p=document.createElement('p');p.className='mini-note';p.textContent='Drop files onto this module. Videos create timed screenshots and a transcript.';host.appendChild(p);}
 }
 function refreshNodeAttachments(n){const el=document.getElementById('node-'+n.id);if(!el)return;const count=(n.attachments||[]).filter(a=>!a.metadataOnly).length,tag=el.querySelector('.node-file-count');if(tag)tag.textContent=count?`${count} files`:'Drop files here';}
 function saveMediaTranscript(n,source,text,status){if(videoFile(source))storeVideoTranscript(n,source,videoTranscriptClock(text,source.audioOffsetFromVideo||0),status);else saveTranscript(n,source,text,status);}
 $('addNodeButton').onclick=addBlankNode;
 $('modulePrompt').onfocus=()=>checkpoint();$('modulePrompt').oninput=e=>{const n=nodeById(selected);if(n){n.prompt=e.target.value;markDirty();}};
-$('branchCondition').onfocus=()=>checkpoint();$('branchCondition').oninput=e=>{const edge=state.edges.find(v=>v.from+'|'+v.to===selectedEdge);if(edge){edge.condition=e.target.value;markDirty();drawCables();}};
+$('branchCondition').onfocus=()=>checkpoint();$('branchCondition').oninput=e=>{const edge=state.edges.find(v=>v.from+'|'+v.to===selectedEdge);if(edge){edge.condition=e.target.value;edge.conditionEnabled=true;markDirty();drawCables();updateSequence();}};
 $('deleteBranch').onclick=()=>{deleteSelection();syncModuleInspector();};
 
 function hasWorkToLose(){return dirty||busy||ioBusy||state.nodes.length>0;}
@@ -308,7 +315,7 @@ $('modulePrompt').oninput=e=>{const n=nodeById(selected);if(n){n.prompt=e.target
 
 // Videos are evidence packages: a static thumbnail, JPEG frames, and a timed transcript.
 const videoExtensions=/\.(mp4|m4v|mov|webm|mkv|avi|mpeg|mpg|3gp|mts|m2ts|ogv|wmv)$/i;
-function videoFile(file){return /^video\//i.test(file?.mime||file?.type||'')||videoExtensions.test(file?.name||'');}
+function videoFile(file){const mime=file?.mime||file?.type||'';return !/^audio\//i.test(mime)&&(/^video\//i.test(mime)||videoExtensions.test(file?.name||''));}
 function videoInterval(duration){return duration<=5?1:duration<300?5:duration<600?30:60;}
 function videoTimestamp(seconds){const negative=seconds<0,value=Math.round(Math.abs(seconds)*1000),h=Math.floor(value/3600000),m=Math.floor(value/60000)%60,s=Math.floor(value/1000)%60;return(negative?'-':'')+[h,m,s].map(x=>String(x).padStart(2,'0')).join(':')+'.'+String(value%1000).padStart(3,'0');}
 function videoTranscriptClock(text,offset){if(!offset)return text;return text.replace(/(\[(?:Section start )?)(\d+):(\d{2}):(\d{2})\.(\d{3})(?=\]|;)/g,(_,prefix,h,m,s,ms)=>prefix+videoTimestamp(Number(h)*3600+Number(m)*60+Number(s)+Number(ms)/1000+offset));}
@@ -419,6 +426,8 @@ function validateAttachments(raw){
   if(typeof a.snapshotError==='string')item.snapshotError=a.snapshotError.slice(0,2000);
   if(['complete','partial','failed','canceled','pending','no-audio','queued','waiting','sending','paused','error'].includes(a.transcriptionStatus))item.transcriptionStatus=a.transcriptionStatus;
   if(['local','gemini','captions','imported'].includes(a.transcriptionProvider))item.transcriptionProvider=a.transcriptionProvider;
+  if(a.transcriptToPrompt===true)item.transcriptToPrompt=true;
+  if(typeof a.promptTranscriptText==='string')item.promptTranscriptText=a.promptTranscriptText.slice(0,1000000);
   if(typeof a.videoHasAudio==='boolean')item.videoHasAudio=a.videoHasAudio;
   if(typeof a.audioOffsetFromVideo==='number'&&Number.isFinite(a.audioOffsetFromVideo))item.audioOffsetFromVideo=a.audioOffsetFromVideo;
   return item;
@@ -439,12 +448,14 @@ async function validateProject(raw){
   const attachments=validateAttachments(v.attachments),kind=v.kind||'image';
   const n={attachments,transcriptionJobs:validateTranscriptionJobs(v.transcriptionJobs,attachments),id:v.id,kind,promptEditing:kind==='node'&&v.promptEditing===true,promptHeight:finite(v.promptHeight,150,2400,240),prompt:typeof v.prompt==='string'?v.prompt:'',title:String(v.title||(kind==='node'?'Node':kind==='video'?'Video':'Image')).slice(0,150),caption:String(v.caption||''),src:v.src,width:img.naturalWidth,height:img.naturalHeight,x:finite(v.x,-1e6,1e6,0),y:finite(v.y,-1e6,1e6,0),annotations};
   if(typeof v.videoSourceId==='string'&&attachments.some(a=>a.id===v.videoSourceId))n.videoSourceId=v.videoSourceId;
+  if(typeof v.fileType==='string')n.fileType=v.fileType.slice(0,40);
+  if(typeof v.sourceAttachmentId==='string'&&attachments.some(a=>a.id===v.sourceAttachmentId))n.sourceAttachmentId=v.sourceAttachmentId;
   normalizeCompletedAudio([n]);nodes.push(n);
  }
  const edges=[],pairs=new Set(),outgoing=new Map(nodes.map(n=>[n.id,[]])),indegree=new Map(nodes.map(n=>[n.id,0]));
  for(const e of raw.edges){
   if(!e||!ids.has(e.from)||!ids.has(e.to)||e.from===e.to||pairs.has(e.from+'|'+e.to))throw new Error('This project has invalid connections.');
-  pairs.add(e.from+'|'+e.to);edges.push({from:e.from,to:e.to,condition:typeof e.condition==='string'?e.condition:''});outgoing.get(e.from).push(e.to);indegree.set(e.to,indegree.get(e.to)+1);
+  pairs.add(e.from+'|'+e.to);edges.push({from:e.from,to:e.to,condition:typeof e.condition==='string'?e.condition:'',conditionEnabled:edgeIsConditional(e,raw.edges)});outgoing.get(e.from).push(e.to);indegree.set(e.to,indegree.get(e.to)+1);
  }
  const queue=nodes.filter(n=>indegree.get(n.id)===0).map(n=>n.id);let visited=0;
  for(let i=0;i<queue.length;i++){visited++;for(const to of outgoing.get(queue[i])){indegree.set(to,indegree.get(to)-1);if(indegree.get(to)===0)queue.push(to);}}
@@ -458,13 +469,13 @@ function refreshExport(){
  $('exportIntro').textContent=rich?'A compact AI ZIP with numbered modules, screenshots, transcripts, attachments, and one main instruction. Editing data stays in Save project.':'A ZIP of numbered PNG images, in cable order. Captions and drawings are baked into each image.';
  $('exportMode').textContent=rich?'AI CONTENT':'PNG IMAGES';
  $('exportOrder').innerHTML=nodes.map((n,i)=>{const g=R.layout(n,state.settings,exportWidth(n));return`<div class="export-item"><span>${String(i+1).padStart(3,'0')} · ${escapeHTML(n.title)}</span><small>${g.width.toLocaleString()} × ${g.height.toLocaleString()}</small></div>`;}).join('');
- $('exportNote').textContent=rich?`${roots.length} starting module${roots.length===1?'':'s'}${splits.length?`, ${splits.length} conditional split${splits.length===1?'':'s'}`:''}. Numbering preserves dependency order; routing determines which paths to follow. Includes MAIN_PROMPT.txt with all module instructions. Use Save project to keep an editable copy.`:roots.length>1?`${roots.length} separate sequences. All images export in the order above.`:'One connected sequence, ready to export.';
+ $('exportNote').textContent=rich?`${roots.length} starting module${roots.length===1?'':'s'}${splits.length?`, ${splits.length} split${splits.length===1?'':'s'}`:''}. Numbering preserves dependency order; routing determines which paths to follow. Includes MAIN_PROMPT.txt with all module instructions. Use Save project to keep an editable copy.`:roots.length>1?`${roots.length} separate sequences. All images export in the order above.`:'One connected sequence, ready to export.';
  const queued=state.nodes.reduce((sum,n)=>sum+(n.transcriptionJobs||[]).length,0);if(queued)$('exportNote').textContent+=' '+queued+' transcription'+(queued===1?' is':'s are')+' still pending. This export contains current results; Save project preserves the queue.';
 }
-function exportIsVideo(a){return a.role==='video'||/^video\//i.test(a.mime||'')||/\.(mp4|m4v|mov|webm|mkv|avi|mpeg|mpg|3gp|mts|m2ts|ogv|wmv)$/i.test(a.name||'');}
+function exportIsVideo(a){return a.role!=='audio'&&!/^audio\//i.test(a.mime||'')&&(a.role==='video'||/^video\//i.test(a.mime||'')||/\.(mp4|m4v|mov|webm|mkv|avi|mpeg|mpg|3gp|mts|m2ts|ogv|wmv)$/i.test(a.name||''));}
 function exportGraph(nodes){
  const byId=new Map(nodes.map((n,i)=>[n.id,{order:i+1,title:n.title}])),edges=state.edges.filter(e=>byId.has(e.from)&&byId.has(e.to));
- return edges.map(e=>{const condition=String(e.condition||'').trim(),split=edges.filter(v=>v.from===e.from).length>1;return{from:e.from,to:e.to,condition,mode:condition?'conditional':split?'unresolved':'always',fromOrder:byId.get(e.from).order,toOrder:byId.get(e.to).order};});
+ return edges.map(e=>{const conditional=edgeIsConditional(e,edges),condition=conditional?String(e.condition||'').trim():'';return{from:e.from,to:e.to,condition,mode:conditional?(condition?'conditional':'unresolved'):'always',fromOrder:byId.get(e.from).order,toOrder:byId.get(e.to).order};});
 }
 function exportResponseRules(){return 'RESPONSE RULES\nAnswer the user’s actual task directly, focusing on the supplied content: the people, events, ideas, observations, or requested result. Keep preparation and navigation out of the response. Do not mention the ZIP, archive, filenames, folders, formats, extraction, processing, metadata, or how the material was delivered, unless the user explicitly asks about those things or requests a particular file or spreadsheet. Do not evaluate the package or give an inventory of its contents. Do not append a generic limitations section, speculate about missing material, or recommend gathering other information unless that is part of the user’s task. Use what is provided; do not assume additional evidence exists. Do not invent details or present an uncertain inference as fact. If uncertainty materially affects the requested conclusion, express it briefly in terms of the content itself. Avoid unsolicited advice, diagnoses, risks, recommendations, or next steps; include them only when requested or necessary to address an immediate serious risk shown in the content. Use natural references to people, events, and timestamps when useful; use filenames or technical citations only if requested. Respect the user’s requested tone, length, and output format.';}
 function moduleExportPrompt(n,entry,routes,manifest){
@@ -652,9 +663,11 @@ function queueStatusText(job){
  const done=job.sections.filter(s=>s.done).length,total=job.sections.length,label=transcriptionProviderLabel(job.provider);
  if(job.status==='error')return label+' · '+(job.error||'Transcription stopped. Retry when the issue is resolved.');
  if(job.provider!=='gemini'){
+  if(job.connectionError){const receipt=job.remoteId?'The PC may still be processing; waiting for results.':job.submitted?'Checking whether the PC accepted the audio.':'Audio has not reached the PC. Keep this page open.';return label+' · Cannot reach PC from this device · '+receipt+' Retrying automatically.';}
   if(job.remoteId)return label+' · '+(job.phase||'Processing on PC')+(navigator.onLine===false?' · reconnect to receive results':' · continues while this browser is closed');
   if(navigator.onLine===false)return label+' · waiting for connection';
   if(job.submitted)return label+' · checking whether the PC accepted the audio';
+  if(job.phase)return label+' · '+job.phase;
   return label+' · '+(job.status==='sending'?'Sending all audio sections to PC':'Queued · keep this page open until the PC accepts the audio');
  }
  if(navigator.onLine===false)return label+` · waiting for internet · ${done}/${total} sections complete`;
@@ -662,6 +675,7 @@ function queueStatusText(job){
  const remaining=Math.ceil((Math.max(Number(state.asrNextRequestAt)||0,asrLastRequestAt)-Date.now())/1000);
  return label+' · '+(remaining>0?`next request in ${remaining}s · ${done}/${total} complete`:`queued · ${done}/${total} sections complete`);
 }
+function canRetryTranscription(job){return job.status==='error'||job.provider==='local'&&job.connectionError&&job.status==='waiting';}
 function providerChoice(value,onchange,label){
  const wrapper=document.createElement('label');wrapper.className='asr-provider';wrapper.style.cssText='display:grid;gap:6px;margin:10px 0;font-size:12px';wrapper.appendChild(document.createTextNode(label));
  const select=document.createElement('select');select.setAttribute('aria-label',label);select.style.cssText='width:100%;min-height:40px;max-width:100%';
@@ -679,16 +693,16 @@ function changeQueuedProvider(id,provider){
  const entry=queueEntries().find(e=>e.job.id===id);if(!entry||!['local','gemini'].includes(provider))return;const{n,job,source}=entry;
  if(job.provider===provider||job.provider==='local'&&(job.submitted||job.remoteId)&&!job.remoteTerminal)return;
  checkpoint();if(asrRuntime?.job===job)asrRuntime.controller.abort();job.provider=provider;job.preservedSections=job.sections.some(section=>section.done);job.status='waiting';job.error=null;job.nextAttemptAt=0;
- for(const field of ['remoteId','backendUrl','remoteProjectId','submitted','remoteTerminal','phase','progress'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
+ for(const field of ['remoteId','backendUrl','remoteProjectId','submitted','remoteTerminal','phase','progress','connectionError'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
  syncQueueHistory(n,job);queueChanged(n);scheduleTranscriptionQueue();
 }
 function renderTranscriptionQueue(){
  const status=$('queueStatus'),list=$('queueList'),retry=$('queueRetry');if(!status||!list)return;
  const entries=queueEntries().filter(e=>e.source);status.textContent=entries.length?`${entries.length} transcription${entries.length===1?'':'s'} queued${navigator.onLine===false?' · offline':''}`:'No transcriptions queued';
  status.classList.toggle('queue-working',entries.some(({job})=>job.status!=='error'));list.replaceChildren();
- for(const {n,job} of entries){const row=document.createElement('div');row.className='queue-item';const title=document.createElement('strong');title.textContent=job.sourceName;row.appendChild(title);const detail=document.createElement('span');detail.textContent=queueStatusText(job);row.appendChild(detail);if(job.status==='error'){const button=document.createElement('button');button.textContent='Retry';button.onclick=()=>retryTranscriptionQueue(job.id);row.appendChild(button);}addQueueProviderControl(row,job);list.appendChild(row);}
+ for(const {n,job} of entries){const row=document.createElement('div');row.className='queue-item';const title=document.createElement('strong');title.textContent=job.sourceName;row.appendChild(title);const detail=document.createElement('span');detail.textContent=queueStatusText(job);row.appendChild(detail);if(canRetryTranscription(job)){const button=document.createElement('button');button.textContent='Retry';button.onclick=()=>retryTranscriptionQueue(job.id);row.appendChild(button);}addQueueProviderControl(row,job);list.appendChild(row);}
  syncTranscriptionProviderUI();
- if(retry){retry.hidden=!entries.some(({job})=>job.status==='error');retry.onclick=()=>retryTranscriptionQueue();}
+ if(retry){retry.hidden=!entries.some(({job})=>canRetryTranscription(job));retry.onclick=()=>retryTranscriptionQueue();}
  if(typeof renderActivity==='function')renderActivity();
 }
 function scheduleTranscriptionQueue(delay=0){
@@ -696,8 +710,12 @@ function scheduleTranscriptionQueue(delay=0){
  if(asrWakeTimer!==null)clearTimeout(asrWakeTimer);asrWakeAt=when;asrWakeTimer=setTimeout(()=>{asrWakeTimer=null;asrWakeAt=0;void pumpTranscriptionQueue();},Math.max(0,delay));
 }
 function retryTranscriptionQueue(id){
- let changed=false;for(const{source,job}of queueEntries())if(source&&(!id||job.id===id)&&job.status==='error'){if(job.provider==='local'&&job.remoteTerminal){job.remoteId=null;job.submitted=false;job.remoteTerminal=false;job.remoteRequestId=uid();job.phase='';job.progress=0;}job.status='waiting';job.error=null;job.nextAttemptAt=0;source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';changed=true;}
+ let changed=false;for(const{source,job}of queueEntries())if(source&&(!id||job.id===id)&&canRetryTranscription(job)){if(job.provider==='local'&&job.remoteTerminal){job.remoteId=null;job.submitted=false;job.remoteTerminal=false;job.remoteRequestId=uid();job.phase='';job.progress=0;}job.status='waiting';job.error=null;job.connectionError=false;job.nextAttemptAt=0;source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';changed=true;}
  if(changed)markDirty();renderTranscriptionQueue();scheduleTranscriptionQueue();
+}
+function resumePCTranscriptionQueue(){
+ for(const{job}of queueEntries())if(job.provider==='local'&&job.status==='waiting'){job.nextAttemptAt=0;job.connectionError=false;}
+ renderTranscriptionQueue();scheduleTranscriptionQueue();
 }
 function networkQueueError(error){return navigator.onLine===false||error instanceof TypeError||/could not reach Google|failed to fetch|network(?:error| request| connection| failure)?|internet connection|load failed|timed out/i.test(error?.message||'');}
 function syncQueueHistory(n,job,finished=false){
@@ -717,6 +735,7 @@ function finishQueuedTranscript(runtime){
  const{n,source,job}=runtime,text=queuedTranscriptText(job);
  if(job.sourceKind==='video')storeVideoTranscript(n,source,videoTranscriptClock(text,job.offsetSeconds)||'[The transcription service returned no speech.]','complete');
  else saveTranscript(n,source,text,'complete');
+ if(source.transcriptToPrompt&&typeof applyImportedTranscript==='function')applyImportedTranscript(n,source,text);
  syncQueueHistory(n,job,true);n.transcriptionJobs=n.transcriptionJobs.filter(j=>j!==job);releaseCompletedSourceAudio(n,source);queueChanged(n);if(typeof recordActivity==='function')recordActivity(job.sourceName,'Transcription complete');toast('Transcription complete: '+job.sourceName);
 }
 async function localASRRequest(runtime,path,options={}){
@@ -732,7 +751,9 @@ async function pumpLocalTranscription(runtime){
  if(job.backendUrl&&job.backendUrl!==cloudConfig?.backendUrl)throw new Error('Connect the original PC to receive this transcription.');
  if(job.remoteProjectId&&job.remoteProjectId!==state.projectCloud?.id)throw new Error('This transcription belongs to the original project. Open that project to receive its results.');
  if(!job.remoteId){
+  job.phase='Connecting to PC';renderTranscriptionQueue();
   const health=await projectCapabilities();if(!queueAlive(runtime))return;
+  job.connectionError=false;job.phase='Saving project to PC';renderTranscriptionQueue();
   const caps=health.capabilities,available=Array.isArray(caps)?caps.includes('localTranscription'):caps?.localTranscription===true;
   if(!available||health.localTranscription?.ready===false)throw new Error('Local transcription is not ready on the PC. Run Setup-Vision-PC.ps1 -Action InstallLocalTranscription on that PC, then Retry. No Gemini request was made.');
   const meta=await ensureRemoteProject();if(!queueAlive(runtime))return;
@@ -745,9 +766,10 @@ async function pumpLocalTranscription(runtime){
   catch(error){if(error.status>=400&&error.status<500||error.status===503){job.submitted=false;}throw error;}
   if(!queueAlive(runtime))return;
   if(!validASRReference(accepted.id)){const error=new Error('The PC did not return a transcription ID. Checking the accepted request again.');error.retryable=true;throw error;}
-  job.remoteId=accepted.id;job.status='waiting';job.phase='Audio accepted by PC';job.nextAttemptAt=Date.now()+2000;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();return;
+  job.remoteId=accepted.id;job.connectionError=false;job.status='waiting';job.phase='Audio accepted by PC';job.nextAttemptAt=Date.now()+2000;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();return;
  }
  const result=await localASRRequest(runtime,'/projects/'+job.remoteProjectId+'/transcriptions/'+encodeURIComponent(job.remoteId));if(!queueAlive(runtime))return;
+ job.connectionError=false;
  job.phase=String(result.phase||result.status||'Processing on PC').slice(0,150);job.progress=Math.max(0,Math.min(100,Number(result.progress)||0));
  if(['error','cancelled'].includes(result.status)){job.remoteTerminal=true;throw new Error(result.error||'The local transcription stopped. Retry to start it again.');}
  if(result.status==='complete'){
@@ -786,7 +808,8 @@ async function pumpTranscriptionQueue(){
   source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';syncQueueHistory(n,job);queueChanged(n);
  }catch(error){
   if(!queueAlive(runtime))return;
-  const retryable=!error.status&&(networkQueueError(error)||error.retryable||error.code==='VISION_SERVER_UNAVAILABLE');
+  const retryable=!error.status&&(networkQueueError(error)||error.retryable||error.code==='VISION_SERVER_UNAVAILABLE'||job.provider==='local'&&error.name==='AbortError');
+  job.connectionError=job.provider==='local'&&retryable&&(networkQueueError(error)||error.code==='VISION_SERVER_UNAVAILABLE'||error.name==='AbortError');
   job.status=retryable?'waiting':'error';job.error=job.status==='error'?String(error.message||'Transcription could not finish. Retry to continue.').slice(0,600):null;job.nextAttemptAt=retryable?Date.now()+15000:0;
   source.status=job.status==='error'?'failed':'queued';if(job.sourceKind==='video')source.transcriptionStatus=job.status;
   if(retryable&&job.provider==='local')renderTranscriptionQueue();else{syncQueueHistory(n,job);queueChanged(n);}if(job.status==='error')toast(job.sourceName+': '+job.error,true);
@@ -873,7 +896,7 @@ function renderActivity(){
   host.appendChild(row);return row;
  };
  for(const task of active)add(task.title,task.detail+' · '+Math.round(task.progress||0)+'%',task.progress||0);
- for(const {job} of entries){const total=job.sections.length,done=job.sections.filter(s=>s.done).length,percent=job.provider==='local'&&job.remoteId?(100*done+(Number(job.progress)||0)*(total-done))/total:100*done/total;const row=add(job.sourceName,`${Math.round(percent)}% · ${total-done} section${total-done===1?'':'s'} left · ${queueStatusText(job)}`,percent,job.status==='error'?()=>retryTranscriptionQueue(job.id):null);addQueueProviderControl(row,job);}
+ for(const {job} of entries){const total=job.sections.length,done=job.sections.filter(s=>s.done).length,percent=job.provider==='local'&&job.remoteId?(100*done+(Number(job.progress)||0)*(total-done))/total:100*done/total;const row=add(job.sourceName,`${Math.round(percent)}% · ${total-done} section${total-done===1?'':'s'} left · ${queueStatusText(job)}`,percent,canRetryTranscription(job)?()=>retryTranscriptionQueue(job.id):null);addQueueProviderControl(row,job);}
  for(const entry of recentActivity)add(entry.title,entry.detail+' · '+new Date(entry.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),null);
  if(!count&&!recentActivity.length)add('No queued work','Video imports and transcriptions appear here.',null);
 }
@@ -883,5 +906,3 @@ if(activityBrand){activityBrand.setAttribute('role','button');activityBrand.setA
 $('closeActivity').onclick=()=>$('activityDialog').close();
 for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);}
 const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='Local PC uses Whisper without an API charge. Once its audio is accepted, the PC continues in the background. Gemini may incur API charges and requires this page to stay open.';$('activityProvider').after(asrNote);
-
-

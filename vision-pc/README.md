@@ -83,6 +83,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Che
 
 The check submits generated WAV and MP3 silence to the running local processor, using the same queue and Windows task identity as a real recording. It checks decoding, Whisper, the ONNX speech filter, and the saved result, without calling an AI API. It keeps one small diagnostic project and reuses it. If the PC is busy and the check times out, it cancels only its own test job.
 
+That local check does not test another device's connection to the PC. If Activity says **Cannot reach PC from this device**, open **Processor connection → Check this device's connection**. A response saying **Connect this device to your Vision processing server first** means the address is reachable; a blocked page or connection error needs a device/network check. Before upload acceptance, the page must stay open to send the audio. After acceptance, a connection loss only prevents this browser from retrieving progress/results; the PC may still be working. Reconnecting or clicking **Retry** keeps the same request identity so it does not duplicate accepted work.
+
 If a previous check stopped at **Loading the local libraries** even though installation passed, run the update above. The Windows worker now watches its parent using Win32 pipe checks instead of a blocking input read, avoiding the [known NumPy import deadlock](https://github.com/numpy/numpy/issues/24290). Library startup has a separate 90-second limit so a stalled import cannot occupy the queue for half an hour. This fix reuses the existing model and packages.
 
 New failed jobs show the failed stage and a diagnostic code in Activity; click **Retry** after updating to replace an older generic error. Detailed worker exceptions are retained in the private `data\server.log` (including native worker exit codes). The check prints only its own worker diagnostic. Model paths and raw exceptions are not returned to the web app. A successful generated-audio check confirms the processing path; it does not validate a particular recording or its transcript quality.
@@ -225,3 +227,64 @@ Leave Tailscale installed if you use it for anything else.
 - Optional [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and [CTranslate2](https://opennmt.net/CTranslate2/), with the pinned English model linked above. Installation is separate from the standard setup/update.
 
 The installer verifies the Tailscale MSI checksum/signature and Python executable signature before running them. Application files come from this repository over HTTPS. It does not request your Windows password, Firebase credentials, or OpenAI key during setup.
+
+### Uploaded video workspace previews
+
+After updating the PC processor, Vision can send an uploaded video directly to
+`POST /api/projects/<project-id>/media` as multipart `file` and `requestId`.
+It requires both the installation bearer and `X-Vision-Project-Key`, and the
+project must already be saved. A repeated request ID with identical bytes
+returns the existing receipt; a different file returns a conflict.
+
+The PC retains accepted jobs across browser disconnects and resumes them after
+Windows restarts. One low-priority FFmpeg worker shares a processing slot with
+YouTube imports and uses at most two codec threads. It creates a preview at up
+to 480 pixels and 15 fps with mono audio, timestamped snapshots, and compressed
+mono MP3 sections of at most 15 minutes for the selected transcription provider.
+No AI provider is called by video preparation itself. Silent videos produce an
+empty `audioSections` array.
+
+Poll `GET /media/<job-id>` under the same project path for
+`id`, `status`, `phase`, `progress`, `sourceName`, `error`, `resultReady`, and an
+early JPEG `thumbnail` data URL. Once complete, `GET /media/<job-id>/result`
+returns `title`, `duration`, `snapshotInterval`, `thumbnail`, `frames` (timestamped
+JPEG data URLs), `audioSections` (`start`, `end`, `name`, `mime`, authenticated
+relative `url`), and `preview` (`url`, `mime`, `size`, `width`, `height`).
+The preview endpoint supports HTTP byte ranges. Browser players should fetch it
+with authentication and use an object URL; never put connection or project keys
+in URLs. Audio can go straight into the existing ASR queue without decoding or
+splitting a video in the browser.
+
+Uploads are limited to 100 MB and two hours. Output is bounded to a 128 MB MP4,
+20 MB snapshot/result JSON, and up to eight 4 MB audio sections. At most three
+video jobs may wait or process at once. Storage reserves cover unfinished jobs:
+2 GB per project, 10 GB overall, and at least 1 GB left free on the PC. Full
+storage returns an explicit error instead of silently deleting saved previews.
+`DELETE /media/<job-id>` cancels work and removes its media artifacts while
+retaining the receipt. Completed media stays available until explicitly removed;
+the original uploaded video is deleted after completion or a terminal failure.
+The compact preview is for workspace playback, not an archival original.
+
+Processing accepts files only, never user-supplied URLs or FFmpeg commands. The
+server chooses fixed paths, allows local container formats/protocols only,
+bounds subprocess output/time, and kills Windows child processes if the server
+task stops. Interrupted inputs are retried up to three attempts; cancelled,
+failed, and orphaned temporary files are cleaned on startup.
+
+To recover an upload whose POST reply was lost, save its `requestId` in the
+project before uploading, then call
+`GET /api/projects/<project-id>/media/request/<requestId>`. It returns the same
+status snapshot, or 404 if that project has no accepted receipt. Recovery does
+not need the original browser File and does not submit duplicate processing.
+`GET /api/projects/<project-id>/media` lists project-owned receipts in pages of
+50, newest first, with `items` and `nextCursor`. Pass the returned job ID as
+`?cursor=<id>` for the next page. Inventory items include Unix-second `createdAt`,
+retained `bytes`, status and `cancelRequested`, without large thumbnails. This
+allows deliberate cleanup of saved media even after its module was removed.
+Removing a board module does not automatically delete the PC files, so undo and
+older saved projects can still refer to them.
+
+Audio preparation preserves the video timeline: it pads a delayed audio track
+at the start, fills timestamp gaps and trailing silence, then takes each section
+at its video-relative offset. Timestamped transcripts therefore stay aligned
+with video snapshots even when the original audio starts late or finishes early.

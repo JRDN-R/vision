@@ -1,0 +1,8 @@
+#boardAddDialog{width:440px;max-width:calc(100vw - 28px);max-height:calc(100dvh - 28px);overflow:auto}
+.board-add-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.board-add-header h2{margin:0}.board-add-header button{font-size:24px}
+.board-add-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}.board-add-grid button{display:flex;flex-direction:column;gap:7px;text-align:left;padding:16px;min-height:85px;min-width:0;white-space:normal;overflow-wrap:anywhere}.board-add-grid span{color:var(--muted,#9aa397);font-size:12px;line-height:1.4;font-weight:400}.board-add-grid button:last-child{grid-column:1/-1;min-height:62px}
+#boardPasteFallback{margin-top:18px}#boardPasteText{display:block;width:100%;font-size:16px;margin:8px 0 12px;resize:vertical}
+.module-file-type{flex:0 0 auto;font-size:10px;font-weight:600;letter-spacing:.04em;color:#b2c4aa;border:1px solid #50614a;border-radius:4px;padding:2px 4px;max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-module .node-title{min-width:0}
+@media(max-width:390px){.board-add-grid{gap:8px}.board-add-grid button{padding:12px}.board-add-grid strong{font-size:13px}}
+
+@media(max-width:480px){#boardAddDialog{padding:20px}.board-add-grid{grid-template-columns:minmax(0,1fr)}.board-add-grid button{min-height:64px;padding:12px}}

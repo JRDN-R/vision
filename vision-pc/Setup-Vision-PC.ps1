@@ -201,7 +201,7 @@ function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDi
     $BackupDirectory = Join-Path $DownloadDir ('local-activation-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
     Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
-    $Files = @('server.py','media.py','sessions.py','transcription.py')
+    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py')
     $PreviousFiles = @{}
     foreach ($File in $Files) {
         $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
@@ -266,10 +266,10 @@ function Install-LocalTranscription {
         if ((Get-Item -LiteralPath $Directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked folder: $Directory" }
     }
     Write-Stage '1/4 Preparing the optional CPU transcription plugin'
-    foreach ($File in @('server.py','media.py','sessions.py','transcription.py','requirements-local.txt','setup_local.py')) {
+    foreach ($File in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','requirements-local.txt','setup_local.py')) {
         Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File)
     }
-    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'setup_local.py'))
+    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'setup_local.py'))
     # Unique directories isolate this attempt from a previously enabled model,
     # optional packages, and the base processor's site-packages.
     $PackagesPath = Join-Path $PluginRoot ('whisper-' + $InstallId)
@@ -438,12 +438,12 @@ try {
         Assert-VisionRoute $Tailscale $DnsName $TargetPublic
         $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
         # Stage and check all components before stopping the existing processor. No runtime or pip reinstall.
-        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py')) {
+        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py')) {
             Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'),(Join-Path $DownloadDir 'setup_local.py'))
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'uploaded_media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'),(Join-Path $DownloadDir 'setup_local.py'))
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
-        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py')) {
+        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py')) {
             Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
         }
         $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $TargetPublic -Force
@@ -494,7 +494,7 @@ try {
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','setup_local.py','requirements.txt')) {
+    foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py','requirements.txt')) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {

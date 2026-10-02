@@ -4,10 +4,37 @@ function syncBoardAppearance(){
  const palette=['sage','rose','redshift'].includes(state.settings.boardPalette)?state.settings.boardPalette:'sage';
  board.dataset.background=mode;board.dataset.palette=palette;const picker=$('boardBackground'),colors=$('boardPalette');if(picker)picker.value=mode;if(colors)colors.value=palette;
 }
-const boardHistory=document.createElement('div');
-boardHistory.className='board-history';boardHistory.setAttribute('role','group');boardHistory.setAttribute('aria-label','Edit history');
-boardHistory.innerHTML='<button id="boardUndo" type="button" aria-label="Undo last board edit" title="Undo (Ctrl or Command Z)">↶</button><button id="boardRedo" type="button" aria-label="Redo board edit" title="Redo (Ctrl or Command Shift Z)">↷</button>';
-board.appendChild(boardHistory);$('boardUndo').onclick=()=>undo();$('boardRedo').onclick=()=>undo(true);updateHistory();
+// The left board toolbar owns Undo/Redo; keep a single pair of controls.
+function setConnectionConditional(from,to,enabled){
+ const edge=state.edges.find(e=>e.from===from&&e.to===to);if(!edge||busy||ioBusy||edgeIsConditional(edge)===enabled)return;
+ checkpoint();edge.conditionEnabled=enabled;markDirty();updateSequence();syncModuleInspector();drawCables();
+}
+const conditionToggle=document.createElement('label');conditionToggle.className='board-condition-toggle';conditionToggle.innerHTML='<input id="branchConditional" type="checkbox"> <span>Use an IF condition</span>';
+$('branchCondition').previousElementSibling.before(conditionToggle);
+$('branchConditional').onchange=e=>{const edge=state.edges.find(v=>v.from+'|'+v.to===selectedEdge);if(edge)setConnectionConditional(edge.from,edge.to,e.target.checked);};
+$('branchCondition').previousElementSibling.textContent='When this is true, follow this path';
+$('branchCondition').nextElementSibling.textContent='Without IF, this path always runs alongside other paths. Tap an IF label on the board to turn its condition off.';
+function focusBoardNode(id){
+ const n=nodeById(id);if(!n)return;pending=null;action=null;selectNode(id);
+ const el=$('node-'+id),r=board.getBoundingClientRect(),panel=$('inspectorPanel').getBoundingClientRect();
+ const height=mobileQuery.matches&&sidebarOpen?Math.max(120,Math.min(r.height,panel.top-r.top)):r.height;
+ const naturalHeight=el?.offsetHeight||300,scale=clamp(Math.min(1,(r.width-90)/cardWidth(n),(height-80)/naturalHeight),.18,1);
+ state.view.scale=scale;state.view.x=45+(r.width-90-cardWidth(n)*scale)/2-n.x*scale;state.view.y=(height-naturalHeight*scale)/2-n.y*scale;updateView();
+ for(const node of world.querySelectorAll('.node'))node.tabIndex=node===el?0:-1;
+ el?.focus({preventScroll:true});
+}
+function navigateBoardModule(backwards=false){
+ const active=document.activeElement;if(active!==board&&!active?.matches('.node'))return false;
+ const order=orderedNodes();if(!order.length)return false;const index=order.findIndex(n=>n.id===selected);
+ focusBoardNode(order[index<0?(backwards?order.length-1:0):(index+(backwards?-1:1)+order.length)%order.length].id);return true;
+}
+// Cable handles and IF chips work with both pointer and keyboard input.
+$('cables').addEventListener('keydown',e=>{
+ if(!['Enter',' '].includes(e.key)||busy||ioBusy)return;const label=e.target.closest('.wire-condition'),end=e.target.closest('.wire-end-hit');if(!label&&!end)return;
+ e.preventDefault();e.stopPropagation();if(label){setConnectionConditional(label.dataset.from,label.dataset.to,false);board.focus({preventScroll:true});return;}
+ const edge=state.edges.find(v=>v.from===end.dataset.from&&v.to===end.dataset.to);if(!edge)return;const side=end.dataset.side,p=portPoint(nodeById(side==='out'?edge.from:edge.to),side==='out'),r=board.getBoundingClientRect();
+ startConnection({nodeId:side==='out'?edge.from:edge.to,side,reconnect:edge},{clientX:r.left+p.x,clientY:r.top+p.y});
+});
 
 // Keyboard connector interaction mirrors tapping two ports.
 world.addEventListener('keydown',e=>{

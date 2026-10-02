@@ -11,7 +11,7 @@ async function main() {
   const browser = await chromium.launch({headless:true, args:['--single-process','--no-zygote','--disable-gpu'], ...(process.env.CHROMIUM_PATH ? {executablePath:process.env.CHROMIUM_PATH} : {})});
   const context = await browser.newContext({viewport:{width:390,height:844}, isMobile:true, hasTouch:true});
   const projects = new Map(), jobs = new Map(), errors = [], external = [];
-  let ready = true, complete = false, submissions = 0;
+  let ready = true, complete = false, connected = false, submissions = 0;
   const json = (route,status,data) => route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
@@ -25,12 +25,12 @@ async function main() {
           n.attachments.push(source);n.transcriptionJobs=[{id:uid(),provider:'local',sourceId:source.id,sourceName:source.name,sourceKind:'audio',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,
             sections:[{start:0,end:2,mimeType:'audio/wav',audioData:source.data,text:null,done:false},{start:2,end:4,mimeType:'audio/wav',audioData:source.data,text:null,done:false}]}];
           queueChanged(n);scheduleTranscriptionQueue();return source.id;},
-        show:()=>{$('activityDialog').showModal();renderActivity();}
+        show:()=>{$('activityDialog').showModal();renderActivity();}, connection:()=>openCloudSettings()
       };\n`;
       html = html.slice(0,end)+hooks+html.slice(end);
       return route.fulfill({status:200,contentType:'text/html',body:html});
     }
-    if (url.pathname === '/api/health') return json(route,200,{ok:true,capabilities:{persistentProjects:true,projectRevision:true,persistentRuns:true,localTranscription:ready},localTranscription:{ready,maxRequestBytes:100*1024*1024}});
+    if (url.pathname === '/api/health') return connected?json(route,200,{ok:true,service:'vision-pc',capabilities:{persistentProjects:true,projectRevision:true,persistentRuns:true,localTranscription:ready},localTranscription:{ready,maxRequestBytes:100*1024*1024}}):route.abort('connectionrefused');
     const m=url.pathname.match(/^\/api\/projects\/([^/]+)(.*)$/);
     if (m) {
       const [,id,suffix]=m, key=request.headers()['x-vision-project-key'];
@@ -68,6 +68,24 @@ async function main() {
   try {
     let page=await open();
     const sourceId=await page.evaluate(()=>window.__asrSmoke.add());
+    await page.waitForFunction(()=>window.__asrSmoke.state().nodes.some(n=>n.transcriptionJobs?.some(j=>j.connectionError)));
+    await page.evaluate(()=>window.__asrSmoke.show());
+    assert.match(await page.locator('#activityList').innerText(),/Cannot reach PC from this device/);
+    assert.match(await page.locator('#activityList').innerText(),/Audio has not reached the PC/);
+    assert.equal(await page.locator('#activityList button').filter({hasText:'Retry'}).count(),1);
+    assert.equal(submissions,0,'unreachable PC must not appear to have accepted audio');
+    assert.ok(await page.locator('#activityDialog').evaluate(el=>{const rect=el.getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth;}),'Activity and its controls fit the mobile viewport');
+    await page.locator('#closeActivity').click();
+    await page.evaluate(()=>window.__asrSmoke.connection());
+    assert.ok(await page.locator('#cloudDialog').evaluate(el=>{const rect=el.getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth;}),'Processor connection and its controls fit the mobile viewport');
+    await page.locator('#cloudSignIn').click();
+    await page.waitForFunction(()=>document.getElementById('cloudStatus').textContent.includes('This device cannot reach the PC'));
+    const checkURL=new URL(await page.locator('#cloudReachabilityLink').getAttribute('href'));
+    assert.equal(checkURL.pathname,'/api/health');assert.equal(checkURL.search,'');assert.equal(checkURL.hash,'');
+    assert.ok(await page.locator('#cloudReachabilityCheck').evaluate(el=>el.open));
+    connected=true;
+    await page.locator('#cloudSignIn').click();
+    await page.waitForFunction(()=>!document.getElementById('cloudDialog').open);
     await page.waitForFunction(()=>window.__asrSmoke.state().nodes.some(n=>n.transcriptionJobs?.some(j=>j.remoteId)));
     const identity=await page.evaluate(()=>window.__asrSmoke.state().projectCloud.id);
     await page.evaluate(async()=>{await window.__asrSmoke.flush();await window.__asrSmoke.backup();});
@@ -90,7 +108,7 @@ async function main() {
     assert.equal(submissions,1,'changing a future preference does not submit finished audio');
     assert.deepEqual(external,[],'no Google or other provider request was made');
     assert.deepEqual(errors,[],'no browser runtime errors');
-    console.log('PASS local upload acceptance, project persistence, closed-tab completion/reopen, no duplicate work, mobile controls, provider preference persistence, no cloud fallback');
+    console.log('PASS visible connection failure, safe check link, reconnect/resume, local upload acceptance, persistence, closed-tab completion/reopen, no duplicates, mobile controls, no cloud fallback');
   } finally {await context.close();await browser.close();}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

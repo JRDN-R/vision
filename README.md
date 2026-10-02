@@ -4,7 +4,7 @@ An advanced prompt generator: arrange images, documents, notes, and processed
 media into a board, connect the modules, and export the instructions and evidence.
 
 [Open Vision](https://jrdn-r.github.io/vision/), or download the portable HTML from
-the app. Board editing works offline. Video imports from YouTube, PC saves, and
+the app. Board editing works offline. PC video imports, YouTube imports, PC saves, and
 OpenAI conversations need the connected processor and an internet connection.
 
 ## Projects and conversations
@@ -38,6 +38,46 @@ twinkling stars, or still dots, in Sage, Dusty rose, or Redshift mix. Reduced-mo
 preferences stop the animation. Use the compact undo/redo controls to step back
 through board changes.
 
+## Board inputs and controls
+
+**Add to board** accepts images, videos, audio, documents, and clipboard content.
+Pasted text becomes an editable text module. Drop files onto empty board space
+to create one module per file, or onto an existing module to attach them there.
+File modules keep the original filename and show their type, with a text preview
+where available or a document icon. Imported audio starts transcription and puts
+the completed transcript into its module's text field.
+
+The board microphone records a voice note and lets you choose Local PC Whisper
+or Gemini for new recordings and audio imports. Stop to create its module;
+cancel to discard the recording. Browser microphone permission is required.
+Recording stops if the page goes into the background. This board recorder is
+separate from the browser dictation button in Run.
+
+Drag either end of a wire to another module to reconnect it. Releasing over empty
+space restores the original connection. New branching paths are unconditional;
+enable **Use an IF condition** in Paths when needed. Tapping an IF label turns the
+condition off while keeping its text available to enable again.
+
+Use the left toolbar's Undo/Redo, `Ctrl/Cmd+Z`, or `Ctrl/Cmd+Shift+Z`. With the
+board or a module focused, `Tab` selects the next module in sequence and
+`Shift+Tab` selects the previous one. Text fields retain normal editing keys.
+Run settings have a Show/Hide API key control, and each response's **Files**
+button expands its downloads when needed.
+
+Video files added as new modules use the PC to create timestamped screenshots,
+audio sections for the selected transcription provider, and a 480-pixel, 15 fps
+playable preview with mono audio. A poster and current processing step appear
+on the module. Accepted video jobs continue on the PC after the browser closes;
+reopen the saved project to retrieve the result. Playback needs the PC connection.
+The original upload is removed after processing; the compact preview remains
+on the PC and is not embedded in project downloads. Initial uploads support
+100 MB and up to two hours; update the PC processor before using this feature.
+Videos attached inside an existing module retain the browser-processing path.
+Use **Projects → PC video storage** to remove saved previews, including videos
+whose modules you deleted. Removing a module alone keeps its PC files available
+for undo and older saved projects. Explicit PC deletion preserves snapshots and
+transcripts already saved in the board, but removes playback for those copies.
+
 ## Local speech transcription
 
 The optional **Local PC** transcription provider runs an open-source English
@@ -62,7 +102,7 @@ does not claim to attach a local file automatically to another website.
 
 ## Development
 
-Editable application code is in `web/`. `Vision.html` also holds the bundled media
+Editable application code and document structure are in `web/`. `Vision.html` also holds the bundled media
 runtimes and artwork; `web/build.py` preserves those assets while replacing the
 application code and styles. Run:
 

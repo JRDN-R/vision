@@ -19,9 +19,10 @@ from flask import Flask, Response, g, jsonify, request, stream_with_context
 import requests
 from werkzeug.exceptions import HTTPException
 
-from media import normalize_url, process_job
+from media import normalize_url, process_job, MEDIA_LOCK
 from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
 from transcription import LocalTranscription
+from uploaded_media import UploadedMedia
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -73,6 +74,7 @@ def configure(config_path):
     initialize_db()
     sessions.initialize()
     transcriptions.initialize(config, config_path)
+    uploaded_media.initialize()
     return config
 
 
@@ -113,7 +115,8 @@ def api_error(error):
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
-        message = ('Local transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
+        message = ('Video uploads exceed 100 MB. Choose a smaller video.' if '/media' in request.path
+                   else 'Local transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
                    else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
                    else 'Attachments exceed 25 MB. Export fewer or smaller images.')
     else:
@@ -165,11 +168,12 @@ def health():
     with connect_db() as db:
         queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
     local = transcriptions.capability()
+    video = uploaded_media.capability()
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
-                   localTranscription=local,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'localTranscription': local['ready']})
+                   localTranscription=local, videoMedia=video,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'localTranscription': local['ready'], 'uploadedMedia': video['ready']})
 
 
 def get_job(job_id):
@@ -254,8 +258,9 @@ def process_next_job():
         with connect_db() as db:
             db.execute('UPDATE jobs SET ' + ','.join(key + '=?' for key in fields) + ' WHERE id=?', [*fields.values(), job_id])
     try:
-        process_job(value['id'], value['url'], app.config['FFMPEG'], update,
-                    deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'))
+        with MEDIA_LOCK:
+            process_job(value['id'], value['url'], app.config['FFMPEG'], update,
+                        deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'))
     except Exception:
         update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
     return True
@@ -474,6 +479,7 @@ def openai_artifact(container_id, file_id):
 
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
+uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private PC processor')
@@ -511,6 +517,7 @@ def main():
         worker.start()
         sessions.start()
         transcriptions.start()
+        uploaded_media.start()
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
@@ -523,6 +530,8 @@ def main():
             sessions.wake.set()
             transcriptions.stop.set()
             transcriptions.wake.set()
+            uploaded_media.stop.set()
+            uploaded_media.wake.set()
         return 0
     except Exception as error:
         # Values and payloads are intentionally excluded from setup diagnostics.

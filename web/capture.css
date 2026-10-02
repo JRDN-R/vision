@@ -1,0 +1,15 @@
+#boardCaptureDialog{width:440px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow-y:auto}
+.capture-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#boardCaptureDialog label{display:block;font-size:12px;margin-bottom:7px}
+#boardCaptureProvider{max-width:100%;font-size:16px}
+#boardCaptureProviderNote{min-height:3em;line-height:1.6}
+.capture-clock{display:flex;justify-content:center;align-items:center;gap:12px;padding:15px 0;font:400 32px ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.capture-light{width:10px;height:10px;border-radius:50%;background:#637168}
+.capture-recording .capture-light{background:#dca29a;box-shadow:0 0 0 6px #dca29a18}
+#boardCaptureStatus{min-height:3.5em;line-height:1.6;font-size:13px;color:#bfcbbf}
+.capture-error #boardCaptureStatus{color:#f3b9a9}
+.capture-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}
+.capture-actions button{min-height:44px;white-space:normal}
+#boardCaptureButton svg{width:100%;height:100%}
+#boardCaptureButton[aria-pressed="true"]{color:#f3b9a9;background:#5b383c66}
+@media(max-width:480px){#boardCaptureDialog{padding:20px}.capture-actions{gap:8px}.capture-actions button{padding:10px 12px}}

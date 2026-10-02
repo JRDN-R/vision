@@ -13,7 +13,9 @@ let cloudConfig=(()=>{const built=validCloudConfig(bundledCloudConnection);if(va
 let cloudAuth=(()=>{const built=validPrivateConnection(bundledCloudConnection);if(built&&built.backendUrl===cloudConfig?.backendUrl)return built;try{const saved=JSON.parse(sessionStorage.getItem('vision-cloud-session')||localStorage.getItem('vision-cloud-session')||'null');if(!saved||!cloudConfig||saved.backendUrl!==cloudConfig.backendUrl)return null;return cloudConfig.kind==='private-pc'?validPrivateConnection({...saved,kind:'private-pc'}):saved;}catch{return null;}})();
 function saveCloudSession(){try{sessionStorage.removeItem('vision-cloud-session');localStorage.removeItem('vision-cloud-session');if(cloudAuth)(cloudAuth.remember?localStorage:sessionStorage).setItem('vision-cloud-session',JSON.stringify(cloudAuth));}catch{}}
 function pcConnectionHelp(config=cloudConfig){return config?.publicAccess===true?'Keep the remote PC awake and connected to the internet.':'Keep the remote PC awake, with Tailscale connected on this device and the remote PC.';}
-function updateConnectionFields(){let value;try{value=parseConnectionInput($('cloudConfigInput').value);}catch{}const privatePC=value?.kind==='private-pc'||(!value&&cloudConfig?.kind==='private-pc');$('cloudFirebaseFields').hidden=privatePC;$('cloudPCFields').hidden=!privatePC;$('cloudPCNote').textContent=pcConnectionHelp(value||cloudConfig);$('cloudPortableNote').textContent=privatePC?'PC connection settings are included in HTML downloads so they connect automatically. '+pcConnectionHelp(value||cloudConfig):'Cloud configuration is included in HTML downloads. Sign in on each device to connect.';if(value?.accessToken){$('cloudAccessToken').value=String(value.accessToken);const publicPart=validCloudConfig(value);if(publicPart)$('cloudConfigInput').value=JSON.stringify(publicPart,null,2);}}
+function pcConnectionFailure(){return 'This device cannot reach the PC. It may be offline, or this browser or network may be blocking the connection. '+(cloudConfig?.publicAccess===true?'Use Processor connection to check this device.':pcConnectionHelp());}
+function updatePCConnectionCheck(value){const config=validCloudConfig(value),box=$('cloudReachabilityCheck');if(!box)return;box.hidden=config?.kind!=='private-pc';const link=$('cloudReachabilityLink');if(config?.kind==='private-pc')link.href=config.backendUrl+'/api/health';else link.removeAttribute('href');}
+function updateConnectionFields(){let value;try{value=parseConnectionInput($('cloudConfigInput').value);}catch{}const privatePC=value?.kind==='private-pc'||(!value&&cloudConfig?.kind==='private-pc');$('cloudFirebaseFields').hidden=privatePC;$('cloudPCFields').hidden=!privatePC;$('cloudPCNote').textContent=pcConnectionHelp(value||cloudConfig);$('cloudPortableNote').textContent=privatePC?'PC connection settings are included in HTML downloads so they connect automatically. '+pcConnectionHelp(value||cloudConfig):'Cloud configuration is included in HTML downloads. Sign in on each device to connect.';if(value?.accessToken){$('cloudAccessToken').value=String(value.accessToken);const publicPart=validCloudConfig(value);if(publicPart)$('cloudConfigInput').value=JSON.stringify(publicPart,null,2);}updatePCConnectionCheck(value||cloudConfig);}
 function openCloudSettings(message=''){
  $('cloudConfigInput').value=cloudConfig?JSON.stringify(cloudConfig,null,2):'';$('cloudStatus').textContent=message||(cloudAuth?(cloudConfig?.kind==='private-pc'?'PC processor configured.':'Signed in as '+cloudAuth.email):'Connect Vision to your PC or cloud service.');$('cloudEmail').value=cloudAuth?.email||'';$('cloudPassword').value='';$('cloudAccessToken').value=cloudAuth?.accessToken||'';$('cloudRemember').checked=cloudAuth?.remember!==false;$('cloudConfigFields').open=!cloudConfig;$('cloudSignOut').hidden=!cloudAuth;updateConnectionFields();if(!$('cloudDialog').open)$('cloudDialog').showModal();
 }
@@ -27,7 +29,7 @@ async function cloudSignIn(){
  try{saveCloudConfig();
   if(cloudConfig.kind==='private-pc'){
    const accessToken=$('cloudAccessToken').value.trim();if(!/^[A-Za-z0-9_-]{32,256}$/.test(accessToken))throw new Error('Import Vision-Connection.txt or enter its access token.');
-   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);let response;try{response=await fetch(cloudConfig.backendUrl+'/api/health',{headers:{Authorization:'Bearer '+accessToken},credentials:'omit',signal:controller.signal});}catch{throw new Error('Server unavailable. '+pcConnectionHelp());}finally{clearTimeout(timer);}
+   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);let response;try{response=await fetch(cloudConfig.backendUrl+'/api/health',{headers:{Authorization:'Bearer '+accessToken},credentials:'omit',signal:controller.signal});}catch{throw new Error(pcConnectionFailure());}finally{clearTimeout(timer);}
    if(!response.ok)throw new Error(response.status===401?'The PC connection token was not accepted. Import the latest connection file.':'The PC service could not be reached.');const health=await response.json();if(health.service!=='vision-pc')throw new Error('This address is not a Vision PC processor.');
    cloudAuth={kind:'private-pc',backendUrl:cloudConfig.backendUrl,accessToken,remember:$('cloudRemember').checked};
   }else{
@@ -35,8 +37,8 @@ async function cloudSignIn(){
    const response=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+encodeURIComponent(cloudConfig.firebaseApiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,returnSecureToken:true})});const data=await response.json();if(!response.ok)throw new Error(data.error?.message==='INVALID_LOGIN_CREDENTIALS'?'Email or password was not accepted.':data.error?.message||'Sign-in failed.');
    cloudAuth={kind:'firebase',backendUrl:cloudConfig.backendUrl,idToken:data.idToken,refreshToken:data.refreshToken,email:data.email,remember:$('cloudRemember').checked,expiresAt:Date.now()+Number(data.expiresIn)*1000};
   }
-  saveCloudSession();$('cloudPassword').value='';$('cloudDialog').close();toast('Connected. You can import YouTube videos or run a session.');if(typeof resumeYouTubeImports==='function')resumeYouTubeImports();
- }catch(error){$('cloudStatus').textContent=error.message;}finally{button.disabled=false;}
+  saveCloudSession();$('cloudPassword').value='';$('cloudDialog').close();toast('Connected. Queued work will resume.');if(typeof projectHealthCache!=='undefined')projectHealthCache=null;if(typeof resumePCTranscriptionQueue==='function')resumePCTranscriptionQueue();if(typeof resumeYouTubeImports==='function')resumeYouTubeImports();
+ }catch(error){$('cloudStatus').textContent=error.message;if(cloudConfig?.kind==='private-pc')$('cloudReachabilityCheck').open=true;}finally{button.disabled=false;}
 }
 async function ensureCloudSession(){
  if(!cloudConfig||!cloudAuth){openCloudSettings();throw new Error('Connect your processor, then try again.');}
@@ -49,7 +51,7 @@ async function ensureCloudSession(){
 async function cloudFetch(path,options={}){
  if(!/^\/[a-z]/i.test(path)||path.includes('..'))throw new Error('Invalid service request.');const token=await ensureCloudSession();
  const headers=new Headers(options.headers||{});headers.set('Authorization','Bearer '+token);
- try{return await fetch(cloudConfig.backendUrl+'/api'+path,{...options,headers,credentials:'omit'});}catch(error){if(error.name==='AbortError')throw error;const failure=new Error('Processing server unavailable. '+(cloudConfig.kind==='private-pc'?pcConnectionHelp():'Check your internet connection.'));failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
+ try{return await fetch(cloudConfig.backendUrl+'/api'+path,{...options,headers,credentials:'omit'});}catch(error){if(error.name==='AbortError')throw error;const failure=new Error(cloudConfig.kind==='private-pc'?pcConnectionFailure():'Processing server unavailable. Check your internet connection.');failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
 }
 function downloadedAppSource(){
  const privateConnection=cloudConfig?.kind==='private-pc'&&cloudAuth?.backendUrl===cloudConfig.backendUrl?validPrivateConnection({...cloudConfig,accessToken:cloudAuth.accessToken}):null;
@@ -57,6 +59,7 @@ function downloadedAppSource(){
  const safe=JSON.stringify(portable).replace(/</g,'\\u003c');
  return APP_SOURCE.replace(/(<script id="visionCloudConfig" type="application\/json">)[\s\S]*?(<\/script>)/,(_match,start,end)=>start+safe+end);
 }
+const cloudReachabilityCheck=document.createElement('details');cloudReachabilityCheck.id='cloudReachabilityCheck';cloudReachabilityCheck.hidden=true;cloudReachabilityCheck.innerHTML='<summary>Check this device’s connection</summary><p><a id="cloudReachabilityLink" target="_blank" rel="noopener noreferrer">Open processor connection check ↗</a></p><p class="mini-note">A response saying “Connect this device to your Vision processing server first” means the address is reachable. A blocked page or connection error means this device cannot reach it. If the PC works on another device, compare the networks and browser settings.</p>';$('cloudStatus').after(cloudReachabilityCheck);
 $('openCloudSettings').onclick=()=>openCloudSettings();$('youtubeCloudSettings').onclick=()=>openCloudSettings();
 $('closeCloudSettings').onclick=()=>$('cloudDialog').close();$('cloudSignIn').onclick=cloudSignIn;
 $('cloudSaveConfig').onclick=()=>{try{saveCloudConfig();$('cloudStatus').textContent='Settings saved. Connect below to verify the processor.';}catch(error){$('cloudStatus').textContent=error.message;}};
@@ -189,4 +192,3 @@ $('closeYouTube').onclick=()=>$('youtubeDialog').close();
 $('youtubeImport').onclick=importYouTube;
 $('youtubeURL').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void importYouTube();}});
 window.addEventListener('online',()=>scheduleYouTubeImports());
-

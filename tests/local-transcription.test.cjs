@@ -16,7 +16,7 @@ function fixture(job=makeJob()){
   $:()=>null,videoFile:()=>false,uid:()=>`new-request-${++serial}`,checkpoint:()=>{},markDirty:()=>stats.saved++,refreshNodeAttachments:()=>{},renderAttachments:()=>{},toast:()=>{},recordActivity:()=>{},
   bytesFromDataURL:()=>new Uint8Array([1]),videoTranscriptClock:text=>text,saveTranscript:(n,s,text,status)=>transcripts.push({text,status}),storeVideoTranscript:(n,s,text,status)=>transcripts.push({text,status}),releaseCompletedSourceAudio:()=>stats.released++,
   setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout:()=>{},
-  ensureProjectIdentity:()=>state.projectCloud,projectCapabilities:async()=>({capabilities:{localTranscription:control.ready},localTranscription:{ready:control.ready,maxRequestBytes:104857600}}),
+  ensureProjectIdentity:()=>state.projectCloud,projectCapabilities:async()=>{if(control.healthError)throw control.healthError;return{capabilities:{localTranscription:control.ready},localTranscription:{ready:control.ready,maxRequestBytes:104857600}};},
   ensureRemoteProject:async()=>{stats.registered++;return state.projectCloud;},projectBackup:async()=>stats.saved++,
   cloudFetch:async(route,options)=>{calls.push({route,options});assert.equal(options.headers.get('X-Vision-Project-Key'),state.projectCloud.key);assert.ok(route.startsWith('/projects/'+state.projectCloud.id+'/transcriptions'));const data=options.method==='POST'?await control.post(JSON.parse(options.body)):await control.get();return{ok:true,status:options.method==='POST'?202:200,json:async()=>data};}
  };
@@ -35,6 +35,20 @@ function fixture(job=makeJob()){
  {
   const f=fixture();f.control.ready=false;await f.pump();assert.equal(f.job.status,'error');assert.match(f.job.error,/InstallLocalTranscription/);assert.equal(f.calls.length,0);assert.equal(f.stats.gemini,0);assert.equal(f.stats.released,0);
  }
+ // A failed connection before acceptance must not look like processing at 0%.
+ {
+  const f=fixture();f.control.healthError=Object.assign(new Error('Processing server unavailable.'),{code:'VISION_SERVER_UNAVAILABLE'});
+  await f.pump();assert.equal(f.job.status,'waiting');assert.equal(f.job.connectionError,true);assert.equal(f.calls.length,0);assert.ok(!f.job.submitted);
+  assert.match(f.run('queueStatusText(state.nodes[0].transcriptionJobs[0])'),/Cannot reach PC from this device.*Audio has not reached the PC/);
+  assert.ok(f.run('canRetryTranscription(state.nodes[0].transcriptionJobs[0])'));
+  f.control.healthError=null;f.run("retryTranscriptionQueue('job-1')");assert.equal(f.job.nextAttemptAt,0);await f.pump();
+  assert.equal(f.job.remoteId,'remote-1');assert.equal(f.job.connectionError,false);assert.equal(f.stats.gemini,0);
+ }
+ // The health-check AbortController is a connection timeout, not a terminal job error.
+ {
+  const f=fixture();f.control.healthError=new DOMException('The operation was aborted.','AbortError');await f.pump();
+  assert.equal(f.job.status,'waiting');assert.equal(f.job.connectionError,true);assert.ok(f.job.nextAttemptAt>Date.now());assert.equal(f.calls.length,0);
+ }
  // Entire manifest acceptance, saved remote identity, reopen, one matching result per pending section.
  {
   const f=fixture(makeJob({preservedSections:true,sections:[section(0,true),section(10),section(20)]}));await f.pump();
@@ -50,7 +64,15 @@ function fixture(job=makeJob()){
  // A lost POST response retains identity and payload for server deduplication.
  {
   const f=fixture();let sent;f.control.post=payload=>{sent=payload;const error=new Error('Processing server unavailable.');error.code='VISION_SERVER_UNAVAILABLE';throw error;};await f.pump();assert.equal(f.job.status,'waiting');assert.equal(f.job.submitted,true);assert.ok(f.job.nextAttemptAt>Date.now());assert.ok(f.timers.some(timer=>timer.delay>=14000));
+  assert.match(f.run('queueStatusText(state.nodes[0].transcriptionJobs[0])'),/Checking whether the PC accepted/);assert.doesNotMatch(f.run('queueStatusText(state.nodes[0].transcriptionJobs[0])'),/Audio has not reached/);
   f.context.raw=JSON.parse(JSON.stringify([f.job]));f.state.nodes[0].transcriptionJobs=f.run('validateTranscriptionJobs(raw,state.nodes[0].attachments)');f.control.post=payload=>{assert.deepEqual(payload,sent);return{id:'remote-1',status:'queued'};};await f.pump();assert.equal(f.state.nodes[0].transcriptionJobs[0].remoteId,'remote-1');assert.equal(f.stats.gemini,0);
+ }
+ // Losing the connection after acceptance retains the receipt and reconnects without re-uploading.
+ {
+  const f=fixture();await f.pump();f.due();f.control.get=()=>{throw Object.assign(new Error('Processing server unavailable.'),{code:'VISION_SERVER_UNAVAILABLE'});};await f.pump();
+  assert.equal(f.job.connectionError,true);assert.match(f.run('queueStatusText(state.nodes[0].transcriptionJobs[0])'),/PC may still be processing/);
+  f.control.get=()=>({status:'processing',phase:'Transcribing',progress:40});f.run('resumePCTranscriptionQueue()');assert.equal(f.job.nextAttemptAt,0);await f.pump();
+  assert.equal(f.job.connectionError,false);assert.equal(f.job.progress,40);assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.stats.gemini,0);
  }
  // Slow/polling first job cannot prevent the next job being accepted.
  {

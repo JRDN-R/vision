@@ -1,9 +1,11 @@
 """Temporary PC video processing; no source media is retained."""
 from __future__ import annotations
-import base64, html, io, json, math, os, re, subprocess, tempfile
+import base64, html, io, json, math, os, re, subprocess, tempfile, threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 MAX_DURATION = 7200
+# One CPU media operation at a time across YouTube and uploaded-video jobs.
+MEDIA_LOCK = threading.Lock()
 SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 def normalize_url(value):
