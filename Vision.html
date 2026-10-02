@@ -629,15 +629,19 @@ window.JEWTranscription = (() => {
   }
   function apiError(code,detail,key){
     detail=safeDetail(detail,key);
+    const dunning=/\bdunning\b/i.test(detail);
+    const payment=code===402;
     const auth=code===401||/UNAUTHENTICATED|invalid authentication|API.key.not.valid|API_KEY_INVALID|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(detail);
     const quota=code===429||/RESOURCE_EXHAUSTED|quota|rate.limit/i.test(detail);
     const denied=code===403||/PERMISSION_DENIED/i.test(detail);
-    const message=auth?'Google rejected the API credential. A valid Gemini API key is needed.':
+    const message=dunning?'Google blocked this API project (billing/account status). Check its status in Google AI Studio; contact Google support if billing looks correct. Retrying the video cannot clear this block.':
+      payment?'Google requires a billing or credit-balance action for this API project. Check Google AI Studio Billing before retrying.':
+      auth?'Google rejected the API credential. A valid Gemini API key is needed.':
       quota?'Google’s usage limit was reached. Try again after the quota resets.':
       denied?'Google denied access for the API key. Check its project and API restrictions.':
       'Google could not finish the transcription.';
     const error=new Error(message+(detail?' Google: '+detail:''));
-    error.recoverable=!(auth||quota||denied);return error;
+    error.recoverable=!(dunning||payment||auth||quota||denied);return error;
   }
   function wav(samples){
     const audio=pcm(samples),bytes=new Uint8Array(44+audio.length),view=new DataView(bytes.buffer);
