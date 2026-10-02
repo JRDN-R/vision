@@ -43,17 +43,17 @@ STAGES = {
     'save': 'saving the transcript',
 }
 ERROR_HELP = {
-    'dependency': 'A local transcription library could not load. Check the PC diagnostic log for the missing library or Windows runtime.',
-    'dependency-timeout': 'Loading the local transcription libraries stalled. Update the PC processor, then run CheckLocalTranscription.',
-    'model': 'The local Whisper model could not load. Run the local transcription check on the PC.',
-    'audio': 'The PC could not read this audio section. Retry the recording; if it repeats, prepare the audio again.',
+    'dependency': 'A server transcription library could not load. Check FUPCJ Server diagnostic log for the missing library or Windows runtime.',
+    'dependency-timeout': 'Loading the server transcription libraries stalled. Update FUPCJ Server processor, then run CheckLocalTranscription.',
+    'model': 'The Whisper model could not load. Run the server transcription check on FUPCJ Server.',
+    'audio': 'FUPCJ Server could not read this audio section. Retry the recording; if it repeats, prepare the audio again.',
     'duration': 'An audio section has an invalid duration. Prepare the recording again before retrying.',
-    'disk': 'Free at least 1 GB on the PC, then retry local transcription.',
-    'memory': 'The local worker ran out of memory. Close other heavy PC workloads, then retry.',
-    'permission': 'Windows blocked access to a local transcription file. Check the PC diagnostic log and retry.',
-    'timeout': 'Local transcription exceeded its time limit. Retry with a shorter recording.',
-    'speech-filter': 'The local speech filter could not load. Check the PC diagnostic log for its ONNX runtime error.',
-    'worker': 'The local transcription worker stopped. Run the local transcription check on the PC.',
+    'disk': 'Free at least 1 GB on FUPCJ Server, then retry server transcription.',
+    'memory': 'FUPCJ Server ran out of memory. Close other heavy workloads on the server, then retry.',
+    'permission': 'Windows blocked access to a server transcription file. Check FUPCJ Server diagnostic log and retry.',
+    'timeout': 'Server transcription exceeded its time limit. Retry with a shorter recording.',
+    'speech-filter': 'The local speech filter could not load. Check FUPCJ Server diagnostic log for its ONNX runtime error.',
+    'worker': 'The server transcription worker stopped. Run the server transcription check on FUPCJ Server.',
 }
 
 
@@ -212,13 +212,13 @@ class LocalTranscription:
             previous_end = end
             mime, audio = section.get('mimeType'), section.get('audioData')
             if mime not in MIME_FORMATS or not isinstance(audio, str):
-                raise self.Error('Local transcription accepts MP3 or WAV audio sections.')
+                raise self.Error('Server transcription accepts MP3 or WAV audio sections.')
             match = re.fullmatch(r'data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})', audio)
             if not match or match[1] not in MIME_FORMATS or MIME_FORMATS[match[1]] != MIME_FORMATS[mime]:
                 raise self.Error('Invalid audio data. Send base64 MP3 or WAV audio.')
             encoded_size += len(audio)
             if encoded_size > BODY_LIMIT:
-                raise self.Error('Local transcription audio uploads exceed 100 MB.', 413)
+                raise self.Error('Server transcription audio uploads exceed 100 MB.', 413)
             try:
                 raw = base64.b64decode(match[2], validate=True)
             except ValueError:
@@ -249,12 +249,12 @@ class LocalTranscription:
                             raise self.Error('This request identifier belongs to different audio. Start a new transcription.', 409)
                         return jsonify(id=previous['id'], status=previous['status']), 202
                     if not self.capability()['ready']:
-                        raise self.Error('Local transcription is not ready. Enable the local transcription plugin on the PC first.', 503)
+                        raise self.Error('Server transcription is not ready. Enable the server transcription plugin on FUPCJ Server first.', 503)
                     pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing')").fetchone()[0]
                     if pending >= MAX_QUEUED:
-                        raise self.Error('The local transcription queue is full. Wait for a job to finish.', 429)
+                        raise self.Error('The server transcription queue is full. Wait for a job to finish.', 429)
                     if shutil.disk_usage(self.root).free < DISK_RESERVE + sum(len(s['data']) for s in sections):
-                        raise self.Error('Free at least 1 GB on the PC before uploading more audio.', 507)
+                        raise self.Error('Free at least 1 GB on FUPCJ Server before uploading more audio.', 507)
                     job_id, now = secrets.token_hex(12), time.time()
                     directory = self.root / job_id
                     directory.mkdir(mode=0o700)
@@ -269,12 +269,14 @@ class LocalTranscription:
                     atomic_json(directory / 'manifest.json', {'sections': manifest})
                     db.execute('''INSERT INTO local_transcriptions
                         (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at)
-                        VALUES(?,?,?,?,'queued','Waiting for PC',?,?,?,?,?)''',
+                        VALUES(?,?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?)''',
                         (job_id, project_id, client, content_hash, source, duration, now, now, now + RETAIN_SECONDS))
                 directory = None  # The committed receipt now owns these files.
             finally:
                 if directory:
                     shutil.rmtree(directory, ignore_errors=True)
+            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType='whisper',
+                                                        uploadedBytes=sum(len(s['data']) for s in sections))
             self.wake.set()
             return jsonify(id=job_id, status='queued'), 202
 
@@ -304,8 +306,8 @@ class LocalTranscription:
 
     def recover(self):
         with self.db() as db:
-            db.execute("UPDATE local_transcriptions SET status='error',phase='Stopped',error='Local transcription stopped repeatedly. Retry this audio.' WHERE status='processing' AND attempts>=3")
-            db.execute("UPDATE local_transcriptions SET status='queued',phase='Resuming after PC restart',updated_at=? WHERE status='processing'", (time.time(),))
+            db.execute("UPDATE local_transcriptions SET status='error',phase='Stopped',error='Server transcription stopped repeatedly. Retry this audio.' WHERE status='processing' AND attempts>=3")
+            db.execute("UPDATE local_transcriptions SET status='queued',phase='Resuming after FUPCJ Server restart',updated_at=? WHERE status='processing'", (time.time(),))
             known = {r[0] for r in db.execute('SELECT id FROM local_transcriptions')}
         for path in self.root.iterdir():
             if path.is_dir() and re.fullmatch(r'[0-9a-f]{24}', path.name) and path.name not in known:
@@ -332,14 +334,15 @@ class LocalTranscription:
                 if row is None:
                     return False
                 value = dict(row)
-                db.execute("UPDATE local_transcriptions SET status='processing',phase='Loading local model',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+                db.execute("UPDATE local_transcriptions SET status='processing',phase='Loading Whisper model',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+            processing_started = time.monotonic()
             try:
                 result = self.run_local(value)
                 current = self.row(value['id'])
                 if current['status'] == 'cancelled':
                     return True
                 if self.stop.is_set():
-                    self.update(value['id'], only_processing=True, status='queued', phase='Waiting for PC restart')
+                    self.update(value['id'], only_processing=True, status='queued', phase='Waiting for FUPCJ Server restart')
                 elif result is not None:
                     result_json = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
                     if len(result_json.encode()) > RESULT_LIMIT:
@@ -352,6 +355,11 @@ class LocalTranscription:
                     self.app.logger.exception('Local transcription job %s failed.', value['id'])
                     safe = error if isinstance(error, LocalRunnerError) else LocalRunnerError(failure_code(error, 'startup'))
                     self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=str(safe))
+            finally:
+                current = self.row(value['id'])
+                self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType='whisper',
+                    outcome=current['status'], processingWallSeconds=time.monotonic()-processing_started,
+                    outputBytes=len((current.get('result_json') or '').encode('utf-8')))
             return True
         finally:
             self._worker_lock.release()

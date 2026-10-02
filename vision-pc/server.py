@@ -1,4 +1,4 @@
-"""Vision PC processor. Run through the installer; accepts defined Vision jobs only."""
+"""Vision FUPCJ Server. Run through the installer; accepts defined Vision jobs only."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ import threading
 import time
 from urllib.parse import urlparse
 
-from flask import Flask, Response, g, jsonify, request, stream_with_context
+from flask import Flask, Response, g, has_request_context, jsonify, request, stream_with_context
 import requests
 from werkzeug.exceptions import HTTPException
 
@@ -23,6 +23,8 @@ from media import normalize_url, process_job, MEDIA_LOCK
 from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
 from transcription import LocalTranscription
 from uploaded_media import UploadedMedia
+from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
+from audit_logs import AuditLogs
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -34,8 +36,8 @@ BASE_INSTRUCTIONS = '''Use the code_interpreter tool directly to open the suppli
 
 
 class APIError(Exception):
-    def __init__(self, message, status=400):
-        self.message, self.status = message, status
+    def __init__(self, message, status=400, code=None):
+        self.message, self.status, self.code = message, status, code
 
 
 def configure(config_path):
@@ -66,6 +68,13 @@ def configure(config_path):
                       DATA_DIR=data_dir, DATABASE=data_dir / 'vision.sqlite3',
                       FFMPEG=str(local_path('ffmpeg', 'tools/ffmpeg.exe')),
                       DENO=str(local_path('deno', 'tools/deno.exe')))
+    firebase = config.get('firebaseAuth') or {}
+    if not isinstance(firebase, dict):
+        raise ValueError('firebaseAuth must be a configuration object.')
+    app.config['FIREBASE_IDENTITY'] = (FirebaseIdentity(firebase.get('projectId'))
+                                       if firebase.get('enabled') is True else None)
+    diagnostic = config.get('diagnosticToken', '')
+    app.config['DIAGNOSTIC_TOKEN'] = diagnostic if isinstance(diagnostic, str) and re.fullmatch(r'[A-Za-z0-9_-]{32,256}', diagnostic) else ''
     os.environ['PATH'] = str(Path(app.config['FFMPEG']).parent) + os.pathsep + str(Path(app.config['DENO']).parent) + os.pathsep + os.environ.get('PATH', '')
     ORIGINS.clear()
     ORIGINS.update({'https://jrdn-r.github.io', 'null'})
@@ -73,6 +82,8 @@ def configure(config_path):
         ORIGINS.add(backend)
     initialize_db()
     sessions.initialize()
+    app.config['AUDIT_LOGS'] = AuditLogs(local_path('auditLogDir', 'data/audit-logs'), connect_db, app.logger)
+    app.config['AUDIT_LOGS'].initialize()
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
     return config
@@ -94,6 +105,8 @@ def initialize_db():
             expires_at REAL NOT NULL, result_path TEXT, attempts INTEGER NOT NULL DEFAULT 0)''')
         db.execute('''CREATE TABLE IF NOT EXISTS responses (
             id TEXT PRIMARY KEY, uid TEXT NOT NULL, status TEXT, updated_at REAL, expires_at REAL)''')
+        if 'uid' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
+            db.execute("ALTER TABLE jobs ADD COLUMN uid TEXT NOT NULL DEFAULT 'installation-owner'")
 
 
 def recover_jobs():
@@ -109,14 +122,17 @@ def recover_jobs():
 
 @app.errorhandler(APIError)
 def api_error(error):
-    return jsonify(error=error.message), error.status
+    body = {'error': error.message}
+    if error.code:
+        body['code'] = error.code
+    return jsonify(body), error.status
 
 
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
         message = ('Video uploads exceed 100 MB. Choose a smaller video.' if '/media' in request.path
-                   else 'Local transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
+                   else 'Server transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
                    else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
                    else 'Attachments exceed 25 MB. Export fewer or smaller images.')
     else:
@@ -133,21 +149,51 @@ def unexpected_error(error):
 
 @app.before_request
 def authorize():
+    g.request_started = time.monotonic()
     origin = request.headers.get('Origin')
     if origin and not app.config.get('PUBLIC_ACCESS', False) and origin not in ORIGINS:
         raise APIError('This page is not an allowed Vision origin.', 403)
     if request.method == 'OPTIONS':
         return Response(status=204)
+    if request.method == 'GET' and request.path == '/api/status':
+        return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
     expected = app.config.get('CONNECTION_TOKEN', '')
-    if not expected or not hmac.compare_digest(token, expected):
-        raise APIError('Connect this device to your Vision processing server first.', 401)
-    g.uid = 'installation-owner'
+    identity = app.config.get('FIREBASE_IDENTITY')
+    if expected and hmac.compare_digest(token.encode('utf-8'), expected.encode('utf-8')):
+        if identity:
+            secret = app.config.get('DIAGNOSTIC_TOKEN', '')
+            supplied = request.headers.get('X-Vision-Diagnostic-Token', '')
+            local = (request.remote_addr in ('127.0.0.1', '::1') and not request.headers.get('Origin') and
+                     not any(name.lower() == 'forwarded' or name.lower().startswith('x-forwarded-') for name in request.headers.keys()))
+            diagnostic_project = re.fullmatch(r'/api/projects/vision_check_[0-9a-f]{32}(/transcriptions(?:/[0-9a-f]{24})?)?', request.path)
+            diagnostic_route = ((request.path == '/api/health' and request.method == 'GET') or
+                                (diagnostic_project and ((not diagnostic_project.group(1) and request.method in ('GET', 'PUT')) or
+                                 (diagnostic_project.group(1) == '/transcriptions' and request.method == 'POST') or
+                                 (re.fullmatch(r'/transcriptions/[0-9a-f]{24}', diagnostic_project.group(1) or '') and request.method in ('GET', 'DELETE')))))
+            if not (secret and local and diagnostic_route and hmac.compare_digest(secret.encode(), supplied.encode())):
+                raise APIError('Sign in with Google to use FUPCJ Server.', 401)
+        g.uid, g.auth_kind = 'installation-owner', 'private-pc'
+        return
+    if identity and token:
+        try:
+            claims = identity.verify(token)
+        except IdentityUnavailable:
+            raise APIError('Google sign-in verification is temporarily unavailable on FUPCJ Server. Try again.', 503)
+        except InvalidIdentity:
+            raise APIError('Your Google sign-in has expired or is invalid. Sign in again.', 401)
+        g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
+        app.config['AUDIT_LOGS'].identity(g.uid, claims)
+        return
+    raise APIError('Sign in with Google or connect this device to your Vision processing server first.', 401)
 
 
 @app.after_request
 def cors(response):
+    if getattr(g, 'auth_kind', None) == 'firebase-google' and request.method in ('POST', 'PUT', 'DELETE'):
+        app.config['AUDIT_LOGS'].request_event(g.uid, request, response.status_code,
+                                              time.monotonic() - g.request_started)
     origin = request.headers.get('Origin')
     public_access = app.config.get('PUBLIC_ACCESS', False)
     if public_access or origin in ORIGINS:
@@ -163,17 +209,25 @@ def cors(response):
     return response
 
 
+@app.get('/api/status')
+def public_status():
+    return jsonify(service='vision', mode='private-pc', googleSignInRequired=bool(app.config.get('FIREBASE_IDENTITY')))
+
+
 @app.get('/api/health')
 def health():
     with connect_db() as db:
-        queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+        queued = db.execute("SELECT COUNT(*) FROM jobs WHERE uid=? AND status IN ('queued','processing')", (g.uid,)).fetchone()[0]
     local = transcriptions.capability()
     video = uploaded_media.capability()
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
+                   serverName='FUPCJ Server',
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
+                   firebaseAuth={'enabled': bool(app.config.get('FIREBASE_IDENTITY')),
+                                 'projectId': app.config['FIREBASE_IDENTITY'].project_id if app.config.get('FIREBASE_IDENTITY') else None},
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, videoMedia=video,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'localTranscription': local['ready'], 'uploadedMedia': video['ready']})
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'uploadedMedia': video['ready']})
 
 
 def get_job(job_id):
@@ -181,7 +235,7 @@ def get_job(job_id):
         raise APIError('Invalid job identifier.')
     with connect_db() as db:
         row = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
-    if row is None:
+    if row is None or (has_request_context() and row['uid'] != g.uid):
         raise APIError('This import is unavailable.', 404)
     value = dict(row)
     if value['expires_at'] < time.time() and value['status'] not in ('queued', 'processing'):
@@ -201,10 +255,15 @@ def youtube():
     client_id = payload.get('clientRequestId')
     if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
         raise APIError('Invalid request identifier.')
+    # Existing installation receipts retain their IDs. New accounts cannot collide
+    # with those receipts or infer another account's video URL/status.
+    if client_id and g.auth_kind == 'firebase-google':
+        import hashlib
+        client_id = 'account:' + hashlib.sha256((g.uid + '\0' + client_id).encode()).hexdigest()
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
         if client_id:
-            old = db.execute('SELECT id,status,url FROM jobs WHERE client_request_id=?', (client_id,)).fetchone()
+            old = db.execute('SELECT id,status,url FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
             if old:
                 if old['url'] != url:
                     raise APIError('This request identifier belongs to another video.', 409)
@@ -213,8 +272,8 @@ def youtube():
         if pending >= 25:
             raise APIError('The server queue is full. Wait for an import to finish.', 429)
         job_id, now = secrets.token_hex(12), time.time()
-        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at)
-            VALUES(?,?,?,'queued','Waiting',?,?,?)''', (job_id, client_id, url, now, now, now + 86400))
+        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid)
+            VALUES(?,?,?,'queued','Waiting',?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid))
     WAKE.set()
     return jsonify(id=job_id, status='queued'), 202
 
@@ -257,12 +316,20 @@ def process_next_job():
         fields = {key: val for key, val in fields.items() if key in allowed}
         with connect_db() as db:
             db.execute('UPDATE jobs SET ' + ','.join(key + '=?' for key in fields) + ' WHERE id=?', [*fields.values(), job_id])
+    processing_started = time.monotonic()
     try:
         with MEDIA_LOCK:
             process_job(value['id'], value['url'], app.config['FFMPEG'], update,
                         deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'))
     except Exception:
         update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
+    finally:
+        with connect_db() as db:
+            final = db.execute('SELECT status,result_path FROM jobs WHERE id=?', (value['id'],)).fetchone()
+        size = Path(final['result_path']).stat().st_size if final and final['result_path'] and Path(final['result_path']).exists() else 0
+        app.config['AUDIT_LOGS'].event(value['uid'], 'processing_finished', jobType='youtube',
+            outcome=final['status'] if final else 'removed', processingWallSeconds=time.monotonic()-processing_started,
+            outputBytes=size)
     return True
 
 
@@ -482,7 +549,7 @@ transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 
 def main():
-    parser = argparse.ArgumentParser(description='Vision private PC processor')
+    parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')
     parser.add_argument('--config', default=str(Path(__file__).with_name('config.json')))
     parser.add_argument('--check', action='store_true', help='Check configuration and installed components, then exit')
     parser.add_argument('--health', action='store_true', help='Check the already-running local processor, then exit')
@@ -491,7 +558,8 @@ def main():
         configure(args.config)
         if args.health:
             response = requests.get('http://127.0.0.1:%s/api/health' % app.config['PORT'],
-                                    headers={'Authorization': 'Bearer ' + app.config['CONNECTION_TOKEN']}, timeout=10)
+                                    headers={'Authorization': 'Bearer ' + app.config['CONNECTION_TOKEN'],
+                                             'X-Vision-Diagnostic-Token': app.config['DIAGNOSTIC_TOKEN']}, timeout=10)
             response.raise_for_status()
             print(json.dumps(response.json()))
             return 0
@@ -503,7 +571,7 @@ def main():
             print('Setup is incomplete: ' + ', '.join(missing) + '. Run the installer again.')
             return 1
         if args.check:
-            print('Vision PC configuration and processing components are ready.')
+            print('FUPCJ Server configuration and processing components are ready.')
             return 0
         import logging
         from logging.handlers import RotatingFileHandler
@@ -535,7 +603,7 @@ def main():
         return 0
     except Exception as error:
         # Values and payloads are intentionally excluded from setup diagnostics.
-        print('Vision PC could not start (' + type(error).__name__ + '). Check the installation or run setup again.')
+        print('FUPCJ Server could not start (' + type(error).__name__ + '). Check the installation or run setup again.')
         return 1
 
 

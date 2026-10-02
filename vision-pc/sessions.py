@@ -14,7 +14,7 @@ import secrets
 import threading
 import time
 
-from flask import Response, jsonify, request, send_file, stream_with_context
+from flask import Response, g, jsonify, request, send_file, stream_with_context
 import requests
 
 OPENAI = 'https://api.openai.com/v1'
@@ -105,28 +105,49 @@ class Sessions:
                     file_id TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL,
                     size INTEGER NOT NULL DEFAULT 0, path TEXT, error TEXT,
                     UNIQUE(run_id,container_id,file_id));
+                CREATE TABLE IF NOT EXISTS account_credentials (
+                    uid TEXT PRIMARY KEY, openai_key_cipher BLOB NOT NULL,
+                    updated_at REAL NOT NULL);
             ''')
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
             if 'project_prompt' not in columns:
                 db.execute("ALTER TABLE project_runs ADD COLUMN project_prompt TEXT NOT NULL DEFAULT ''")
+            columns = {r[1] for r in db.execute('PRAGMA table_info(projects)')}
+            if 'owner_uid' not in columns:
+                db.execute('ALTER TABLE projects ADD COLUMN owner_uid TEXT')
+            if 'title' not in columns:
+                db.execute("ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT 'Untitled project'")
+            db.execute('CREATE INDEX IF NOT EXISTS projects_owner_updated ON projects(owner_uid,updated_at)')
 
     def project(self, project_id, create=False, db=None):
         if not re.fullmatch(r'[A-Za-z0-9_-]{16,120}', project_id):
             raise self.Error('Invalid project identifier.')
         key = request.headers.get('X-Vision-Project-Key', '')
-        if not re.fullmatch(r'[A-Za-z0-9_-]{32,256}', key):
-            raise self.Error('Open the saved Vision project to unlock this project.', 403)
-        digest = hashlib.sha256(key.encode()).hexdigest()
+        valid_key = bool(re.fullmatch(r'[A-Za-z0-9_-]{32,256}', key))
+        digest = hashlib.sha256(key.encode()).hexdigest() if valid_key else None
         if db is None:
             with self.db() as conn:
                 row = conn.execute('SELECT * FROM projects WHERE id=?', (project_id,)).fetchone()
         else:
             row = db.execute('SELECT * FROM projects WHERE id=?', (project_id,)).fetchone()
-        if row is not None and not hmac.compare_digest(row['key_hash'], digest):
-            raise self.Error('This project key does not match the saved project.', 403)
+        account = g.auth_kind == 'firebase-google'
+        if row is not None and row['owner_uid']:
+            if not account or row['owner_uid'] != g.uid:
+                raise self.Error('This project is unavailable for this account.', 404)
+            # A project key is a legacy migration credential, never an override
+            # for account ownership. The same account can reopen on a new device.
+            digest = row['key_hash']
+        elif row is not None and account:
+            raise self.Error('Add this existing project to your Google account before syncing it.',
+                             409, 'project-claim-required')
+        elif not account:
+            if not valid_key:
+                raise self.Error('Open the saved Vision project to unlock this project.', 403)
+            if row is not None and not hmac.compare_digest(row['key_hash'], digest):
+                raise self.Error('This project key does not match the saved project.', 403)
         if row is None and not create:
-            raise self.Error('This project has not been saved to the PC yet.', 404)
-        return row, digest
+            raise self.Error('This project has not been saved to FUPCJ Server yet.', 404)
+        return row, digest or hashlib.sha256(secrets.token_bytes(32)).hexdigest()
 
     def row(self, run_id, project_id=None):
         if not ID.fullmatch(run_id):
@@ -157,16 +178,90 @@ class Sessions:
         fields['updated_at'] = time.time()
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            previous_status = db.execute('SELECT status FROM project_runs WHERE id=?', (run_id,)).fetchone()
             db.execute('UPDATE project_runs SET ' + ','.join(k+'=?' for k in fields) + ',sequence=sequence+1 WHERE id=?', [*fields.values(), run_id])
         snap = self.snapshot(run_id)
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO run_events VALUES(?,?,?)', (run_id, snap['sequence'], json.dumps(snap)))
             # Snapshots are self-contained, so bounded replay preserves every current fact.
             db.execute('DELETE FROM run_events WHERE run_id=? AND sequence<?', (run_id, snap['sequence'] - 150))
+        if fields.get('status') in TERMINAL and previous_status and previous_status['status'] not in TERMINAL:
+            row = self.row(run_id)
+            self.app.config['AUDIT_LOGS'].project_event(row['project_id'], 'run_finished', jobType='openai',
+                outcome=fields['status'], runElapsedSeconds=time.time()-row['created_at'],
+                uploadedBytes=sum(v.get('size', 0) for v in json.loads(row['inputs_json'])),
+                outputBytes=sum(v['size'] for v in snap['artifacts']))
         return snap
 
     def register_routes(self):
         app = self.app
+        @app.route('/api/account/openai-key', methods=['GET', 'PUT', 'DELETE'])
+        def account_openai_key():
+            if g.auth_kind != 'firebase-google':
+                raise self.Error('Sign in with Google to use your saved API key.', 403)
+            if request.method == 'GET':
+                with self.db() as db:
+                    row = db.execute('SELECT openai_key_cipher FROM account_credentials WHERE uid=?', (g.uid,)).fetchone()
+                if row is None:
+                    return jsonify(saved=False, apiKey='')
+                try:
+                    key = unprotect_secret(row['openai_key_cipher'])
+                except Exception:
+                    raise self.Error('FUPCJ Server could not unlock your saved API key. Check the processor installation.', 503)
+                return jsonify(saved=True, apiKey=key)
+            if request.method == 'DELETE':
+                with self.db() as db:
+                    db.execute('DELETE FROM account_credentials WHERE uid=?', (g.uid,))
+                return jsonify(saved=False)
+            request.max_content_length = 8192
+            body = request.get_json(silent=True)
+            key = body.get('apiKey') if isinstance(body, dict) else None
+            if not isinstance(key, str) or not key.strip() or len(key) > 512 or re.search(r'\s', key.strip()):
+                raise self.Error('Enter a valid OpenAI API key.')
+            key = key.strip()
+            try:
+                cipher = protect_secret(key)
+            except Exception:
+                raise self.Error('FUPCJ Server could not protect your API key. Restart the installed Windows processor and try again.', 503)
+            with self.db() as db:
+                db.execute('''INSERT INTO account_credentials(uid,openai_key_cipher,updated_at) VALUES(?,?,?)
+                    ON CONFLICT(uid) DO UPDATE SET openai_key_cipher=excluded.openai_key_cipher,updated_at=excluded.updated_at''',
+                    (g.uid, cipher, time.time()))
+            return jsonify(saved=True)
+
+        @app.get('/api/projects')
+        def account_projects():
+            if g.auth_kind != 'firebase-google':
+                # Never expose the installation's legacy projects through its
+                # shared connection token. Discovery requires verified identity.
+                raise self.Error('Sign in with Google to open your saved projects.', 404)
+            with self.db() as db:
+                rows = db.execute('SELECT id,title,revision,updated_at FROM projects WHERE owner_uid=? ORDER BY updated_at DESC,id',
+                                  (g.uid,)).fetchall()
+            return jsonify(projects=[dict(id=r['id'], title=r['title'], revision=r['revision'],
+                                          updatedAt=r['updated_at']) for r in rows])
+
+        @app.post('/api/projects/<project_id>/claim')
+        def claim_project(project_id):
+            if g.auth_kind != 'firebase-google':
+                raise self.Error('Sign in with Google to add this project to your account.', 403)
+            if not re.fullmatch(r'[A-Za-z0-9_-]{16,120}', project_id):
+                raise self.Error('Invalid project identifier.')
+            key = request.headers.get('X-Vision-Project-Key', '')
+            if not re.fullmatch(r'[A-Za-z0-9_-]{32,256}', key):
+                raise self.Error('Open the original saved project to add it to your account.', 403)
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute('SELECT * FROM projects WHERE id=?', (project_id,)).fetchone()
+                if row is None or (row['owner_uid'] and row['owner_uid'] != g.uid):
+                    raise self.Error('This project is unavailable for this account.', 404)
+                if not hmac.compare_digest(row['key_hash'], hashlib.sha256(key.encode()).hexdigest()):
+                    raise self.Error('This project key does not match the saved project.', 403)
+                document = json.loads(row['project_json'])
+                title = str(document.get('title') or document.get('name') or 'Untitled project')[:200]
+                db.execute('UPDATE projects SET owner_uid=?,title=? WHERE id=?', (g.uid, title, project_id))
+            return jsonify(claimed=True, revision=row['revision'], updatedAt=row['updated_at'])
+
         @app.route('/api/projects/<project_id>', methods=['GET', 'PUT'])
         def persistent_project(project_id):
             if request.method == 'GET':
@@ -190,9 +285,12 @@ class Sessions:
                 expected = old['revision'] if old else 0
                 if revision != expected:
                     return jsonify(error='This project changed on another device. Load the saved version before saving again.', revision=expected), 409
-                db.execute('''INSERT INTO projects VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-                    project_json=excluded.project_json,revision=excluded.revision,updated_at=excluded.updated_at''',
-                    (project_id, digest, saved, revision+1, now, now))
+                title = str(body['project'].get('title') or body['project'].get('name') or 'Untitled project')[:200]
+                owner = g.uid if g.auth_kind == 'firebase-google' else None
+                db.execute('''INSERT INTO projects(id,key_hash,project_json,revision,created_at,updated_at,owner_uid,title)
+                    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                    project_json=excluded.project_json,revision=excluded.revision,updated_at=excluded.updated_at,title=excluded.title''',
+                    (project_id, digest, saved, revision+1, now, now, owner, title))
             return jsonify(revision=revision+1, updatedAt=now)
 
         @app.route('/api/projects/<project_id>/runs', methods=['GET', 'POST'])
@@ -222,7 +320,7 @@ class Sessions:
             try:
                 cipher = protect_secret(key)
             except Exception:
-                raise self.Error('The PC could not protect the API key. Restart the installed Windows processor and try again.', 503)
+                raise self.Error('FUPCJ Server could not protect the API key. Restart the installed Windows processor and try again.', 503)
             model = options.get('model') or 'gpt-6-astra'
             if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', model):
                 raise self.Error('Choose a valid model.')
@@ -273,10 +371,10 @@ class Sessions:
                         raise self.Error('A response is already running in this project.', 409)
                     count = db.execute("SELECT COUNT(*) FROM project_runs WHERE status IN ('queued','preparing','submitting','in_progress','saving')").fetchone()[0]
                     if count >= 25:
-                        raise self.Error('The PC run queue is full. Try again after a response finishes.', 429)
+                        raise self.Error('FUPCJ Server run queue is full. Try again after a response finishes.', 429)
                     now = time.time()
                     db.execute('''INSERT INTO project_runs(id,project_id,client_id,status,phase,message,model,max_tokens,previous_id,key_cipher,inputs_json,project_prompt,created_at,updated_at)
-                        VALUES(?,?,?,'queued','Waiting for the PC',?,?,?,?,?,?,?,?,?)''',
+                        VALUES(?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?,?,?,?,?)''',
                         (run_id, project_id, client_id, message, model, limit, previous, cipher, json.dumps(inputs), str(options.get('projectPrompt') or '')[:250000], now, now))
             except Exception:
                 import shutil
@@ -336,14 +434,14 @@ class Sessions:
             with self.db() as db:
                 file = db.execute('SELECT * FROM run_artifacts WHERE id=? AND run_id=?', (artifact_id, run_id)).fetchone()
             if not file or not file['path'] or not Path(file['path']).is_file():
-                raise self.Error('This file is not available on the PC.', 404)
+                raise self.Error('This file is not available on FUPCJ Server.', 404)
             return send_file(file['path'], as_attachment=True, download_name=file['name'], mimetype=file['mime'], max_age=0)
 
     def call(self, key, method, path, **kwargs):
         try:
             result = requests.request(method, OPENAI+path, headers={'Authorization': 'Bearer '+key}, timeout=(15, 60), **kwargs)
         except requests.RequestException:
-            raise UpstreamFailure('OpenAI could not be reached. The PC will reconnect.')
+            raise UpstreamFailure('OpenAI could not be reached. FUPCJ Server will reconnect.')
         if result.status_code >= 400:
             try:
                 message = str(result.json().get('error', {}).get('message') or 'OpenAI rejected the request.')
@@ -359,7 +457,7 @@ class Sessions:
             try:
                 return response.json()
             except ValueError:
-                raise UpstreamFailure('OpenAI returned an incomplete response. The PC will reconnect.')
+                raise UpstreamFailure('OpenAI returned an incomplete response. FUPCJ Server will reconnect.')
         finally:
             response.close()
 
@@ -376,7 +474,7 @@ class Sessions:
                 self.update(row['id'], status='queued', phase='Resuming after restart', next_attempt=0)
             else:
                 self.update(row['id'], status='error', phase='Check interrupted submission', key_cipher=None,
-                            error='The PC restarted before the response ID was saved. Check OpenAI usage before starting another run; this request was not automatically submitted again.')
+                            error='FUPCJ Server restarted before the response ID was saved. Check OpenAI usage before starting another run; this request was not automatically submitted again.')
 
     def lineage(self, row):
         values, seen = [], set()
@@ -566,7 +664,7 @@ class Sessions:
                     db.execute('UPDATE run_artifacts SET path=?,size=?,error=NULL WHERE id=?', (str(path), size, aid))
             except (UpstreamFailure, requests.RequestException) as error:
                 with self.db() as db:
-                    db.execute('UPDATE run_artifacts SET error=? WHERE id=?', ('The PC could not retain this file: '+str(error).replace(key, '[redacted]')[:400], aid))
+                    db.execute('UPDATE run_artifacts SET error=? WHERE id=?', ('FUPCJ Server could not retain this file: '+str(error).replace(key, '[redacted]')[:400], aid))
                 if isinstance(error, requests.RequestException) or getattr(error, 'status', 500) >= 500 or getattr(error, 'status', 500) == 429:
                     raise UpstreamFailure('Reconnecting to save generated files.')
             finally:
@@ -642,7 +740,7 @@ class Sessions:
                     message += ' Submission may have been accepted. Check OpenAI usage before starting another run; no duplicate request was sent.'
                 self.update(run_id, status='error', phase='Stopped', error=message[:900], key_cipher=None)
         except Exception:
-            self.update(run_id, status='error', phase='Stopped', error='The PC could not resume this run. Check the processor storage and Windows account. No new OpenAI request was submitted automatically.', key_cipher=None)
+            self.update(run_id, status='error', phase='Stopped', error='FUPCJ Server could not resume this run. Check the processor storage and Windows account. No new OpenAI request was submitted automatically.', key_cipher=None)
         return True
 
     def loop(self):

@@ -1,14 +1,15 @@
 #requires -Version 5.1
 <#
-Vision PC processor. Run from Windows PowerShell as Administrator.
+FUPCJ Server. Run from Windows PowerShell as Administrator.
 The application downloads its own private runtime; no existing Python/Node install is needed.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
-    [string]$SourceRef = 'main'
+    [string]$SourceRef = 'main',
+    [string]$FirebaseProjectId = 'visionboard-api'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,13 +76,57 @@ function Read-Configuration {
     }
     return $Configuration
 }
+function Initialize-ServerConfiguration($Configuration) {
+    # This credential stays in the protected config. It is never exported to a
+    # browser and authorizes only direct loopback diagnostic requests.
+    if (-not $Configuration.diagnosticToken) {
+        $DiagnosticBytes = New-Object byte[] 32
+        $DiagnosticGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $DiagnosticGenerator.GetBytes($DiagnosticBytes) } finally { $DiagnosticGenerator.Dispose() }
+        $DiagnosticToken = [BitConverter]::ToString($DiagnosticBytes).Replace('-','').ToLowerInvariant()
+        $Configuration | Add-Member -NotePropertyName diagnosticToken -NotePropertyValue $DiagnosticToken -Force
+    } elseif ([string]$Configuration.diagnosticToken -notmatch '^[A-Za-z0-9_-]{40,128}$') {
+        throw 'The saved diagnostic credential is invalid. No credentials were replaced.'
+    }
+    $AuditDirectory = [string]$Configuration.auditLogDir
+    if (-not $AuditDirectory) {
+        $UserDesktop = [Environment]::GetFolderPath('Desktop')
+        if (-not $UserDesktop -or -not (Test-Path -LiteralPath $UserDesktop -PathType Container)) {
+            throw 'The current Windows user has no accessible Desktop. Run the installer from the usual signed-in administrator account.'
+        }
+        $AuditDirectory = Join-Path $UserDesktop 'Vision Logs'
+    }
+    if (-not [IO.Path]::IsPathRooted($AuditDirectory)) { throw 'The saved audit log folder must be an absolute path.' }
+    New-Item -ItemType Directory -Path $AuditDirectory -Force | Out-Null
+    if ((Get-Item -LiteralPath $AuditDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'The Vision Logs folder is a link. Choose a regular folder for server logs.'
+    }
+    # The task runs as SYSTEM. Keep the installing user and existing access rules
+    # while giving the service and administrators access to this Desktop folder.
+    $AuditAcl = Get-Acl -LiteralPath $AuditDirectory
+    foreach ($SidValue in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')) {
+        $Sid = New-Object Security.Principal.SecurityIdentifier($SidValue)
+        $Rule = New-Object Security.AccessControl.FileSystemAccessRule($Sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+        $AuditAcl.AddAccessRule($Rule)
+    }
+    Set-Acl -LiteralPath $AuditDirectory -AclObject $AuditAcl
+    $WriteProbe = Join-Path $AuditDirectory ('.vision-write-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    try { Write-Utf8 $WriteProbe 'Vision log folder write check' }
+    finally { if (Test-Path -LiteralPath $WriteProbe) { Remove-Item -LiteralPath $WriteProbe -Force } }
+    $Configuration | Add-Member -NotePropertyName auditLogDir -NotePropertyValue $AuditDirectory -Force
+}
+function Get-LocalDiagnosticHeaders($Configuration) {
+    $Headers = @{ Authorization = "Bearer $($Configuration.token)" }
+    if ($Configuration.diagnosticToken) { $Headers['X-Vision-Diagnostic-Token'] = [string]$Configuration.diagnosticToken }
+    return $Headers
+}
 function Connect-Tailscale([string]$Executable, $Configuration) {
     Start-Service -Name 'Tailscale'
     $StatusText = & $Executable status --json
     if ($LASTEXITCODE -ne 0) { throw 'Could not read the Tailscale connection status.' }
     $Status = $StatusText | ConvertFrom-Json
     if ($Status.BackendState -ne 'Running') {
-        Write-Host 'Sign in using the Tailscale link below to connect this PC.'
+        Write-Host 'Sign in using the Tailscale link below to connect this FUPCJ Server.'
         & $Executable up --unattended=true --timeout=3m | Out-Host
         if ($LASTEXITCODE -ne 0) { throw 'Finish the Tailscale sign-in, then run this same command again.' }
     }
@@ -108,24 +153,24 @@ function Assert-VisionRoute([string]$Executable, [string]$DnsName, [bool]$Public
         foreach ($Handler in @($Entry.Value.Handlers.PSObject.Properties)) {
             $HasRoute = $true
             if ($Entry.Name -ne ($DnsName + ':443') -or $Handler.Name -ne '/' -or $Handler.Value.Proxy -ne 'http://127.0.0.1:8765') {
-                throw 'This PC already has a different Tailscale Serve route. Nothing was overwritten. Describe that existing setup for help.'
+                throw 'This FUPCJ Server already has a different Tailscale Serve route. Nothing was overwritten. Describe that existing setup for help.'
             }
         }
     }
     $TcpEntries = @($ServeConfig.TCP.PSObject.Properties | Where-Object { $_ })
     if ($TcpEntries.Count -gt 0 -and (-not $HasRoute -or $TcpEntries.Count -ne 1 -or $TcpEntries[0].Name -ne '443' -or $TcpEntries[0].Value.HTTPS -ne $true)) {
-        throw 'An existing Tailscale TCP service uses this PC. Nothing was overwritten.'
+        throw 'An existing Tailscale TCP service uses this FUPCJ Server. Nothing was overwritten.'
     }
     foreach ($Entry in @($ServeConfig.AllowFunnel.PSObject.Properties | Where-Object { $_.Value -eq $true })) {
         if (-not $HasRoute -or $Entry.Name -ne ($DnsName + ':443')) {
-            throw 'Another Tailscale Funnel route uses this PC. Nothing was overwritten.'
+            throw 'Another Tailscale Funnel route uses this FUPCJ Server. Nothing was overwritten.'
         }
         if (-not $PublicAccess) {
             throw 'Vision already has a public Funnel route. Run this script with -Action EnablePublic to preserve public access.'
         }
     }
     if (@($ServeConfig.Foreground.PSObject.Properties | Where-Object { $_ }).Count -gt 0) {
-        throw 'An active foreground Tailscale service uses this PC. Nothing was overwritten.'
+        throw 'An active foreground Tailscale service uses this FUPCJ Server. Nothing was overwritten.'
     }
 }
 function Start-VisionRoute([string]$Executable, $Configuration) {
@@ -133,7 +178,7 @@ function Start-VisionRoute([string]$Executable, $Configuration) {
     $PublicAccess = ($Configuration.publicAccess -eq $true)
     Assert-VisionRoute $Executable $DnsName $PublicAccess
     if ($PublicAccess) {
-        Write-Host 'If Tailscale prints an approval link, open it and enable Funnel for this PC.'
+        Write-Host 'If Tailscale prints an approval link, open it and enable Funnel for this FUPCJ Server.'
         & $Executable funnel --bg --yes --https=443 http://127.0.0.1:8765
     } else {
         Write-Host 'If Tailscale prints an HTTPS approval link, open it and enable HTTPS for your private network.'
@@ -152,7 +197,16 @@ function Register-ProcessorTask {
 }
 function Test-Processor([string]$BaseUrl, [string]$Token) {
     try {
-        $Result = Invoke-RestMethod -Uri "$BaseUrl/api/health" -Headers @{ Authorization = "Bearer $Token" } -TimeoutSec 10
+        $Configuration = Read-Configuration
+        if ($BaseUrl -eq 'http://127.0.0.1:8765') {
+            $Result = Invoke-RestMethod -Uri "$BaseUrl/api/health" -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+        } elseif ($Configuration.firebaseAuth.enabled -eq $true) {
+            # Public reachability is checked without either installation secret.
+            $Status = Invoke-RestMethod -Uri "$BaseUrl/api/status" -TimeoutSec 10
+            return ($Status.service -eq 'vision' -and $Status.mode -eq 'private-pc' -and $Status.googleSignInRequired -eq $true)
+        } else {
+            $Result = Invoke-RestMethod -Uri "$BaseUrl/api/health" -Headers @{ Authorization = "Bearer $Token" } -TimeoutSec 10
+        }
         return ($Result.ok -eq $true -and $Result.mode -eq 'private-pc')
     } catch { return $false }
 }
@@ -197,11 +251,68 @@ function Stop-ProcessorForChange {
     }
     throw 'The Vision task did not stop. No application files should be changed until it stops.'
 }
+function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false) {
+    Initialize-ServerConfiguration $Configuration
+    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')
+    $BackupDirectory = Join-Path $DownloadDir ('processor-update-backup-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
+    Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
+    $PreviousFiles = @{}
+    foreach ($File in $Files) {
+        $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
+        if ($PreviousFiles[$File]) { Copy-Item -LiteralPath (Join-Path $InstallRoot $File) -Destination (Join-Path $BackupDirectory $File) }
+    }
+    $WasRunning = ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running')
+    $Changed = $false
+    try {
+        Stop-ProcessorForChange
+        $Changed = $true
+        foreach ($File in $Files) { Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force }
+        $TempConfig = "$ConfigPath.update-part"
+        Write-Utf8 $TempConfig ($Configuration | ConvertTo-Json -Depth 20)
+        Move-Item -LiteralPath $TempConfig -Destination $ConfigPath -Force
+        Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
+        Start-ScheduledTask -TaskName $TaskName
+        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The updated processor did not become healthy.' }
+        if ($CheckGoogleSignIn) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.firebaseAuth.enabled -ne $true -or $Health.firebaseAuth.projectId -ne $Configuration.firebaseAuth.projectId -or $Health.capabilities.accountProjects -ne $true) {
+                throw 'The processor did not confirm Google sign-in for the requested Firebase project.'
+            }
+        }
+    } catch {
+        $Failure = $_.Exception.Message
+        if (-not $Changed) {
+            Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+            throw "$Failure The application and configuration were not changed."
+        }
+        try {
+            Stop-ProcessorForChange
+            Copy-Item -LiteralPath (Join-Path $BackupDirectory 'config.json') -Destination $ConfigPath -Force
+            foreach ($File in $Files) {
+                if ($PreviousFiles[$File]) {
+                    Copy-Item -LiteralPath (Join-Path $BackupDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force
+                } elseif (Test-Path -LiteralPath (Join-Path $InstallRoot $File)) {
+                    Remove-Item -LiteralPath (Join-Path $InstallRoot $File) -Force
+                }
+            }
+            if ($WasRunning) {
+                Start-ScheduledTask -TaskName $TaskName
+                if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The restored processor did not become healthy.' }
+            }
+        } catch {
+            throw "$Failure Recovery also needs attention: $($_.Exception.Message) Protected backup: $BackupDirectory"
+        }
+        throw "$Failure Previous application and configuration restored."
+    }
+    Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+}
 function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDirectory = '') {
+    Initialize-ServerConfiguration $Configuration
     $BackupDirectory = Join-Path $DownloadDir ('local-activation-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
     Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
-    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py')
+    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py')
     $PreviousFiles = @{}
     foreach ($File in $Files) {
         $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
@@ -222,7 +333,7 @@ function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDi
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The processor did not restart after the local transcription change.' }
         if ($Enabled) {
-            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers @{ Authorization = "Bearer $($Configuration.token)" } -TimeoutSec 10
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
             if ($Health.localTranscription.available -ne $true) { throw 'The processor did not report local transcription as available.' }
         }
     } catch {
@@ -266,10 +377,10 @@ function Install-LocalTranscription {
         if ((Get-Item -LiteralPath $Directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked folder: $Directory" }
     }
     Write-Stage '1/4 Preparing the optional CPU transcription plugin'
-    foreach ($File in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','requirements-local.txt','setup_local.py')) {
+    foreach ($File in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','requirements-local.txt','setup_local.py')) {
         Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File)
     }
-    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'setup_local.py'))
+    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'firebase_auth.py'),(Join-Path $StageDirectory 'audit_logs.py'),(Join-Path $StageDirectory 'setup_local.py'))
     # Unique directories isolate this attempt from a previously enabled model,
     # optional packages, and the base processor's site-packages.
     $PackagesPath = Join-Path $PluginRoot ('whisper-' + $InstallId)
@@ -293,8 +404,8 @@ function Install-LocalTranscription {
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
     }
     Write-Host "`nLocal English transcription is ready: CPU int8, four threads, one worker." -ForegroundColor Green
-    Write-Host 'No Gemini or OpenAI API calls are needed for this plugin. Keep the processor PC awake and online.'
-    Write-Host 'Choose Local PC transcription in Vision. Other paid API features remain separate.'
+    Write-Host 'No Gemini or OpenAI API calls are needed for this plugin. Keep the FUPCJ Server awake and online.'
+    Write-Host 'Choose FUPCJ Server transcription in Vision. Other paid API features remain separate.'
 }
 function Export-Connection {
     $Config = Read-Configuration
@@ -302,7 +413,7 @@ function Export-Connection {
     $LocalOnline = Test-Processor "http://127.0.0.1:$($Config.port)" $Config.token
     $RemoteOnline = Test-Processor $Config.backendUrl $Config.token
     if (-not ($LocalOnline -and $RemoteOnline)) {
-        throw 'The processor is not reachable over its HTTPS address yet. Keep this PC connected, then run this script with -Action Start.'
+        throw 'The processor is not reachable over its HTTPS address yet. Keep this FUPCJ Server connected, then run this script with -Action Start.'
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
     $PublicAccess = ($Config.publicAccess -eq $true)
@@ -311,17 +422,22 @@ function Export-Connection {
     $PrivatePath = Join-Path $OutputDirectory 'Vision-Connection.txt'
     $PublicPath = Join-Path $OutputDirectory 'Vision-Connection-public.txt'
     $ConnectionType = 'private-pc / Tailscale Serve HTTPS'
-    $ConnectionInstructions = 'Keep Tailscale connected on this PC and on each device using Vision.'
+    $ConnectionInstructions = 'Keep Tailscale connected on this FUPCJ Server and on each device using Vision.'
     $ReportInstructions = 'Access requires Tailscale on the same private network and your Vision connection settings.'
+    $AccessInstructions = 'Anyone with these settings can use the processor while it is available.'
     if ($PublicAccess) {
         $ConnectionType = 'private-pc / public Tailscale Funnel HTTPS'
-        $ConnectionInstructions = 'Keep this PC awake and online. Devices using Vision do not need Tailscale.'
-        $ReportInstructions = 'Access works over the internet using the Vision connection settings. Only the processor PC needs Tailscale.'
+        $ConnectionInstructions = 'Keep this FUPCJ Server awake and online. Devices using Vision do not need Tailscale.'
+        $ReportInstructions = 'Access works over the internet using the Vision connection settings. Only the FUPCJ Server needs Tailscale.'
+    }
+    if ($Config.firebaseAuth.enabled -eq $true) {
+        $AccessInstructions = 'Google sign-in is required. These connection settings do not grant access to user accounts or projects.'
+        $ReportInstructions = 'The HTTPS connection is reachable. Sign in with Google in Vision to access your own projects.'
     }
     $PrivateText = @"
 VISION PROCESSOR CONNECTION
 This file contains the access token for your processor. Vision HTML can embed these settings to connect automatically.
-Anyone with these settings can use the processor while it is available.
+$AccessInstructions
 $ConnectionInstructions
 
 --- BEGIN VISION CONNECTION ---
@@ -366,9 +482,12 @@ try {
         throw 'Open Windows PowerShell with Run as administrator, then run this script again.'
     }
     if (-not [Environment]::Is64BitOperatingSystem -or -not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
-        throw 'This installer needs 64-bit Windows on an Intel/AMD PC and 64-bit Windows PowerShell.'
+        throw 'This installer needs 64-bit Windows on an Intel/AMD computer and 64-bit Windows PowerShell.'
     }
     if ($SourceRef -notmatch '^[A-Za-z0-9._-]+$') { throw 'Invalid source revision.' }
+    if ($Action -eq 'EnableGoogleSignIn' -and $FirebaseProjectId -notmatch '^[a-z][a-z0-9-]{4,28}[a-z0-9]$') {
+        throw 'Use the Firebase project ID, such as visionboard-api, rather than an app ID or URL.'
+    }
     if ($Action -eq 'Start') {
         $Config = Read-Configuration
         $Tailscale = Get-Tailscale
@@ -420,49 +539,56 @@ try {
         exit 0
     }
 
-    if ($Action -in @('EnablePublic','Update')) {
+    if ($Action -in @('EnablePublic','Update','EnableGoogleSignIn')) {
         Write-Stage '1/3 Updating the installed processor and saved sessions'
         $Config = Read-Configuration
-        $ExistingOwner = (Get-Acl -LiteralPath $InstallRoot).GetOwner([Security.Principal.SecurityIdentifier]).Value
-        if ($ExistingOwner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'The installation folder has an unexpected owner. No changes were made.' }
-        foreach ($Path in @($InstallRoot,$RuntimeDir,$ToolsDir,$DownloadDir)) {
-            if (-not (Test-Path -LiteralPath $Path) -or ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                throw 'The existing installation is incomplete or uses linked folders. Run Setup first.'
-            }
-        }
-        if (-not (Test-Path -LiteralPath $PythonExe)) { throw 'The private runtime is missing. Run Setup first.' }
+        Assert-InstalledProcessor
         $Tailscale = Get-Tailscale
         if (-not $Tailscale) { throw 'Tailscale is missing. Run Setup first.' }
         $DnsName = Connect-Tailscale $Tailscale $Config
         $TargetPublic = ($Action -eq 'EnablePublic' -or $Config.publicAccess -eq $true)
         Assert-VisionRoute $Tailscale $DnsName $TargetPublic
         $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-        # Stage and check all components before stopping the existing processor. No runtime or pip reinstall.
-        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py')) {
-            Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
+        $StageDirectory = Join-Path $DownloadDir ('processor-update-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $StageDirectory | Out-Null
+        # Stage source and install only missing/incompatible base dependencies
+        # before the brief activation restart. Whisper packages/model are separate.
+        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')) {
+            Get-Download "$SourceBase/$FileName" (Join-Path $StageDirectory $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'uploaded_media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'),(Join-Path $DownloadDir 'setup_local.py'))
-        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
-        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py')) {
-            Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
-        }
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'firebase_auth.py'),(Join-Path $StageDirectory 'audit_logs.py'),(Join-Path $StageDirectory 'setup_local.py'))
+        Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','-r',(Join-Path $StageDirectory 'requirements.txt'))
+        Invoke-Checked $PythonExe @('-c','import jwt; from jwt.algorithms import RSAAlgorithm')
+        # Reload after downloads to retain any intervening configuration changes.
+        $Config = Read-Configuration
         $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $TargetPublic -Force
-        Write-Utf8 $ConfigPath ($Config | ConvertTo-Json -Depth 20)
+        if ($Action -eq 'EnableGoogleSignIn') {
+            if ($Config.firebaseAuth.enabled -eq $true -and $Config.firebaseAuth.projectId -ne $FirebaseProjectId) {
+                throw 'Google sign-in is already enabled for another Firebase project. No account configuration was replaced.'
+            }
+            $Config | Add-Member -NotePropertyName firebaseAuth -NotePropertyValue ([pscustomobject]@{
+                enabled = $true; projectId = $FirebaseProjectId
+            }) -Force
+        }
+        Write-Host 'Briefly restarting Vision. Saved projects, connection settings and installed models are retained.'
+        Set-ProcessorUpdate $Config $StageDirectory ($Config.firebaseAuth.enabled -eq $true)
         if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
             Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
         }
-        Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
-        Register-ProcessorTask
-        Start-ScheduledTask -TaskName $TaskName
-        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Config.token)) { throw "The processor did not start. Check $InstallRoot\data\server.log." }
         Write-Stage '2/3 Restoring the persistent HTTPS connection'
         Start-VisionRoute $Tailscale $Config
         Write-Stage '3/3 Checking HTTPS and exporting your connection files'
         if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'HTTPS is not ready. Finish any Funnel approval, then run this same command again.' }
         Export-Connection
         Write-Host "`nProcessor updated. Project saves and background conversations are ready." -ForegroundColor Green
-        if ($TargetPublic) { Write-Host 'Ready for local HTML and GitHub Pages. Only this PC needs Tailscale.' }
-        Write-Host 'Keep this PC awake and online. The processor and Funnel resume automatically after a Windows restart.'
+        if ($Config.firebaseAuth.enabled -eq $true) {
+            Write-Host "Google sign-in is enabled for Firebase project: $($Config.firebaseAuth.projectId)" -ForegroundColor Green
+            Write-Host 'In Firebase Authentication, enable Google and authorize jrdn-r.github.io. Then refresh Vision and sign in.'
+            Write-Host 'Firebase verifies your Google login; projects and files stay on this FUPCJ Server. No service-account key is needed.'
+        }
+        if ($TargetPublic) { Write-Host 'Ready for local HTML and GitHub Pages. Only this FUPCJ Server needs Tailscale.' }
+        Write-Host "User activity logs: $($Config.auditLogDir)"
+        Write-Host 'Keep this FUPCJ Server awake and online. The processor and Funnel resume automatically after a Windows restart.'
         exit 0
     }
 
@@ -488,13 +614,15 @@ try {
         Write-Utf8 $ConfigPath (([ordered]@{ token = $Token; backendUrl = ''; port = 8765 } | ConvertTo-Json))
     }
     $Config = Read-Configuration
+    Initialize-ServerConfiguration $Config
+    Write-Utf8 $ConfigPath ($Config | ConvertTo-Json -Depth 20)
     if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
     }
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','setup_local.py','requirements.txt')) {
+    foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {
@@ -566,7 +694,8 @@ try {
     Write-Stage '5/5 Checking HTTPS and exporting your connection files'
     if (-not (Wait-Processor $Config.backendUrl $Config.token)) { throw 'HTTPS is not ready. Complete any Tailscale HTTPS/Funnel approval, then run Setup again.' }
     Export-Connection
-    Write-Host "`nKeep this PC awake while processing. Closing this setup window is fine."
+    Write-Host "User activity logs: $($Config.auditLogDir)"
+    Write-Host "`nKeep this FUPCJ Server awake while processing. Closing this setup window is fine."
     Write-Host 'Windows Settings > System > Power & sleep > Sleep > Never (while plugged in).'
 } catch {
     Write-Host "`nSetup stopped: $($_.Exception.Message)" -ForegroundColor Red

@@ -17,7 +17,7 @@ function fixture(){
   importImages:async(files,location)=>{for(const f of files)state.nodes.push({id:'image-'+(++serial),kind:'image',title:f.name,attachments:[],x:location?.x||0,y:location?.y||0});},
   importMedia:async()=>{throw Error('Legacy video should not run');},importPCVideoFiles:async(files,location)=>{calls.push(['video',files[0].name]);const n=await c.createModuleNode('video',files[0].name,location);return[n];}
  };
- vm.createContext(c);vm.runInContext([oneLine('mimeFromName'),oneLine('videoFile'),oneLine('exportIsVideo'),oneLine('stripVideoPayload')].join('\n')+'\n'+base.slice(base.indexOf('function validateAttachments('),base.indexOf('async function validateProject('))+'\n'+imports.slice(0,imports.indexOf('// The Add menu')),c);
+ vm.createContext(c);vm.runInContext([oneLine('mimeFromName'),oneLine('videoFile'),oneLine('exportIsVideo'),oneLine('stripVideoPayload'),oneLine('boardAsyncContext'),oneLine('boardAsyncCurrent'),oneLine('assertBoardAsyncContext')].join('\n')+'\n'+base.slice(base.indexOf('function validateAttachments('),base.indexOf('async function validateProject('))+'\n'+imports.slice(0,imports.indexOf('// The Add menu')),c);
  return{c,state,calls,painted,run:code=>vm.runInContext(code,c)};
 }
 (async()=>{
@@ -32,5 +32,14 @@ function fixture(){
  f.c.files=[new File(['photo'],'One.png',{type:'image/png'}),new File(['photo'],'Two.png',{type:'image/png'})];const images=await f.run('importBoardFiles(files)');assert.equal(images.length,2);assert.notEqual(images[0].x,images[1].x);
  f.c.files=[new File(['video'],'Clip.mov',{type:'video/quicktime'})];const video=(await f.run('importBoardFiles(files)'))[0];assert.equal(video.fileType,'Video');assert.equal(f.calls.filter(c=>c[0]==='video').length,1);
  assert.equal(f.run("isBoardTextEditing({closest:()=>({tagName:'TEXTAREA'})})"),true);assert.equal(f.run('isBoardTextEditing({closest:()=>null})'),false);
+ // A file read started by account A must not attach into account B or release B's busy state.
+ const race=fixture();let releaseRead;race.c.readFile=()=>new Promise(resolve=>{releaseRead=resolve;});race.c.files=[new File(['private'],'Private.txt',{type:'text/plain'})];
+ const pending=race.run('importBoardFiles(files)');await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof releaseRead,'function');
+ race.c.state={nodes:[],edges:[],settings:{},view:{scale:1}};race.c.accountAuthEpoch=1;race.run('cancelBoardImports()');race.c.ioBusy=true;releaseRead('data:text/plain;base64,cHJpdmF0ZQ==');
+ assert.equal((await pending).length,0);assert.equal(race.c.state.nodes.length,0);assert.equal(race.state.nodes[0].attachments.length,0);assert.equal(race.c.ioBusy,true);assert.equal(race.calls.length,0);
+ // The clipboard permission/read promise also belongs to the originating account.
+ const clipboard=fixture();let releaseClipboard;clipboard.c.navigator={clipboard:{readText:()=>new Promise(resolve=>{releaseClipboard=resolve;})}};clipboard.c.boardAddDialog={close(){throw Error('stale clipboard changed UI');}};clipboard.c.showBoardPasteFallback=()=>{throw Error('stale clipboard showed fallback');};
+ clipboard.run(imports.slice(imports.indexOf('async function pasteBoardClipboard('),imports.indexOf("$('boardPaste').onclick")));
+ const pasted=clipboard.run('pasteBoardClipboard()');clipboard.c.accountAuthEpoch=1;releaseClipboard('Private clipboard text');await pasted;assert.equal(clipboard.c.state.nodes.length,0);
  console.log('PASS: file modules, safe previews, text paste, distinct placement, frozen ASR provider, audio/webm persistence, and transcript prompt/history.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

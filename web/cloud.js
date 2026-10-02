@@ -11,15 +11,16 @@ function validPrivateConnection(value){const config=validCloudConfig(value),acce
 const bundledCloudConnection=(()=>{try{return JSON.parse($('visionCloudConfig').textContent);}catch{return null;}})();
 let cloudConfig=(()=>{const built=validCloudConfig(bundledCloudConnection);if(validPrivateConnection(bundledCloudConnection))return built;try{return validCloudConfig(JSON.parse(localStorage.getItem('vision-cloud-config')||'null'))||built;}catch{return built;}})();
 let cloudAuth=(()=>{const built=validPrivateConnection(bundledCloudConnection);if(built&&built.backendUrl===cloudConfig?.backendUrl)return built;try{const saved=JSON.parse(sessionStorage.getItem('vision-cloud-session')||localStorage.getItem('vision-cloud-session')||'null');if(!saved||!cloudConfig||saved.backendUrl!==cloudConfig.backendUrl)return null;return cloudConfig.kind==='private-pc'?validPrivateConnection({...saved,kind:'private-pc'}):saved;}catch{return null;}})();
-function saveCloudSession(){try{sessionStorage.removeItem('vision-cloud-session');localStorage.removeItem('vision-cloud-session');if(cloudAuth)(cloudAuth.remember?localStorage:sessionStorage).setItem('vision-cloud-session',JSON.stringify(cloudAuth));}catch{}}
-function pcConnectionHelp(config=cloudConfig){return config?.publicAccess===true?'Keep the remote PC awake and connected to the internet.':'Keep the remote PC awake, with Tailscale connected on this device and the remote PC.';}
-function pcConnectionFailure(){return 'This device cannot reach the PC. It may be offline, or this browser or network may be blocking the connection. '+(cloudConfig?.publicAccess===true?'Use Processor connection to check this device.':pcConnectionHelp());}
-function updatePCConnectionCheck(value){const config=validCloudConfig(value),box=$('cloudReachabilityCheck');if(!box)return;box.hidden=config?.kind!=='private-pc';const link=$('cloudReachabilityLink');if(config?.kind==='private-pc')link.href=config.backendUrl+'/api/health';else link.removeAttribute('href');}
-function updateConnectionFields(){let value;try{value=parseConnectionInput($('cloudConfigInput').value);}catch{}const privatePC=value?.kind==='private-pc'||(!value&&cloudConfig?.kind==='private-pc');$('cloudFirebaseFields').hidden=privatePC;$('cloudPCFields').hidden=!privatePC;$('cloudPCNote').textContent=pcConnectionHelp(value||cloudConfig);$('cloudPortableNote').textContent=privatePC?'PC connection settings are included in HTML downloads so they connect automatically. '+pcConnectionHelp(value||cloudConfig):'Cloud configuration is included in HTML downloads. Sign in on each device to connect.';if(value?.accessToken){$('cloudAccessToken').value=String(value.accessToken);const publicPart=validCloudConfig(value);if(publicPart)$('cloudConfigInput').value=JSON.stringify(publicPart,null,2);}updatePCConnectionCheck(value||cloudConfig);}
+function saveCloudSession(){try{sessionStorage.removeItem('vision-cloud-session');localStorage.removeItem('vision-cloud-session');if(cloudAuth&&cloudAuth.kind!=='firebase-google')(cloudAuth.remember?localStorage:sessionStorage).setItem('vision-cloud-session',JSON.stringify(cloudAuth));}catch{}}
+function pcConnectionHelp(config=cloudConfig){return config?.publicAccess===true?'Keep FUPCJ Server awake and connected to the internet.':'Keep FUPCJ Server awake, with Tailscale connected on this device and FUPCJ Server.';}
+function pcConnectionFailure(){return 'This device cannot reach FUPCJ Server. It may be offline, or this browser or network may be blocking the connection. '+(cloudConfig?.publicAccess===true?'Use Processor connection to check this device.':pcConnectionHelp());}
+function updatePCConnectionCheck(value){const config=validCloudConfig(value),box=$('cloudReachabilityCheck');if(!box)return;box.hidden=config?.kind!=='private-pc';const link=$('cloudReachabilityLink');if(config?.kind==='private-pc')link.href=config.backendUrl+'/api/status';else link.removeAttribute('href');}
+function updateConnectionFields(){let value;try{value=parseConnectionInput($('cloudConfigInput').value);}catch{}const privatePC=value?.kind==='private-pc'||(!value&&cloudConfig?.kind==='private-pc');$('cloudFirebaseFields').hidden=privatePC;$('cloudPCFields').hidden=!privatePC;$('cloudPCNote').textContent=pcConnectionHelp(value||cloudConfig);$('cloudPortableNote').textContent=privatePC?'FUPCJ Server connection settings are included in HTML downloads so they connect automatically. '+pcConnectionHelp(value||cloudConfig):'Cloud configuration is included in HTML downloads. Sign in on each device to connect.';if(value?.accessToken){$('cloudAccessToken').value=String(value.accessToken);const publicPart=validCloudConfig(value);if(publicPart)$('cloudConfigInput').value=JSON.stringify(publicPart,null,2);}updatePCConnectionCheck(value||cloudConfig);}
 function openCloudSettings(message=''){
- $('cloudConfigInput').value=cloudConfig?JSON.stringify(cloudConfig,null,2):'';$('cloudStatus').textContent=message||(cloudAuth?(cloudConfig?.kind==='private-pc'?'PC processor configured.':'Signed in as '+cloudAuth.email):'Connect Vision to your PC or cloud service.');$('cloudEmail').value=cloudAuth?.email||'';$('cloudPassword').value='';$('cloudAccessToken').value=cloudAuth?.accessToken||'';$('cloudRemember').checked=cloudAuth?.remember!==false;$('cloudConfigFields').open=!cloudConfig;$('cloudSignOut').hidden=!cloudAuth;updateConnectionFields();if(!$('cloudDialog').open)$('cloudDialog').showModal();
+ $('cloudConfigInput').value=cloudConfig?JSON.stringify(cloudConfig,null,2):'';$('cloudStatus').textContent=message||(cloudAuth?(cloudConfig?.kind==='private-pc'?'FUPCJ Server configured.':'Signed in as '+cloudAuth.email):'Connect Vision to FUPCJ Server or cloud service.');$('cloudEmail').value=cloudAuth?.email||'';$('cloudPassword').value='';$('cloudAccessToken').value=cloudAuth?.accessToken||'';$('cloudRemember').checked=cloudAuth?.remember!==false;$('cloudConfigFields').open=!cloudConfig;$('cloudSignOut').hidden=!cloudAuth;updateConnectionFields();if(!$('cloudDialog').open)$('cloudDialog').showModal();
 }
 function saveCloudConfig(){
+ if(cloudAuth?.kind==='firebase-google'||typeof accountFirebase!=='undefined'&&accountFirebase?.currentUser)throw new Error('Sign out of your Google account before changing the processor connection.');
  let value,next;try{value=parseConnectionInput($('cloudConfigInput').value);next=validCloudConfig(value);}catch{}if(!next)throw new Error('Import a valid Vision connection file or cloud configuration.');
  if(value.accessToken)$('cloudAccessToken').value=String(value.accessToken);
  if(cloudConfig?.backendUrl!==next.backendUrl||cloudConfig?.kind!==next.kind||cloudConfig?.firebaseApiKey!==next.firebaseApiKey){cloudAuth=null;saveCloudSession();}cloudConfig=next;try{localStorage.setItem('vision-cloud-config',JSON.stringify(next));}catch{}$('cloudConfigInput').value=JSON.stringify(next,null,2);updateConnectionFields();return next;
@@ -30,7 +31,7 @@ async function cloudSignIn(){
   if(cloudConfig.kind==='private-pc'){
    const accessToken=$('cloudAccessToken').value.trim();if(!/^[A-Za-z0-9_-]{32,256}$/.test(accessToken))throw new Error('Import Vision-Connection.txt or enter its access token.');
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);let response;try{response=await fetch(cloudConfig.backendUrl+'/api/health',{headers:{Authorization:'Bearer '+accessToken},credentials:'omit',signal:controller.signal});}catch{throw new Error(pcConnectionFailure());}finally{clearTimeout(timer);}
-   if(!response.ok)throw new Error(response.status===401?'The PC connection token was not accepted. Import the latest connection file.':'The PC service could not be reached.');const health=await response.json();if(health.service!=='vision-pc')throw new Error('This address is not a Vision PC processor.');
+   if(!response.ok)throw new Error(response.status===401?'FUPCJ Server connection token was not accepted. Import the latest connection file.':'FUPCJ Server service could not be reached.');const health=await response.json();if(health.service!=='vision-pc')throw new Error('This address is not a Vision FUPCJ Server.');
    cloudAuth={kind:'private-pc',backendUrl:cloudConfig.backendUrl,accessToken,remember:$('cloudRemember').checked};
   }else{
    const email=$('cloudEmail').value.trim(),password=$('cloudPassword').value;if(!email||!password)throw new Error('Enter the email and password created for Vision in Firebase Authentication.');
@@ -41,17 +42,24 @@ async function cloudSignIn(){
  }catch(error){$('cloudStatus').textContent=error.message;if(cloudConfig?.kind==='private-pc')$('cloudReachabilityCheck').open=true;}finally{button.disabled=false;}
 }
 async function ensureCloudSession(){
+ if(typeof accountReady!=='undefined')await accountReady;
+ if(typeof accountTransition!=='undefined')await accountTransition;
+ if(typeof accountSignedIn==='function'&&!accountSignedIn()){openAccountDialog('Sign in with Google to use Vision.');throw new Error('Google sign-in is required.');}
+ if(cloudAuth?.kind==='firebase-google')return accountIdToken();
+ if(typeof accountUsesGoogle==='function'&&accountUsesGoogle()){openAccountDialog('Sign in with Google to reconnect your projects.');throw new Error('Sign in with Google to reconnect.');}
  if(!cloudConfig||!cloudAuth){openCloudSettings();throw new Error('Connect your processor, then try again.');}
- if(cloudConfig.kind==='private-pc'){if(!cloudAuth.accessToken){openCloudSettings();throw new Error('Import your PC connection file.');}return cloudAuth.accessToken;}
+ if(cloudConfig.kind==='private-pc'){if(!cloudAuth.accessToken){openCloudSettings();throw new Error('Import FUPCJ Server connection file.');}return cloudAuth.accessToken;}
  if(cloudAuth.expiresAt>Date.now()+60000)return cloudAuth.idToken;
  const response=await fetch('https://securetoken.googleapis.com/v1/token?key='+encodeURIComponent(cloudConfig.firebaseApiKey),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',refresh_token:cloudAuth.refreshToken})});
  const data=await response.json();if(!response.ok){cloudAuth=null;saveCloudSession();openCloudSettings('Sign in again to reconnect.');throw new Error('Cloud sign-in expired.');}
  Object.assign(cloudAuth,{idToken:data.id_token,refreshToken:data.refresh_token,expiresAt:Date.now()+Number(data.expires_in)*1000});saveCloudSession();return cloudAuth.idToken;
 }
 async function cloudFetch(path,options={}){
- if(!/^\/[a-z]/i.test(path)||path.includes('..'))throw new Error('Invalid service request.');const token=await ensureCloudSession();
+ if(!/^\/[a-z]/i.test(path)||path.includes('..'))throw new Error('Invalid service request.');const authAtStart=typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch;const token=await ensureCloudSession();
+ if(typeof accountAuthEpoch!=='undefined'&&authAtStart!==accountAuthEpoch)throw new Error('The signed-in account changed. Try again.');
+ const backendUrl=cloudConfig.backendUrl;
  const headers=new Headers(options.headers||{});headers.set('Authorization','Bearer '+token);
- try{return await fetch(cloudConfig.backendUrl+'/api'+path,{...options,headers,credentials:'omit'});}catch(error){if(error.name==='AbortError')throw error;const failure=new Error(cloudConfig.kind==='private-pc'?pcConnectionFailure():'Processing server unavailable. Check your internet connection.');failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
+ try{const response=await fetch(backendUrl+'/api'+path,{...options,headers,credentials:'omit'});if(typeof accountAuthEpoch!=='undefined'&&authAtStart!==accountAuthEpoch)throw new Error('The signed-in account changed. Try again.');return response;}catch(error){if(error.name==='AbortError'||/account changed/.test(error.message))throw error;const failure=new Error(cloudConfig.kind==='private-pc'?pcConnectionFailure():'Processing server unavailable. Check your internet connection.');failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
 }
 function downloadedAppSource(){
  const privateConnection=cloudConfig?.kind==='private-pc'&&cloudAuth?.backendUrl===cloudConfig.backendUrl?validPrivateConnection({...cloudConfig,accessToken:cloudAuth.accessToken}):null;
@@ -59,7 +67,7 @@ function downloadedAppSource(){
  const safe=JSON.stringify(portable).replace(/</g,'\\u003c');
  return APP_SOURCE.replace(/(<script id="visionCloudConfig" type="application\/json">)[\s\S]*?(<\/script>)/,(_match,start,end)=>start+safe+end);
 }
-const cloudReachabilityCheck=document.createElement('details');cloudReachabilityCheck.id='cloudReachabilityCheck';cloudReachabilityCheck.hidden=true;cloudReachabilityCheck.innerHTML='<summary>Check this device’s connection</summary><p><a id="cloudReachabilityLink" target="_blank" rel="noopener noreferrer">Open processor connection check ↗</a></p><p class="mini-note">A response saying “Connect this device to your Vision processing server first” means the address is reachable. A blocked page or connection error means this device cannot reach it. If the PC works on another device, compare the networks and browser settings.</p>';$('cloudStatus').after(cloudReachabilityCheck);
+const cloudReachabilityCheck=document.createElement('details');cloudReachabilityCheck.id='cloudReachabilityCheck';cloudReachabilityCheck.hidden=true;cloudReachabilityCheck.innerHTML='<summary>Check this device’s connection</summary><p><a id="cloudReachabilityLink" target="_blank" rel="noopener noreferrer">Open processor connection check ↗</a></p><p class="mini-note">A server status response means the address is reachable. A blocked page or connection error means this device cannot reach it. If FUPCJ Server works on another device, compare the networks and browser settings.</p>';$('cloudStatus').after(cloudReachabilityCheck);
 $('openCloudSettings').onclick=()=>openCloudSettings();$('youtubeCloudSettings').onclick=()=>openCloudSettings();
 $('closeCloudSettings').onclick=()=>$('cloudDialog').close();$('cloudSignIn').onclick=cloudSignIn;
 $('cloudSaveConfig').onclick=()=>{try{saveCloudConfig();$('cloudStatus').textContent='Settings saved. Connect below to verify the processor.';}catch(error){$('cloudStatus').textContent=error.message;}};
@@ -102,7 +110,7 @@ function youtubeTask(job){
  let task=youtubeImportTasks.get(job.clientRequestId);if(!task){const n=nodeById(job.targetId);task={title:n?.title||'YouTube video',detail:'Queued',progress:0};youtubeImportTasks.set(job.clientRequestId,task);mediaActivity.push(task);}return task;
 }
 function removeYouTubeTask(job){const task=youtubeImportTasks.get(job.clientRequestId);if(task){task.finished=true;const index=mediaActivity.indexOf(task);if(index>=0)mediaActivity.splice(index,1);youtubeImportTasks.delete(job.clientRequestId);}}
-function youtubeConnected(){return !!(cloudConfig&&cloudAuth&&cloudAuth.backendUrl===cloudConfig.backendUrl&&(cloudAuth.kind==='private-pc'?cloudAuth.accessToken:cloudAuth.refreshToken||cloudAuth.idToken));}
+function youtubeConnected(){if(typeof accountSignedIn==='function'&&!accountSignedIn())return false;return !!(cloudConfig&&cloudAuth&&cloudAuth.backendUrl===cloudConfig.backendUrl&&(cloudAuth.kind==='firebase-google'?cloudAuth.uid:cloudAuth.kind==='private-pc'?cloudAuth.accessToken:cloudAuth.refreshToken||cloudAuth.idToken));}
 function scheduleYouTubeImports(delay=0){
  clearTimeout(youtubeImportTimer);youtubeImportTimer=setTimeout(()=>void pumpYouTubeImports(),Math.max(0,delay));
 }

@@ -111,6 +111,7 @@ def check_server(config_path: Path, timeout=120):
         saved = {'projectId': 'vision_check_' + secrets.token_hex(16), 'projectKey': secrets.token_urlsafe(36)}
         state_path.write_text(json.dumps(saved), encoding='utf-8')
     headers = {'Authorization': 'Bearer ' + config['token'],
+               'X-Vision-Diagnostic-Token': config.get('diagnosticToken', ''),
                'X-Vision-Project-Key': saved['projectKey'], 'Content-Type': 'application/json'}
     # No proxy or external network is needed for this check. Do not print keys.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

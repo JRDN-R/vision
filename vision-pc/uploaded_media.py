@@ -94,7 +94,7 @@ class WindowsJob:
         if (not self.handle or not self.kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits))
                 or not self.kernel.AssignProcessToJobObject(self.handle, wintypes.HANDLE(int(process._handle)))):
             self.close()
-            raise MediaFailure('Windows could not isolate the video worker. Restart the PC processor and retry.')
+            raise MediaFailure('Windows could not isolate the video worker. Restart FUPCJ Server processor and retry.')
 
     def close(self):
         if self.handle:
@@ -166,7 +166,7 @@ class UploadedMedia:
             self.sessions.project(project_id)
             request.max_content_length = BODY_LIMIT
             if not self.capability()['ready']:
-                raise self.Error('Update the PC processor to install its video tools.', 503)
+                raise self.Error('Update FUPCJ Server processor to install its video tools.', 503)
             request_id = request.form.get('requestId', '')
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
                 raise self.Error('A valid requestId is required.')
@@ -185,7 +185,7 @@ class UploadedMedia:
                     if old is None:
                         self.check_capacity(db, project_id)
                 if shutil.disk_usage(self.root).free < DISK_RESERVE + UPLOAD_LIMIT:
-                    raise self.Error('Free at least 1 GB on the PC before uploading a video.', 507)
+                    raise self.Error('Free at least 1 GB on FUPCJ Server before uploading a video.', 507)
                 source = Path(temporary) / 'source.input'
                 size, digest = 0, hashlib.sha256()
                 with source.open('wb') as target:
@@ -211,7 +211,7 @@ class UploadedMedia:
                     with self.db() as db:
                         db.execute('''INSERT INTO uploaded_media
                             (id,project_id,request_id,content_hash,source_name,source_size,status,phase,created_at,updated_at)
-                            VALUES(?,?,?,?,?,?,'queued','Waiting for PC video processor',?,?)''',
+                            VALUES(?,?,?,?,?,?,'queued','Waiting for FUPCJ Server video processor',?,?)''',
                             (job_id, project_id, request_id, digest.hexdigest(), name, size, now, now))
                 except Exception:
                     shutil.rmtree(directory, ignore_errors=True)
@@ -227,7 +227,7 @@ class UploadedMedia:
             with self.db() as db:
                 row = db.execute('SELECT * FROM uploaded_media WHERE project_id=? AND request_id=?', (project_id, request_id)).fetchone()
             if row is None:
-                raise self.Error('The PC has not accepted this video request.', 404)
+                raise self.Error('FUPCJ Server has not accepted this video request.', 404)
             return jsonify(self.snapshot(dict(row)))
 
         @app.get('/api/projects/<project_id>/media')
@@ -305,11 +305,11 @@ class UploadedMedia:
     def check_capacity(self, db, project_id):
         rows = db.execute('SELECT project_id,status,output_size FROM uploaded_media').fetchall()
         if sum(row['status'] in ACTIVE for row in rows) >= MAX_QUEUED:
-            raise self.Error('The PC video queue is full. Wait for a video to finish.', 429)
+            raise self.Error('FUPCJ Server video queue is full. Wait for a video to finish.', 429)
         def weight(row):
             return JOB_RESERVE if row['status'] in ACTIVE else row['output_size']
         if sum(weight(row) for row in rows) + JOB_RESERVE > STORAGE_LIMIT:
-            raise self.Error('The PC video storage is full. Remove saved video previews before adding more.', 507)
+            raise self.Error('FUPCJ Server video storage is full. Remove saved video previews before adding more.', 507)
         if sum(weight(row) for row in rows if row['project_id'] == project_id) + JOB_RESERVE > PROJECT_LIMIT:
             raise self.Error('This project has reached its video storage limit. Remove a saved preview before adding more.', 507)
 
@@ -334,7 +334,7 @@ class UploadedMedia:
                     for path in directory.iterdir():
                         if path.name != 'source.input':
                             path.unlink(missing_ok=True)
-                    self.update(row['id'], status='queued', phase='Resuming video after PC restart', progress=0)
+                    self.update(row['id'], status='queued', phase='Resuming video after FUPCJ Server restart', progress=0)
             elif row['status'] == 'complete':
                 (directory / 'source.input').unlink(missing_ok=True)
             else:
@@ -357,6 +357,7 @@ class UploadedMedia:
                 value = dict(row)
                 db.execute("UPDATE uploaded_media SET status='processing',phase='Reading video',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
             directory = self.root / value['id']
+            processing_started = time.monotonic()
             try:
                 self.process(value)
                 size = sum(path.stat().st_size for path in directory.iterdir() if path.is_file() and path.name != 'source.input')
@@ -372,10 +373,10 @@ class UploadedMedia:
                     shutil.rmtree(directory, ignore_errors=True)
                     self.update(value['id'], status='cancelled', phase='Removed', output_size=0)
                 else:
-                    self.update(value['id'], status='queued', phase='Waiting for PC restart')
+                    self.update(value['id'], status='queued', phase='Waiting for FUPCJ Server restart')
             except Exception as error:
                 self.app.logger.error('Uploaded video %s failed (%s).', value['id'], type(error).__name__)
-                message = str(error) if isinstance(error, MediaFailure) else 'The PC could not process this video. Try a smaller MP4 or MOV file.'
+                message = str(error) if isinstance(error, MediaFailure) else 'FUPCJ Server could not process this video. Try a smaller MP4 or MOV file.'
                 shutil.rmtree(directory, ignore_errors=True)
                 with self.db() as db:
                     db.execute('BEGIN IMMEDIATE')
@@ -383,7 +384,12 @@ class UploadedMedia:
                     cancelled = bool(current['cancel_requested'])
                     db.execute('UPDATE uploaded_media SET status=?,phase=?,error=?,output_size=0,updated_at=? WHERE id=?',
                                ('cancelled' if cancelled else 'error', 'Removed' if cancelled else 'Stopped',
-                                None if cancelled else message, time.time(), value['id']))
+                               None if cancelled else message, time.time(), value['id']))
+            finally:
+                current = self.row(value['id'])
+                self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType='video',
+                    outcome=current['status'], processingWallSeconds=time.monotonic()-processing_started,
+                    uploadedBytes=value['source_size'], outputBytes=current['output_size'])
             return True
         finally:
             if locked:
@@ -419,7 +425,7 @@ class UploadedMedia:
             if time.monotonic() > deadline:
                 raise MediaFailure('Video processing took too long. Try a shorter video.')
             if shutil.disk_usage(directory).free < DISK_RESERVE:
-                raise MediaFailure('Free at least 1 GB on the PC, then add the video again.')
+                raise MediaFailure('Free at least 1 GB on FUPCJ Server, then add the video again.')
 
         def command(args, timeout=120, limits=(), phase=None, start_progress=0, span=0, duration=0):
             """No shell/network protocols; bounded files and cancellable children."""
@@ -450,7 +456,7 @@ class UploadedMedia:
                                 self.update(job_id, progress=round(start_progress + span * fraction, 1))
                         self.stop.wait(.25)
                     if process.returncode:
-                        raise MediaFailure('The PC could not decode this video. Try a standard MP4 or MOV file.')
+                        raise MediaFailure('FUPCJ Server could not decode this video. Try a standard MP4 or MOV file.')
                     alive()
                 for path, maximum in [(stdout_path, 1024*1024), (stderr_path, 65536), *limits]:
                     if path.is_file() and path.stat().st_size > maximum:
@@ -472,7 +478,7 @@ class UploadedMedia:
             try:
                 return json.loads(raw)
             except ValueError:
-                raise MediaFailure('The PC could not read the video details.')
+                raise MediaFailure('FUPCJ Server could not read the video details.')
         details = probe(source)
         streams = details.get('streams', [])
         video = next((s for s in streams if s.get('codec_type') == 'video'), None)

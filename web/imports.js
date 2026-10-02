@@ -1,5 +1,11 @@
 // Every board import owns a module. Dropping onto a module still attaches files.
 let boardImportRunning=false;
+let boardImportGeneration=0;
+const boardImportControllers=new Set();
+function boardImportContext(){if(typeof projectAccountSwitching!=='undefined'&&projectAccountSwitching)return null;return{context:boardAsyncContext(),generation:boardImportGeneration};}
+function boardImportCurrent(value){return !!value&&value.generation===boardImportGeneration&&boardAsyncCurrent(value.context);}
+function assertBoardImportContext(value){if(!boardImportCurrent(value))throw new DOMException('The project or signed-in account changed. Import canceled.','AbortError');}
+function cancelBoardImports(){boardImportGeneration++;for(const controller of boardImportControllers)controller.abort();boardImportControllers.clear();boardImportRunning=false;document.getElementById('boardAddDialog')?.close();const paste=document.getElementById('boardPasteText');if(paste)paste.value='';}
 function isBoardTextEditing(target){return !!target?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"]');}
 function boardFileInfo(file){
  const name=String(file.name||'File'),ext=name.includes('.')?name.split('.').pop().toLowerCase():'',mime=(file.type||file.mime||mimeFromName(name)).split(';')[0].trim().toLowerCase();
@@ -37,11 +43,12 @@ function refreshImportedModule(n,el=document.getElementById('node-'+n.id)){
 const importsCreateNode=createNode;createNode=function(n){const el=importsCreateNode(n);refreshImportedModule(n,el);return el;};
 const importsRenderNode=renderNode;renderNode=async function(n){await importsRenderNode(n);refreshImportedModule(n);};
 async function createTextModule(text,options={}){
+ const context=options.importContext||boardImportContext();if(!boardImportCurrent(context))return null;
  if(busy||ioBusy||boardImportRunning){toast('Finish the current import first.');return null;}
  text=String(text||'');if(!text.trim())return null;
- ioBusy=true;try{const title=options.title||text.trim().split(/\r?\n/)[0].slice(0,70)||'Text',n=await createModuleNode('node',title,options.location);n.prompt=text;n.promptEditing=true;n.fileType='Text';renderNode(n);selectNode(n.id);markDirty();updateSequence();return n;}
- catch(error){toast('Could not paste text: '+error.message,true);return null;}
- finally{ioBusy=false;updateRefreshNotice();scheduleTranscriptionQueue();}
+ ioBusy=true;try{const title=options.title||text.trim().split(/\r?\n/)[0].slice(0,70)||'Text',n=await createModuleNode('node',title,options.location);assertBoardImportContext(context);n.prompt=text;n.promptEditing=true;n.fileType='Text';renderNode(n);selectNode(n.id);markDirty();updateSequence();return n;}
+ catch(error){if(boardImportCurrent(context))toast('Could not paste text: '+error.message,true);return null;}
+ finally{if(boardImportCurrent(context)){ioBusy=false;updateRefreshNotice();scheduleTranscriptionQueue();}}
 }
 function applyImportedTranscript(n,source,text){
  if(!source.transcriptToPrompt)return;const transcript=String(text||'').trim();if(!transcript||source.promptTranscriptText===transcript)return;
@@ -52,37 +59,41 @@ function applyImportedTranscript(n,source,text){
  for(const saved of snapshots){const node=saved.nodes?.find(v=>v.id===n.id),a=node?.attachments?.find(v=>v.id===source.id);if(a&&a.promptTranscriptText!==transcript)apply(node,a);}
  renderNode(n);if(selected===n.id)$('modulePrompt').value=n.prompt;
 }
-async function queueImportedAudio(n,source,file,provider){
+async function queueImportedAudio(n,source,file,provider,context=boardImportContext()){
+ assertBoardImportContext(context);
  const activity={title:source.name,detail:'Preparing audio',progress:0,finished:false};mediaActivity.push(activity);renderActivity();
- let decoder;const controller=new AbortController();
+ let decoder;const controller=new AbortController();boardImportControllers.add(controller);
  try{
-  const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',controller.signal),fvadBinary=await embeddedBytes('fvad-wasm-source',controller.signal);
-  decoder=decoderClient();await decoder.request('init',{wasmBinary,fvadBinary},[wasmBinary.buffer,fvadBinary.buffer]);
-  await prepareTranscriptionQueue(n,source,file,decoder,controller.signal,(message,fraction)=>{activity.detail=message;activity.progress=fraction*100;renderActivity();},provider);
- }catch(error){source.status='failed';recordActivity(source.name,'Audio preparation failed. The file is kept; open Files to retry.');throw error;}
- finally{decoder?.stop();activity.finished=true;renderActivity();refreshImportedModule(n);}
+  const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',controller.signal);assertBoardImportContext(context);const fvadBinary=await embeddedBytes('fvad-wasm-source',controller.signal);assertBoardImportContext(context);
+  decoder=decoderClient();await decoder.request('init',{wasmBinary,fvadBinary},[wasmBinary.buffer,fvadBinary.buffer]);assertBoardImportContext(context);
+  await prepareTranscriptionQueue(n,source,file,decoder,controller.signal,(message,fraction)=>{if(!boardImportCurrent(context)){controller.abort();return;}activity.detail=message;activity.progress=fraction*100;renderActivity();},provider);assertBoardImportContext(context);
+ }catch(error){if(boardImportCurrent(context)){source.status='failed';recordActivity(source.name,'Audio preparation failed. The file is kept; open Files to retry.');}throw error;}
+ finally{boardImportControllers.delete(controller);decoder?.stop();activity.finished=true;if(boardImportCurrent(context)){renderActivity();refreshImportedModule(n);}}
 }
 async function importBoardFiles(files,location,options={}){
+ const context=options.importContext||boardImportContext();if(!boardImportCurrent(context))return[];
  if(busy||ioBusy||boardImportRunning){toast('Finish the current import first.');return[];}
  const list=Array.from(files||[]);if(!list.length)return[];const added=[],errors=[],provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),rect=board.getBoundingClientRect(),origin=location||(list.length>1?{x:rect.left+board.clientWidth/2,y:rect.top+board.clientHeight/2}:undefined);boardImportRunning=true;
  try{for(let index=0;index<list.length;index++){
+  if(!boardImportCurrent(context))break;
   const file=list[index],info=boardFileInfo(file),point=boardImportLocation(origin,index);let n;
   try{
    if(info.kind==='video'&&typeof importPCVideoFiles==='function'){
-    const nodes=await importPCVideoFiles([file],point);for(const node of nodes||[]){node.fileType='Video';if(options.title)node.title=String(options.title).slice(0,150);else node.title=file.name;refreshImportedModule(node);added.push(node);}continue;
+    const nodes=await importPCVideoFiles([file],point);assertBoardImportContext(context);for(const node of nodes||[]){node.fileType='Video';if(options.title)node.title=String(options.title).slice(0,150);else node.title=file.name;refreshImportedModule(node);added.push(node);}continue;
    }
    if(info.kind==='image'||info.kind==='video'){
     const before=new Set(state.nodes.map(v=>v.id));if(info.kind==='image')await importImages([file],point);else await importMedia([file],point);
-    for(const node of state.nodes.filter(v=>!before.has(v.id))){node.fileType=info.label;node.title=String(options.title||file.name).slice(0,150);refreshImportedModule(node);added.push(node);}continue;
+    assertBoardImportContext(context);for(const node of state.nodes.filter(v=>!before.has(v.id))){node.fileType=info.label;node.title=String(options.title||file.name).slice(0,150);refreshImportedModule(node);added.push(node);}continue;
    }
-   ioBusy=true;n=await createModuleNode('node',String(options.title||file.name||info.label).slice(0,150),point);added.push(n);n.fileType=info.label;
-   const data=await readFile(file),source={id:uid(),name:file.name||'File',mime:info.mime,size:file.size,data,createdAt:new Date().toISOString(),generated:false,status:null};n.attachments.push(source);n.sourceAttachmentId=source.id;
-   n.src=await fileModulePoster(file,info);n.width=480;n.height=300;
-   if(info.kind==='audio'){source.role='audio';source.transcriptToPrompt=true;source.status='pending';n.promptEditing=true;renderNode(n);markDirty();await queueImportedAudio(n,source,file,provider);}
+   ioBusy=true;n=await createModuleNode('node',String(options.title||file.name||info.label).slice(0,150),point);assertBoardImportContext(context);added.push(n);n.fileType=info.label;
+   const data=await readFile(file);assertBoardImportContext(context);const source={id:uid(),name:file.name||'File',mime:info.mime,size:file.size,data,createdAt:new Date().toISOString(),generated:false,status:null};n.attachments.push(source);n.sourceAttachmentId=source.id;
+   const poster=await fileModulePoster(file,info);assertBoardImportContext(context);n.src=poster;n.width=480;n.height=300;
+   if(info.kind==='audio'){source.role='audio';source.transcriptToPrompt=true;source.status='pending';n.promptEditing=true;renderNode(n);markDirty();await queueImportedAudio(n,source,file,provider,context);assertBoardImportContext(context);}
    renderNode(n);refreshNodeAttachments(n);markDirty();
-  }catch(error){errors.push((file.name||'File')+': '+error.message);if(n){renderNode(n);refreshNodeAttachments(n);markDirty();}}
-  finally{ioBusy=false;}
- }}finally{boardImportRunning=false;ioBusy=false;updateRefreshNotice();updateSequence();if(added.length){selectNode(added[added.length-1].id);markDirty();}scheduleTranscriptionQueue();}
+  }catch(error){if(!boardImportCurrent(context))break;errors.push((file.name||'File')+': '+error.message);if(n){renderNode(n);refreshNodeAttachments(n);markDirty();}}
+  finally{if(boardImportCurrent(context))ioBusy=false;}
+ }}finally{if(boardImportCurrent(context)){boardImportRunning=false;ioBusy=false;updateRefreshNotice();updateSequence();if(added.length){selectNode(added[added.length-1].id);markDirty();}scheduleTranscriptionQueue();}}
+ if(!boardImportCurrent(context))return[];
  toast(errors.length?errors.join('\n'):`${added.length} module${added.length===1?'':'s'} added.`,!!errors.length);return added;
 }
 
@@ -92,22 +103,25 @@ const boardAddDialog=document.createElement('dialog');boardAddDialog.id='boardAd
 document.body.appendChild(boardAddDialog);$('closeBoardAdd').onclick=()=>boardAddDialog.close();
 function openBoardAdd(){if(busy||ioBusy){toast('Finish the current import first.');return;}$('boardAddStatus').textContent='Drop files anywhere on the empty board to give each one its own module.';boardAddDialog.showModal();}
 for(const id of ['addBtn','emptyAdd']){$(id).onclick=openBoardAdd;$(id).title='Add files, paste, or create a module';$(id).setAttribute('aria-label','Add to board');}
-function chooseBoardFiles(accept){$('imageInput').accept=accept;boardAddDialog.close();$('imageInput').click();}
+let boardFileChooserContext=null;
+function chooseBoardFiles(accept){boardFileChooserContext=boardImportContext();$('imageInput').accept=accept;boardAddDialog.close();$('imageInput').click();}
 $('boardAddMedia').onclick=()=>chooseBoardFiles('image/*,video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi');
 $('boardAddAudio').onclick=()=>chooseBoardFiles('audio/*,.m4a,.mp3,.wav,.aac,.flac,.ogg,.opus,.aiff,.wma');
 $('boardAddFiles').onclick=()=>chooseBoardFiles('');
-$('imageInput').onchange=e=>{importBoardFiles(e.target.files);e.target.value='';};
+$('imageInput').onchange=e=>{const context=boardFileChooserContext||boardImportContext();boardFileChooserContext=null;importBoardFiles(e.target.files,undefined,{importContext:context});e.target.value='';};
 $('boardAddBlank').onclick=()=>{boardAddDialog.close();addBlankNode();};
 function showBoardPasteFallback(message){$('boardPasteFallback').hidden=false;$('boardAddStatus').textContent=message;$('boardPasteText').focus();}
 function clipboardFileName(type,index){const ext=({'image/png':'png','image/jpeg':'jpg','image/webp':'webp','image/gif':'gif','text/plain':'txt','text/html':'html','application/pdf':'pdf'})[type]||'bin';return'Clipboard '+(index+1)+'.'+ext;}
 async function pasteBoardClipboard(){
+ const context=boardImportContext();if(!boardImportCurrent(context))return;
+ const checked=async promise=>{const result=await promise;assertBoardImportContext(context);return result;};
  try{
   const files=[];let text='';
-  if(navigator.clipboard?.read){const items=await navigator.clipboard.read();for(const item of items){const types=item.types.filter(t=>!/^text\//.test(t)),type=types.find(t=>t.startsWith('image/'))||types[0];if(type){const blob=await item.getType(type);files.push(new File([blob],clipboardFileName(type,files.length),{type:blob.type||type}));}else if(item.types.includes('text/plain'))text+=(text?'\n':'')+await(await item.getType('text/plain')).text();else if(item.types.includes('text/html'))text+=(text?'\n':'')+boardMarkupText(await(await item.getType('text/html')).text());}}
-  else if(navigator.clipboard?.readText)text=await navigator.clipboard.readText();
+  if(navigator.clipboard?.read){const items=await checked(navigator.clipboard.read());for(const item of items){const types=item.types.filter(t=>!/^text\//.test(t)),type=types.find(t=>t.startsWith('image/'))||types[0];if(type){const blob=await checked(item.getType(type));files.push(new File([blob],clipboardFileName(type,files.length),{type:blob.type||type}));}else if(item.types.includes('text/plain'))text+=(text?'\n':'')+await checked((await checked(item.getType('text/plain'))).text());else if(item.types.includes('text/html'))text+=(text?'\n':'')+boardMarkupText(await checked((await checked(item.getType('text/html'))).text()));}}
+  else if(navigator.clipboard?.readText)text=await checked(navigator.clipboard.readText());
   else{showBoardPasteFallback('Paste into the field below. You can also use Documents & files to choose an image or file.');return;}
-  if(files.length){boardAddDialog.close();await importBoardFiles(files);}else if(text.trim()){boardAddDialog.close();await createTextModule(text);}else showBoardPasteFallback('The clipboard has no readable text or files. Copy something, then paste below.');
- }catch{showBoardPasteFallback('Clipboard access was not granted. Paste below, or choose Documents & files.');}
+  if(files.length){boardAddDialog.close();await importBoardFiles(files,undefined,{importContext:context});}else if(text.trim()){boardAddDialog.close();await createTextModule(text,{importContext:context});}else showBoardPasteFallback('The clipboard has no readable text or files. Copy something, then paste below.');
+ }catch{if(boardImportCurrent(context))showBoardPasteFallback('Clipboard access was not granted. Paste below, or choose Documents & files.');}
 }
 $('boardPaste').onclick=pasteBoardClipboard;
 $('boardPasteTextAdd').onclick=()=>{const text=$('boardPasteText').value;if(!text.trim())return;boardAddDialog.close();$('boardPasteText').value='';createTextModule(text);};

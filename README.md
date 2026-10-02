@@ -4,23 +4,41 @@ An advanced prompt generator: arrange images, documents, notes, and processed
 media into a board, connect the modules, and export the instructions and evidence.
 
 [Open Vision](https://jrdn-r.github.io/vision/), or download the portable HTML from
-the app. Board editing works offline. PC video imports, YouTube imports, PC saves, and
-OpenAI conversations need the connected processor and an internet connection.
+the app. Google sign-in is required to use the application. Video imports, YouTube
+imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
 ## Projects and conversations
 
-The connected Windows PC can save projects and run the OpenAI Responses
+The connected Windows FUPCJ Server can save projects and run the OpenAI Responses
 connection independently of a browser tab. A project keeps its own connection
 identity, conversation, and file references. Reopen that project to retrieve
 progress or completed results. OpenAI still performs the model processing and
-code-interpreter execution; the PC handles the connection, saved work, and files.
+code-interpreter execution; FUPCJ Server handles the connection, saved work, and files.
 
-Use the project control to check save status and open recent projects. Download
-an editable project when moving to a different device. Its project connection
-key travels with the editable project, but is excluded from AI export packages.
-Conflicting edits from two devices are shown for review rather than silently
-overwriting the PC copy. Browser recovery depends on browser storage remaining
-available, so keep a downloaded project copy for access from another browser.
+Sign in with Google on the hosted page, then use **Projects → My saved projects**
+to open the same work on your phone or computer. Firebase handles identity;
+projects, files, and processing stay on FUPCJ Server. Enable Google in Firebase
+Authentication, authorize `jrdn-r.github.io`, and run the one-time
+[`EnableGoogleSignIn` server update](vision-pc/README.md#enable-google-sign-in-with-projects-stored-on-this-fupcj-server).
+No Firebase database, Storage bucket, service-account key, or Blaze upgrade is
+needed for this setup.
+
+Run automatically saves an entered OpenAI API key to the signed-in account,
+encrypted on FUPCJ Server with Windows DPAPI. The same account restores it on another
+device. **Save key** retries a failed save; **Remove saved key** deletes that
+account's saved credential. Keys are excluded from projects and app downloads,
+and the field clears when signing out or changing accounts.
+
+Existing projects can be imported from a file or this device's previous projects,
+then explicitly added to the Google account. Account projects are private to that
+account. Conflicting edits from two devices are shown for review rather than
+silently overwriting the server copy. Download an editable project for an additional
+copy. A downloaded HTML app directs you to the hosted page for Google sign-in.
+
+The server desktop's **Vision Logs** folder contains **Users.txt** and one usage
+log per Google account. It records names, Google email addresses, activity times,
+request sizes, and processing outcomes without passwords, API keys, or content.
+Processing durations are elapsed time, not a measurement of CPU utilization.
 
 Run offers a continuing conversation, attachments, copy controls, and one current
 progress line. Dictation appears when the browser supports speech recognition;
@@ -28,9 +46,9 @@ the transcribed text stays editable before sending. Completion appears on the
 board while Vision is open. Optional system notifications depend on browser
 support and permission.
 
-Update an existing PC installation using the instructions in
-[vision-pc/README.md](vision-pc/README.md). Keep the PC awake and online. Files and
-project history are stored on that PC; Google Drive backup is not configured by
+Update an existing FUPCJ Server installation using the instructions in
+[vision-pc/README.md](vision-pc/README.md). Keep FUPCJ Server awake and online. Files and
+project history are stored on FUPCJ Server; Google Drive backup is not configured by
 the app.
 
 Board background controls save with each project: slow diagonal dots, sparse
@@ -47,7 +65,7 @@ File modules keep the original filename and show their type, with a text preview
 where available or a document icon. Imported audio starts transcription and puts
 the completed transcript into its module's text field.
 
-The board microphone records a voice note and lets you choose Local PC Whisper
+The board microphone records a voice note and lets you choose FUPCJ Server Whisper
 or Gemini for new recordings and audio imports. Stop to create its module;
 cancel to discard the recording. Browser microphone permission is required.
 Recording stops if the page goes into the background. This board recorder is
@@ -64,30 +82,30 @@ board or a module focused, `Tab` selects the next module in sequence and
 Run settings have a Show/Hide API key control, and each response's **Files**
 button expands its downloads when needed.
 
-Video files added as new modules use the PC to create timestamped screenshots,
+Video files added as new modules use FUPCJ Server to create timestamped screenshots,
 audio sections for the selected transcription provider, and a 480-pixel, 15 fps
 playable preview with mono audio. A poster and current processing step appear
-on the module. Accepted video jobs continue on the PC after the browser closes;
-reopen the saved project to retrieve the result. Playback needs the PC connection.
+on the module. Accepted video jobs continue on FUPCJ Server after the browser closes;
+reopen the saved project to retrieve the result. Playback needs FUPCJ Server connection.
 The original upload is removed after processing; the compact preview remains
-on the PC and is not embedded in project downloads. Initial uploads support
-100 MB and up to two hours; update the PC processor before using this feature.
+on FUPCJ Server and is not embedded in project downloads. Initial uploads support
+100 MB and up to two hours; update FUPCJ Server processor before using this feature.
 Videos attached inside an existing module retain the browser-processing path.
-Use **Projects → PC video storage** to remove saved previews, including videos
-whose modules you deleted. Removing a module alone keeps its PC files available
-for undo and older saved projects. Explicit PC deletion preserves snapshots and
+Use **Projects → FUPCJ Server video storage** to remove saved previews, including videos
+whose modules you deleted. Removing a module alone keeps its server files available
+for undo and older saved projects. Explicit server deletion preserves snapshots and
 transcripts already saved in the board, but removes playback for those copies.
 
 ## Local speech transcription
 
-The optional **Local PC** transcription provider runs an open-source English
-Whisper model on the connected PC, using four CPU threads and one worker. It
+The optional **FUPCJ Server** transcription provider runs an open-source English
+Whisper model on the connected FUPCJ Server, using four CPU threads and one worker. It
 produces timestamped text without Gemini or OpenAI transcription API charges.
-The PC must stay awake and online for remote use; electricity and storage still
+FUPCJ Server must stay awake and online for remote use; electricity and storage still
 apply. Local transcription does not silently fall back to a paid provider.
 
 Install the model explicitly with `-Action InstallLocalTranscription` using the
-[PC instructions](vision-pc/README.md#optional-local-transcription-without-api-charges).
+[Server instructions](vision-pc/README.md#optional-local-transcription-without-api-charges).
 Normal updates preserve an installed model and do not download one automatically.
 The same instructions include disable/enable commands for church services.
 Gemini transcription and OpenAI conversations remain separate online options;
@@ -111,5 +129,5 @@ python web/build.py
 ```
 
 The builder updates the portable HTML and the small GitHub Pages loader's cache
-version. Both use the same application. PC service source and tests are in
+version. Both use the same application. Server service source and tests are in
 `vision-pc/`. Tests use mocked OpenAI responses and do not make billable API calls.
