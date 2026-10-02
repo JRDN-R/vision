@@ -11,7 +11,8 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   const json=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(data)});
   await context.route('**/*',async route=>{
    const request=route.request(),url=new URL(request.url());
-   if(request.url()==='https://vision.test/')return route.fulfill({contentType:'text/html',body:html});
+   if(request.url()==='https://vision.test/')return route.fulfill({contentType:'text/html',body:fs.readFileSync('index.html','utf8')});
+   if(url.origin==='https://vision.test'&&url.pathname==='/Vision.html')return route.fulfill({contentType:'text/html',body:html});
    if(url.pathname.endsWith('/firebase-app.js'))return route.fulfill({contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:appModule});
    if(url.pathname.endsWith('/firebase-auth.js'))return route.fulfill({contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:authModule});
    if(url.pathname.startsWith('/api/')){

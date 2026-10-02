@@ -48,6 +48,13 @@ def build():
     digest = hashlib.sha256(source.encode('utf-8')).hexdigest()
     index = ROOT / 'index.html'
     loader = re.sub(r'Vision\.html\?v=[a-f0-9]+', 'Vision.html?v=' + digest[:12], index.read_text(encoding='utf-8'))
+    # document.write retains the loader's CSP. Both documents must permit the
+    # same Firebase scripts/frames; a later policy cannot loosen the first one.
+    policy_pattern = r'<meta http-equiv="Content-Security-Policy" content="[^"]+">'
+    policy = re.search(policy_pattern, source)
+    if policy is None or len(re.findall(policy_pattern, loader)) != 1:
+        raise ValueError('Expected one app and loader Content Security Policy')
+    loader = re.sub(policy_pattern, lambda _: policy.group(0), loader)
     index.write_text(loader, encoding='utf-8')
     print('Built Vision.html:', len(source.encode('utf-8')), 'bytes; SHA256', digest)
 
