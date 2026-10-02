@@ -35,6 +35,7 @@ RESULT_LIMIT = 4 * 1024 * 1024
 MIME_FORMATS = {'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav'}
 TERMINAL = ('complete', 'error', 'cancelled')
 DIAGNOSTIC_LIMIT = 64 * 1024
+DEPENDENCY_TIMEOUT = 90
 STAGES = {
     'startup': 'starting the worker', 'dependencies': 'loading the local libraries',
     'model': 'loading the Whisper model', 'probe': 'reading the audio',
@@ -43,6 +44,7 @@ STAGES = {
 }
 ERROR_HELP = {
     'dependency': 'A local transcription library could not load. Check the PC diagnostic log for the missing library or Windows runtime.',
+    'dependency-timeout': 'Loading the local transcription libraries stalled. Update the PC processor, then run CheckLocalTranscription.',
     'model': 'The local Whisper model could not load. Run the local transcription check on the PC.',
     'audio': 'The PC could not read this audio section. Retry the recording; if it repeats, prepare the audio again.',
     'duration': 'An audio section has an invalid duration. Prepare the recording again before retrying.',
@@ -373,7 +375,7 @@ class LocalTranscription:
                 del diagnostic[:-DIAGNOSTIC_LIMIT]
         reader = threading.Thread(target=drain_errors, name='vision-local-errors', daemon=True)
         reader.start()
-        started, previous = time.monotonic(), None
+        started, previous, last_stage = time.monotonic(), None, 'startup'
         try:
             while child.poll() is None:
                 if self.stop.wait(0.5) or self.row(value['id'])['cancel_requested']:
@@ -383,10 +385,13 @@ class LocalTranscription:
                 checkpoint = directory / 'progress.json'
                 if checkpoint.is_file():
                     progress = json.loads(checkpoint.read_text(encoding='utf-8'))
+                    last_stage = progress.get('stage', 'startup')
                     state = (progress.get('phase'), progress.get('progress'))
                     if state != previous:
                         self.update(value['id'], only_processing=True, phase=str(state[0])[:120], progress=min(99, max(0, float(state[1]))))
                         previous = state
+                if last_stage in ('startup', 'dependencies') and time.monotonic() - started > DEPENDENCY_TIMEOUT:
+                    raise LocalRunnerError('dependency-timeout', last_stage)
             if child.returncode:
                 reader.join(timeout=2)
                 self.app.logger.error('Local transcription job %s worker exited %s. Local diagnostic:\n%s',
@@ -519,6 +524,44 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
     atomic_json(directory / 'result.json', {'text': '\n\n'.join(s['text'] for s in result_sections), 'sections': result_sections})
 
 
+def start_parent_watch():
+    """Stop this worker when its parent's otherwise unused input pipe closes."""
+    descriptor = sys.stdin.fileno()
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        import msvcrt
+
+        # A blocking CRT read (including os.read) holds a descriptor lock that
+        # native DLL initialization can also need: numpy/numpy#24290. Inspect the
+        # pipe through Win32 instead. No thread reads from this handle, and the
+        # parent never writes to it; its only purpose is parent-lifetime tracking.
+        peek = ctypes.WinDLL('kernel32', use_last_error=True).PeekNamedPipe
+        peek.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+                         wintypes.LPDWORD, wintypes.LPDWORD, wintypes.LPDWORD]
+        peek.restype = wintypes.BOOL
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(descriptor))
+
+        def wait_for_close():
+            while peek(handle, None, 0, None, None, None):
+                time.sleep(0.5)
+    else:
+        def wait_for_close():
+            # A raw read avoids holding Python's BufferedReader lock during
+            # normal interpreter shutdown. Windows must not use this branch.
+            os.read(descriptor, 1)
+
+    def watch():
+        try:
+            wait_for_close()
+        finally:
+            os._exit(1)
+
+    thread = threading.Thread(target=watch, name='vision-local-parent', daemon=True)
+    thread.start()
+    return thread
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--process', required=True)
@@ -527,14 +570,6 @@ def main():
     parser.add_argument('--threads', type=int, default=4)
     parser.add_argument('--packages')
     args = parser.parse_args()
-    # A pipe owned by the HTTP process closes on crash/restart. Stop native model
-    # compute too, rather than leaving an orphan worker after Windows recovery.
-    def parent_watch():
-        # Use the raw descriptor: a daemon holding BufferedReader's lock during
-        # normal interpreter shutdown can abort an otherwise successful job.
-        os.read(sys.stdin.fileno(), 1)
-        os._exit(1)
-    threading.Thread(target=parent_watch, daemon=True).start()
     if os.name != 'nt':
         os.nice(10)
     # Model assets must already exist. Reject network access even if an optional
@@ -545,6 +580,7 @@ def main():
     sys.addaudithook(offline_only)
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
     try:
+        start_parent_watch()
         process_directory(args.process, args.model, args.threads, args.ffmpeg, args.packages)
     except Exception as error:
         traceback.print_exc()

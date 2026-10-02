@@ -83,6 +83,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Che
 
 The check submits generated WAV and MP3 silence to the running local processor, using the same queue and Windows task identity as a real recording. It checks decoding, Whisper, the ONNX speech filter, and the saved result, without calling an AI API. It keeps one small diagnostic project and reuses it. If the PC is busy and the check times out, it cancels only its own test job.
 
+If a previous check stopped at **Loading the local libraries** even though installation passed, run the update above. The Windows worker now watches its parent using Win32 pipe checks instead of a blocking input read, avoiding the [known NumPy import deadlock](https://github.com/numpy/numpy/issues/24290). Library startup has a separate 90-second limit so a stalled import cannot occupy the queue for half an hour. This fix reuses the existing model and packages.
+
 New failed jobs show the failed stage and a diagnostic code in Activity; click **Retry** after updating to replace an older generic error. Detailed worker exceptions are retained in the private `data\server.log` (including native worker exit codes). The check prints only its own worker diagnostic. Model paths and raw exceptions are not returned to the web app. A successful generated-audio check confirms the processing path; it does not validate a particular recording or its transcript quality.
 
 ### Saved projects and sessions

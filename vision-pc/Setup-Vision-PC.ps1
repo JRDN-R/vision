@@ -183,6 +183,7 @@ function Invoke-LocalLogged([string[]]$Arguments, [string]$LogBase) {
     $Quoted = @($Arguments | ForEach-Object { '"' + $_.Replace('"','\"') + '"' })
     $Process = Start-Process -FilePath $PythonExe -ArgumentList $Quoted -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$LogBase.log" -RedirectStandardError "$LogBase-errors.log"
     if ($Process.ExitCode -ne 0) {
+        Get-Content -LiteralPath "$LogBase.log" -Tail 8 | Out-Host
         Get-Content -LiteralPath "$LogBase-errors.log" -Tail 12 | Out-Host
         throw "Local transcription command failed ($($Process.ExitCode)). See $LogBase.log and $LogBase-errors.log. No paid fallback was enabled."
     }

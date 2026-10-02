@@ -1,6 +1,7 @@
 """Local transcription contract checks; no models, downloads or cloud requests."""
 import base64
 from contextlib import redirect_stderr
+import ctypes
 import io
 import json
 import os
@@ -188,6 +189,24 @@ class TranscriptionTests(unittest.TestCase):
         self.assertIn('dependencies', error)
         self.assertIn('exit 0x00000025', error)
 
+    def test_stalled_import_is_stopped_before_the_recording_time_limit(self):
+        (self.packages / 'faster_whisper' / '__init__.py').write_text('import time\ntime.sleep(60)\n')
+        job = self.submit().json['id']
+        children = []
+        launch = subprocess.Popen
+        def remember_child(*args, **kwargs):
+            child = launch(*args, **kwargs)
+            children.append(child)
+            return child
+        with patch.object(local, 'DEPENDENCY_TIMEOUT', 2), patch.object(local.subprocess, 'Popen', side_effect=remember_child), self.assertLogs(server.app.logger, level='ERROR'):
+            self.service.work_once()
+        value = self.status(job).json
+        self.assertEqual(value['status'], 'error')
+        self.assertIn('dependency-timeout / dependencies', value['error'])
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll(), 'A stalled import must not leave an orphan worker')
+        self.assertFalse(self.service._worker_lock.locked())
+
     def test_check_output_excludes_other_jobs_logs(self):
         log = self.root / 'server.log'
         log.write_text('2026-10-02 00:00:00 ERROR unrelated private information\n'
@@ -300,6 +319,25 @@ class TranscriptionTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
+
+    def test_windows_parent_watch_never_blocks_on_a_crt_input_read(self):
+        # Exercise the Windows branch on every test platform. The existing
+        # process lifecycle tests also exercise the real Win32 API on Windows.
+        peek = Mock(side_effect=[1, 1, 0])  # alive twice, then broken pipe
+        windows = SimpleNamespace(name='nt', read=Mock(), _exit=Mock())
+        msvcrt = SimpleNamespace(get_osfhandle=Mock(return_value=0x123456789))
+        with patch.object(local, 'os', windows), patch.dict(sys.modules, {'msvcrt': msvcrt}), \
+                patch.object(ctypes, 'WinDLL', return_value=SimpleNamespace(PeekNamedPipe=peek), create=True), \
+                patch.object(local.sys, 'stdin', SimpleNamespace(fileno=lambda: 0)), patch.object(local.time, 'sleep') as pause:
+            thread = local.start_parent_watch()
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+        windows.read.assert_not_called()
+        windows._exit.assert_called_once_with(1)
+        msvcrt.get_osfhandle.assert_called_once_with(0)
+        self.assertEqual(pause.call_count, 2)
+        self.assertEqual(peek.call_args.args[0].value, 0x123456789)  # no 64-bit handle truncation
+        self.assertEqual(peek.call_args.args[1:], (None, 0, None, None, None))
 
     def test_child_normal_completion_does_not_abort_with_parent_pipe_open(self):
         (self.packages / 'faster_whisper' / '__init__.py').write_text('class WhisperModel:\n def __init__(self,*a,**k): pass\n')
