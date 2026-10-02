@@ -111,7 +111,7 @@ function resumeYouTubeImports(){
  renderActivity();scheduleYouTubeImports();
 }
 function openYouTubeDialog(){
- $('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Otherwise, audio goes to the Gemini queue. Save your project to keep pending imports; reopen it to resume.';
+ $('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Otherwise, audio goes to your selected transcription provider. Save your project to keep pending imports; reopen it to resume.';
  $('youtubeImport').disabled=youtubeImportRunning;$('youtubeDialog').showModal();$('youtubeURL').focus();
 }
 async function importYouTube(){
@@ -160,15 +160,15 @@ async function pumpYouTubeImports(){
   // Replace only generated frames belonging to this import when recovering an interrupted application.
   n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);source.snapshotsStatus='complete';
   if(n.videoSourceId===source.id){n.title=title;n.src=result.frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;await renderNode(n);}
-  if(result.transcript?.text){storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
+  if(result.transcript?.text){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
   else if(result.audio?.data){
    if(!(n.transcriptionJobs||[]).some(j=>j.sourceId===source.id)&&source.transcriptionStatus!=='complete'){
-    task.detail='Preparing audio for Gemini';task.progress=90;renderActivity();
+    task.detail='Preparing audio for transcription';task.progress=90;renderActivity();
     const file=new File([bytesFromDataURL(result.audio.data)],result.audio.name||'youtube-audio.m4a',{type:result.audio.mime||'audio/mp4'});
     const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',signal),fvadBinary=await embeddedBytes('fvad-wasm-source',signal);check();decoder=decoderClient();await decoder.request('init',{wasmBinary,fvadBinary},[wasmBinary.buffer,fvadBinary.buffer]);check();
     await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>{task.detail=message;task.progress=90+10*fraction;renderActivity();});check();
    }
-   recordActivity(title,'Screenshots ready · transcription queued');toast('Screenshots ready. Audio queued for Gemini transcription.');
+   recordActivity(title,'Screenshots ready · transcription queued');toast('Screenshots ready. Audio queued for transcription.');
   }else{storeVideoTranscript(n,source,'No captions or audio track were available.','no-audio');recordActivity(title,'Screenshots ready');toast('YouTube screenshots ready.');}
   check();completed=true;state.youtubeImports=state.youtubeImports.filter(j=>j!==job);removeYouTubeTask(job);updateVideoAttachments(n);updateSequence();markDirty();
  }catch(error){

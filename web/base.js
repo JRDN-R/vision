@@ -5,7 +5,7 @@ const APP_SOURCE='<!doctype html>\n'+document.documentElement.outerHTML;
 const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'), world=$('world');
 document.querySelector('.vision-header-banner').src=document.querySelector('.vision-hero-logo img').src;
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
-const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage'});
+const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local'});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
 let history=[],future=[],toastTimer,dragDepth=0,lastPointer=null,renderTickets=new Map();
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -115,8 +115,8 @@ const settings=[['fontSize','fontSize',16,80],['captionPadding','padding',10,100
 document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{pending=null;drawCables();setTool(b.dataset.tool);});document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{$('markColor').value=b.dataset.color;applyMarkStyle();});function applyMarkStyle(){const n=nodeById(selected),a=n?.annotations.find(a=>a.id===selectedMark);if(a){checkpoint();a.color=$('markColor').value;a.width=Number($('markWidth').value)/1000;renderNode(n);markDirty();}}$('markColor').onchange=applyMarkStyle;$('markWidth').oninput=()=>{$('markWidthValue').textContent=$('markWidth').value;};$('markWidth').onchange=applyMarkStyle;
 $('deleteNode').onclick=()=>{selectedMark=null;deleteSelection();};$('clearMarks').onclick=()=>{const n=nodeById(selected);if(n?.annotations.length){checkpoint();n.annotations=[];selectedMark=null;renderNode(n);markDirty();}};$('disconnectBtn').onclick=()=>{if(!selected)return;checkpoint();state.edges=state.edges.filter(e=>e.from!==selected&&e.to!==selected);markDirty();updateSequence();drawCables();syncModuleInspector();};$('undoBtn').onclick=()=>undo();$('redoBtn').onclick=()=>undo(true);$('zoomIn').onclick=()=>zoomTo(state.view.scale*1.25);$('zoomOut').onclick=()=>zoomTo(state.view.scale/1.25);$('fitBtn').onclick=fitBoard;$('resetZoom').onclick=()=>zoomTo(1);$('helpBtn').onclick=()=>$('helpDialog').showModal();$('closeHelp').onclick=$('helpDone').onclick=()=>$('helpDialog').close();
 window.addEventListener('keydown',e=>{const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)||document.activeElement?.isContentEditable;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveProject();return;}if(document.querySelector('dialog[open]')||busy||ioBusy)return;if(editing)return;const key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();undo(e.shiftKey);return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();undo(true);return;}if(e.ctrlKey||e.metaKey||e.altKey)return;if(key===' '){space=true;e.preventDefault();}else if(key==='escape'){pending=null;selectedMark=null;selectedEdge=null;action=null;setTool('select');drawCables();updateMarkSelection();}else if(key==='delete'||key==='backspace'){e.preventDefault();deleteSelection();}else if(key==='f')fitBoard();else if({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key])setTool({v:'select',h:'hand',a:'arrow',c:'ellipse',r:'rect',p:'pen',e:'eraser'}[key]);});window.addEventListener('keyup',e=>{if(e.key===' ')space=false;});window.addEventListener('resize',updateView);
-// Attachments remain opaque files. Only explicitly requested audio is sent to Google.
-let attachmentTarget=null, transcriptionQueue=[], transcriptionJob=null, sessionApiKey=window.JEWCredential.key;
+// Audio is sent only to the chosen transcription provider; Local PC is the default.
+let attachmentTarget=null, transcriptionQueue=[], transcriptionJob=null, sessionApiKey=window.JEWCredential?.key||'';
 const mediaExtensions=/\.(mp3|mp2|wav|wave|m4a|aac|flac|ogg|oga|opus|aiff|aif|wma|mp4|m4v|mov|webm|mkv|avi|mpeg|mpg|3gp|mts|m2ts)$/i;
 const mediaFile=a=>/^(audio|video)\//i.test(a.mime||a.type||'')||mediaExtensions.test(a.name);
 const hasAttachments=()=>state.nodes.some(n=>n.attachments?.length);
@@ -127,10 +127,10 @@ function dataURLFromBytes(bytes,mime='application/octet-stream'){const parts=[];
 function textDataURL(text){return dataURLFromBytes(new TextEncoder().encode(text),'text/plain');}
 function chooseAttachments(id){if(busy||ioBusy)return;attachmentTarget=id;$('attachmentInput').click();}
 function sourceExtension(n){const mime=/^data:([^;,]+)/.exec(n.src)?.[1];return({'image/jpeg':'jpg','image/jpg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif','image/bmp':'bmp','image/avif':'avif'})[mime]||'png';}
-function offerTranscription(nodeId,ids){if(busy||ioBusy)return;const n=nodeById(nodeId);transcriptionQueue=ids.map(id=>({nodeId,id})).filter(q=>n?.attachments?.some(a=>a.id===q.id&&a.data&&mediaFile(a)));if(!transcriptionQueue.length)return;$('transcribeQuestion').textContent=transcriptionQueue.length===1?'Transcribe this audio?':`Transcribe audio from ${transcriptionQueue.length} files?`;$('transcribeFiles').textContent=transcriptionQueue.map(q=>n.attachments.find(a=>a.id===q.id).name).join('\n');$('geminiKey').value=sessionApiKey;$('transcribeStatus').textContent='The originals are already attached. Choosing Skip keeps them without a transcript.';$('transcribeProgress').hidden=true;$('runTranscription').disabled=false;$('geminiKey').disabled=false;$('skipTranscription').textContent='Skip';$('transcribeDialog').showModal();}
+function offerTranscription(nodeId,ids){if(busy||ioBusy)return;const n=nodeById(nodeId);transcriptionQueue=ids.map(id=>({nodeId,id})).filter(q=>n?.attachments?.some(a=>a.id===q.id&&a.data&&mediaFile(a)));if(!transcriptionQueue.length)return;$('transcribeQuestion').textContent=transcriptionQueue.length===1?'Transcribe this audio?':`Transcribe audio from ${transcriptionQueue.length} files?`;$('transcribeFiles').textContent=transcriptionQueue.map(q=>n.attachments.find(a=>a.id===q.id).name).join('\n');$('geminiKey').value=sessionApiKey;syncTranscriptionProviderUI();$('transcribeStatus').textContent='The originals are already attached. Choosing Skip keeps them without a transcript.';$('transcribeProgress').hidden=true;$('runTranscription').disabled=false;$('geminiKey').disabled=false;$('skipTranscription').textContent='Skip';$('transcribeDialog').showModal();}
 async function embeddedBytes(id,signal){const encoded=$(id).textContent.trim(),bytes=new Uint8Array(encoded.length*3/4-(encoded.endsWith('==')?2:encoded.endsWith('=')?1:0));let offset=0;for(let i=0;i<encoded.length;i+=1048576){if(signal.aborted)throw new DOMException('Canceled','AbortError');const part=atob(encoded.slice(i,i+1048576));for(let j=0;j<part.length;j++)bytes[offset++]=part.charCodeAt(j);await new Promise(r=>setTimeout(r,0));}if($(id).dataset.compression==='gzip'){if(typeof DecompressionStream!=='function')throw new Error('Open Vision in a current Chrome, Edge, Firefox, or Safari browser to use the media decoder.');const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));const expanded=new Uint8Array(await new Response(stream).arrayBuffer());if(signal.aborted)throw new DOMException('Canceled','AbortError');return expanded;}return bytes;}
 function decoderClient(){const source=$('fvad-core-source').textContent+'\n'+$('ffmpeg-core-source').textContent+'\n'+$('decoder-source').textContent,url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));let worker;try{worker=new Worker(url);}catch(e){URL.revokeObjectURL(url);throw new Error('Could not start the media decoder. Open the downloaded HTML in a current desktop browser.');}let serial=0,dead=false;const pending=new Map();function stop(error=new DOMException('Canceled','AbortError')){dead=true;worker.terminate();URL.revokeObjectURL(url);for(const p of pending.values()){clearTimeout(p.timer);p.reject(error);}pending.clear();}worker.onmessage=e=>{const p=pending.get(e.data.id);if(!p)return;if(Number.isFinite(e.data.progress)){p.onProgress?.(e.data);return;}clearTimeout(p.timer);pending.delete(e.data.id);e.data.error?p.reject(new Error(e.data.error)):p.resolve(e.data);};worker.onerror=e=>stop(new Error(e.message||'The media decoder stopped.'));return{stop,request(type,payload={},transfer=[],onProgress){if(dead)return Promise.reject(new Error('Decoder unavailable.'));return new Promise((resolve,reject)=>{const id=++serial,timer=setTimeout(()=>{pending.delete(id);reject(new Error('Media processing timed out. Try a shorter clip.'));},1800000);pending.set(id,{resolve,reject,timer,onProgress});try{worker.postMessage({id,type,...payload},transfer);}catch(e){clearTimeout(timer);pending.delete(id);reject(e);}});}};}
-function saveTranscript(n,source,text,status){let a=n.attachments.find(a=>a.transcriptOf===source.id);const content=`Source: ${source.name}\nModel: gemini-3.5-transcribe\nStatus: ${status==='complete'?'Complete':'PARTIAL — transcription did not finish'}\n\n${text.trim()||'[No speech returned by the transcription service.]'}\n`;if(!a){a={id:uid(),name:source.name.replace(/\.[^.]+$/,'')+'.transcript.txt',mime:'text/plain',generated:true,role:'transcript',transcriptOf:source.id,createdAt:new Date().toISOString()};n.attachments.push(a);}a.data=textDataURL(content);a.size=new TextEncoder().encode(content).length;a.status=status;source.status=status;markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
+function saveTranscript(n,source,text,status){let a=n.attachments.find(a=>a.transcriptOf===source.id);const job=(n.transcriptionJobs||[]).find(j=>j.sourceId===source.id),provider=job?.provider||source.transcriptionProvider;source.transcriptionProvider=provider||'imported';const content=`Source: ${source.name}\nTranscription: ${provider==='local'?'Local PC (Whisper)':provider==='gemini'?'Gemini':provider==='captions'?'Source captions':'Imported transcript'}${job?.preservedSections?' · includes previously completed sections':''}\nStatus: ${status==='complete'?'Complete':'PARTIAL — transcription did not finish'}\n\n${text.trim()||'[No speech returned by the transcription service.]'}\n`;if(!a){a={id:uid(),name:source.name.replace(/\.[^.]+$/,'')+'.transcript.txt',mime:'text/plain',generated:true,role:'transcript',transcriptOf:source.id,createdAt:new Date().toISOString()};n.attachments.push(a);}a.data=textDataURL(content);a.size=new TextEncoder().encode(content).length;a.status=status;source.status=status;markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
 $('addAttachments').onclick=()=>{if(selected)chooseAttachments(selected);};$('attachmentInput').onchange=e=>{if(attachmentTarget)attachFiles(attachmentTarget,e.target.files);e.target.value='';};$('mainPrompt').onfocus=()=>checkpoint();$('mainPrompt').oninput=e=>{state.mainPrompt=e.target.value;markDirty();};$('runTranscription').onclick=runTranscription;$('skipTranscription').onclick=()=>{if(transcriptionJob){transcriptionJob.controller.abort();transcriptionJob.decoder?.stop();}else $('transcribeDialog').close();};$('transcribeDialog').addEventListener('cancel',e=>{if(transcriptionJob){e.preventDefault();transcriptionJob.controller.abort();transcriptionJob.decoder?.stop();}});
 
 // Keep the canvas usable at narrow widths; the panel can always be reopened.
@@ -374,7 +374,7 @@ async function processVideoFile(n,file,{primary=false}={}){
       source.snapshotsStatus='complete';
     }catch(error){source.snapshotsStatus=signal.aborted?'canceled':captured?'partial':'failed';source.snapshotError=signal.aborted?'Canceled; any completed screenshots were kept.':error.message;if(signal.aborted)throw error;toast('Some screenshots could not be created: '+error.message,true);}
     check();phase='transcription';
-    if(!info.hasAudio){storeVideoTranscript(n,source,'No audio track was detected. No audio was sent to Gemini. Review the visual screenshots for this video.','no-audio');show('Screenshots ready; video has no audio track.',1);}
+    if(!info.hasAudio){storeVideoTranscript(n,source,'No audio track was detected. No audio was sent for transcription. Review the visual screenshots for this video.','no-audio');show('Screenshots ready; video has no audio track.',1);}
     else{
       await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>show(message,.6+.4*fraction));check();
       show('Screenshots ready; transcription queued. Save your project to keep pending audio.',1);
@@ -418,6 +418,7 @@ function validateAttachments(raw){
   if(['complete','partial','failed','canceled','pending'].includes(a.snapshotsStatus))item.snapshotsStatus=a.snapshotsStatus;
   if(typeof a.snapshotError==='string')item.snapshotError=a.snapshotError.slice(0,2000);
   if(['complete','partial','failed','canceled','pending','no-audio','queued','waiting','sending','paused','error'].includes(a.transcriptionStatus))item.transcriptionStatus=a.transcriptionStatus;
+  if(['local','gemini','captions','imported'].includes(a.transcriptionProvider))item.transcriptionProvider=a.transcriptionProvider;
   if(typeof a.videoHasAudio==='boolean')item.videoHasAudio=a.videoHasAudio;
   if(typeof a.audioOffsetFromVideo==='number'&&Number.isFinite(a.audioOffsetFromVideo))item.audioOffsetFromVideo=a.audioOffsetFromVideo;
   return item;
@@ -449,7 +450,7 @@ async function validateProject(raw){
  for(let i=0;i<queue.length;i++){visited++;for(const to of outgoing.get(queue[i])){indegree.set(to,indegree.get(to)-1);if(indegree.get(to)===0)queue.push(to);}}
  if(visited!==nodes.length)throw new Error('The project contains a connection loop.');
  const s=raw.settings||{},v=raw.view||{};
- return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift',boardPalette:['sage','rose','redshift'].includes(s.boardPalette)?s.boardPalette:'sage'},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
+ return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift',boardPalette:['sage','rose','redshift'].includes(s.boardPalette)?s.boardPalette:'sage',transcriptionProvider:s.transcriptionProvider==='gemini'?'gemini':'local'},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
 }
 function refreshExport(){
  $('screenshotMode').value=state.settings.screenshotMode||'individual';
@@ -610,6 +611,12 @@ async function makeContactSheets(frames){
 // Durable, sequential ASR: only compressed audio and completed text are queued.
 const ASR_GAP_MS=60000;
 let asrRuntime=null,asrWakeTimer=null,asrWakeAt=0,asrLastRequestAt=0;
+const LOCAL_ASR_HELP='https://github.com/JRDN-R/vision/tree/main/vision-pc#local-transcription';
+const LOCAL_ASR_MAX_BYTES=100*1024*1024;
+function transcriptionProvider(){return state.settings?.transcriptionProvider==='gemini'?'gemini':'local';}
+function transcriptionProviderLabel(provider){return provider==='gemini'?'Gemini · API billing may apply':'Local PC · Whisper · no API charge';}
+function validASRReference(value){return typeof value==='string'&&/^[-\w]{1,120}$/.test(value)?value:null;}
+function validASRBackend(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&['','/'].includes(u.pathname)?u.origin:null;}catch{return null;}}
 function cloneTranscriptionJobs(jobs){return(jobs||[]).map(job=>({...job,sections:job.sections.map(section=>({...section}))}));}
 function validateTranscriptionJobs(raw,attachments){
  if(raw===undefined)return[];if(!Array.isArray(raw)||raw.length>2000)throw new Error('Invalid transcription queue.');
@@ -623,8 +630,10 @@ function validateTranscriptionJobs(raw,attachments){
    if(!done&&(typeof section.audioData!=='string'||!/^data:audio\/(?:mpeg|mp3|wav);base64,[A-Za-z0-9+/]+={0,2}$/i.test(section.audioData)||section.audioData.length>19000000))throw new Error('A queued audio section is missing or too large.');
    return{start:section.start,end:section.end,mimeType:section.mimeType,audioData:done?null:section.audioData,text:done?section.text:null,done};
   });
-  const source=attachments.find(a=>a.id===job.sourceId);
-  return{id:job.id,sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number.isFinite(job.offsetSeconds)?job.offsetSeconds:0,createdAt:typeof job.createdAt==='string'?job.createdAt:new Date().toISOString(),status:job.status==='error'?'error':'waiting',error:typeof job.error==='string'?job.error.slice(0,600):null,sections};
+  const source=attachments.find(a=>a.id===job.sourceId),provider=job.provider==='gemini'?'gemini':'local',migrated=job.provider!=='local'&&job.provider!=='gemini';
+  const remote=provider==='local'?{remoteId:validASRReference(job.remoteId),remoteRequestId:validASRReference(job.remoteRequestId)||job.id,backendUrl:validASRBackend(job.backendUrl),remoteProjectId:validASRReference(job.remoteProjectId),submitted:job.submitted===true,remoteTerminal:job.remoteTerminal===true,phase:typeof job.phase==='string'?job.phase.slice(0,150):'',progress:Number.isFinite(job.progress)?Math.max(0,Math.min(100,job.progress)):0}:{};
+  if(remote.remoteId&&(!remote.backendUrl||!remote.remoteProjectId))throw new Error('The saved PC transcription connection is incomplete.');
+  return{provider,...remote,preservedSections:job.preservedSections===true||(migrated&&sections.some(section=>section.done)),id:job.id,sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number.isFinite(job.offsetSeconds)?job.offsetSeconds:0,createdAt:typeof job.createdAt==='string'?job.createdAt:new Date().toISOString(),status:!migrated&&job.status==='error'?'error':'waiting',error:!migrated&&typeof job.error==='string'?job.error.slice(0,600):null,sections};
  });
 }
 function queueEntries(){return state.nodes.flatMap(n=>(n.transcriptionJobs||[]).map(job=>({n,job,source:n.attachments?.find(a=>a.id===job.sourceId)})));}
@@ -640,18 +649,45 @@ function pruneTranscriptionQueue(){
  renderTranscriptionQueue();scheduleTranscriptionQueue();
 }
 function queueStatusText(job){
- const done=job.sections.filter(s=>s.done).length,total=job.sections.length;
- if(job.status==='error')return job.error||'Transcription stopped. Retry when the issue is resolved.';
- if(typeof navigator!=='undefined'&&navigator.onLine===false)return`Waiting for internet · ${done}/${total} sections complete`;
- if(job.status==='sending')return`Transcribing section ${done+1} of ${total}`;
+ const done=job.sections.filter(s=>s.done).length,total=job.sections.length,label=transcriptionProviderLabel(job.provider);
+ if(job.status==='error')return label+' · '+(job.error||'Transcription stopped. Retry when the issue is resolved.');
+ if(job.provider!=='gemini'){
+  if(job.remoteId)return label+' · '+(job.phase||'Processing on PC')+(navigator.onLine===false?' · reconnect to receive results':' · continues while this browser is closed');
+  if(navigator.onLine===false)return label+' · waiting for connection';
+  if(job.submitted)return label+' · checking whether the PC accepted the audio';
+  return label+' · '+(job.status==='sending'?'Sending all audio sections to PC':'Queued · keep this page open until the PC accepts the audio');
+ }
+ if(navigator.onLine===false)return label+` · waiting for internet · ${done}/${total} sections complete`;
+ if(job.status==='sending')return label+` · transcribing section ${done+1} of ${total}`;
  const remaining=Math.ceil((Math.max(Number(state.asrNextRequestAt)||0,asrLastRequestAt)-Date.now())/1000);
- return remaining>0?`Queued · next request in ${remaining}s · ${done}/${total} complete`:`Queued · ${done}/${total} sections complete`;
+ return label+' · '+(remaining>0?`next request in ${remaining}s · ${done}/${total} complete`:`queued · ${done}/${total} sections complete`);
+}
+function providerChoice(value,onchange,label){
+ const wrapper=document.createElement('label');wrapper.className='asr-provider';wrapper.style.cssText='display:grid;gap:6px;margin:10px 0;font-size:12px';wrapper.appendChild(document.createTextNode(label));
+ const select=document.createElement('select');select.setAttribute('aria-label',label);select.style.cssText='width:100%;min-height:40px;max-width:100%';
+ for(const provider of ['local','gemini']){const option=document.createElement('option');option.value=provider;option.textContent=transcriptionProviderLabel(provider);select.appendChild(option);}select.value=value;select.onchange=()=>onchange(select.value);wrapper.appendChild(select);return wrapper;
+}
+function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';markDirty();syncTranscriptionProviderUI();}
+function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();}}
+function addQueueProviderControl(row,job){
+ const choice=providerChoice(job.provider||'local',value=>changeQueuedProvider(job.id,value),'Transcription provider for '+job.sourceName);
+ choice.querySelector('select').disabled=job.provider==='local'&&(job.submitted||!!job.remoteId)&&!job.remoteTerminal;
+ row.appendChild(choice);
+ if(job.provider!=='gemini'&&job.status==='error'){const help=document.createElement('a');help.href=LOCAL_ASR_HELP;help.target='_blank';help.rel='noopener noreferrer';help.textContent='Set up local transcription on the PC';row.appendChild(help);}
+}
+function changeQueuedProvider(id,provider){
+ const entry=queueEntries().find(e=>e.job.id===id);if(!entry||!['local','gemini'].includes(provider))return;const{n,job,source}=entry;
+ if(job.provider===provider||job.provider==='local'&&(job.submitted||job.remoteId)&&!job.remoteTerminal)return;
+ checkpoint();if(asrRuntime?.job===job)asrRuntime.controller.abort();job.provider=provider;job.preservedSections=job.sections.some(section=>section.done);job.status='waiting';job.error=null;job.nextAttemptAt=0;
+ for(const field of ['remoteId','backendUrl','remoteProjectId','submitted','remoteTerminal','phase','progress'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
+ syncQueueHistory(n,job);queueChanged(n);scheduleTranscriptionQueue();
 }
 function renderTranscriptionQueue(){
  const status=$('queueStatus'),list=$('queueList'),retry=$('queueRetry');if(!status||!list)return;
  const entries=queueEntries().filter(e=>e.source);status.textContent=entries.length?`${entries.length} transcription${entries.length===1?'':'s'} queued${navigator.onLine===false?' · offline':''}`:'No transcriptions queued';
  status.classList.toggle('queue-working',entries.some(({job})=>job.status!=='error'));list.replaceChildren();
- for(const {n,job} of entries){const row=document.createElement('div');row.className='queue-item';const title=document.createElement('strong');title.textContent=job.sourceName;row.appendChild(title);const detail=document.createElement('span');detail.textContent=queueStatusText(job);row.appendChild(detail);if(job.status==='error'){const button=document.createElement('button');button.textContent='Retry';button.onclick=()=>retryTranscriptionQueue(job.id);row.appendChild(button);}list.appendChild(row);}
+ for(const {n,job} of entries){const row=document.createElement('div');row.className='queue-item';const title=document.createElement('strong');title.textContent=job.sourceName;row.appendChild(title);const detail=document.createElement('span');detail.textContent=queueStatusText(job);row.appendChild(detail);if(job.status==='error'){const button=document.createElement('button');button.textContent='Retry';button.onclick=()=>retryTranscriptionQueue(job.id);row.appendChild(button);}addQueueProviderControl(row,job);list.appendChild(row);}
+ syncTranscriptionProviderUI();
  if(retry){retry.hidden=!entries.some(({job})=>job.status==='error');retry.onclick=()=>retryTranscriptionQueue();}
  if(typeof renderActivity==='function')renderActivity();
 }
@@ -660,7 +696,7 @@ function scheduleTranscriptionQueue(delay=0){
  if(asrWakeTimer!==null)clearTimeout(asrWakeTimer);asrWakeAt=when;asrWakeTimer=setTimeout(()=>{asrWakeTimer=null;asrWakeAt=0;void pumpTranscriptionQueue();},Math.max(0,delay));
 }
 function retryTranscriptionQueue(id){
- let changed=false;for(const{source,job}of queueEntries())if(source&&(!id||job.id===id)&&job.status==='error'){job.status='waiting';job.error=null;source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';changed=true;}
+ let changed=false;for(const{source,job}of queueEntries())if(source&&(!id||job.id===id)&&job.status==='error'){if(job.provider==='local'&&job.remoteTerminal){job.remoteId=null;job.submitted=false;job.remoteTerminal=false;job.remoteRequestId=uid();job.phase='';job.progress=0;}job.status='waiting';job.error=null;job.nextAttemptAt=0;source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';changed=true;}
  if(changed)markDirty();renderTranscriptionQueue();scheduleTranscriptionQueue();
 }
 function networkQueueError(error){return navigator.onLine===false||error instanceof TypeError||/could not reach Google|failed to fetch|network(?:error| request| connection| failure)?|internet connection|load failed|timed out/i.test(error?.message||'');}
@@ -683,16 +719,62 @@ function finishQueuedTranscript(runtime){
  else saveTranscript(n,source,text,'complete');
  syncQueueHistory(n,job,true);n.transcriptionJobs=n.transcriptionJobs.filter(j=>j!==job);releaseCompletedSourceAudio(n,source);queueChanged(n);if(typeof recordActivity==='function')recordActivity(job.sourceName,'Transcription complete');toast('Transcription complete: '+job.sourceName);
 }
+async function localASRRequest(runtime,path,options={}){
+ const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,options.method==='POST'?120000:15000);
+ runtime.controller.signal.addEventListener('abort',abort,{once:true});
+ try{return await projectResponse(await projectRequest(path,{...options,signal:controller.signal}));}
+ catch(error){if(controller.signal.aborted&&!runtime.controller.signal.aborted){const timeout=new Error('PC connection timed out. Checking again shortly.');timeout.retryable=true;throw timeout;}throw error;}
+ finally{clearTimeout(timer);runtime.controller.signal.removeEventListener('abort',abort);}
+}
+async function pumpLocalTranscription(runtime){
+ const{n,job,source}=runtime;job.provider='local';source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
+ if(typeof projectCapabilities!=='function'||typeof ensureRemoteProject!=='function')throw new Error('Update this Vision copy and connect the PC processor to use local transcription.');
+ if(job.backendUrl&&job.backendUrl!==cloudConfig?.backendUrl)throw new Error('Connect the original PC to receive this transcription.');
+ if(job.remoteProjectId&&job.remoteProjectId!==state.projectCloud?.id)throw new Error('This transcription belongs to the original project. Open that project to receive its results.');
+ if(!job.remoteId){
+  const health=await projectCapabilities();if(!queueAlive(runtime))return;
+  const caps=health.capabilities,available=Array.isArray(caps)?caps.includes('localTranscription'):caps?.localTranscription===true;
+  if(!available||health.localTranscription?.ready===false)throw new Error('Local transcription is not ready on the PC. Run Setup-Vision-PC.ps1 -Action InstallLocalTranscription on that PC, then Retry. No Gemini request was made.');
+  const meta=await ensureRemoteProject();if(!queueAlive(runtime))return;
+  job.remoteRequestId=job.remoteRequestId||job.id;job.backendUrl=meta.backendUrl;job.remoteProjectId=meta.id;
+  const payload=JSON.stringify({clientRequestId:job.remoteRequestId,sourceName:job.sourceName,sections:job.sections.filter(section=>!section.done).map(({start,end,mimeType,audioData})=>({start,end,mimeType,audioData}))});
+  if(new Blob([payload]).size>Math.min(LOCAL_ASR_MAX_BYTES,Number(health.localTranscription?.maxRequestBytes)||LOCAL_ASR_MAX_BYTES))throw new Error('This audio exceeds the PC upload limit of 100 MiB. Split the source into shorter clips. No paid provider was used.');
+  job.submitted=true;job.status='sending';job.error=null;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();if(!queueAlive(runtime))return;
+  let accepted;
+  try{accepted=await localASRRequest(runtime,'/projects/'+meta.id+'/transcriptions',{method:'POST',headers:{'Content-Type':'application/json'},body:payload});}
+  catch(error){if(error.status>=400&&error.status<500||error.status===503){job.submitted=false;}throw error;}
+  if(!queueAlive(runtime))return;
+  if(!validASRReference(accepted.id)){const error=new Error('The PC did not return a transcription ID. Checking the accepted request again.');error.retryable=true;throw error;}
+  job.remoteId=accepted.id;job.status='waiting';job.phase='Audio accepted by PC';job.nextAttemptAt=Date.now()+2000;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();return;
+ }
+ const result=await localASRRequest(runtime,'/projects/'+job.remoteProjectId+'/transcriptions/'+encodeURIComponent(job.remoteId));if(!queueAlive(runtime))return;
+ job.phase=String(result.phase||result.status||'Processing on PC').slice(0,150);job.progress=Math.max(0,Math.min(100,Number(result.progress)||0));
+ if(['error','cancelled'].includes(result.status)){job.remoteTerminal=true;throw new Error(result.error||'The local transcription stopped. Retry to start it again.');}
+ if(result.status==='complete'){
+  const returned=result.result?.sections,pending=job.sections.filter(section=>!section.done);
+  if(!Array.isArray(returned)||returned.length!==pending.length)throw new Error('The PC returned an incomplete transcript. The original audio was kept.');
+  const matches=pending.map(section=>returned.filter(item=>item.start===section.start&&item.end===section.end&&typeof item.text==='string'));
+  if(matches.some(items=>items.length!==1))throw new Error('The PC transcript sections do not match this audio. The original audio was kept.');
+  pending.forEach((section,index)=>{section.text=matches[index][0].text;section.done=true;section.audioData=null;});finishQueuedTranscript(runtime);return;
+ }
+ if(!['queued','processing'].includes(result.status))throw new Error('The PC returned an unknown transcription status. The original audio was kept.');
+ // Poll progress is display-only; avoid repeatedly autosaving the full pending audio payload.
+ job.status='waiting';job.nextAttemptAt=Date.now()+2500;renderTranscriptionQueue();
+}
+function transcriptionDueAt(job){return Math.max(Number(job.nextAttemptAt)||0,job.provider==='gemini'?Math.max(Number(state.asrNextRequestAt)||0,asrLastRequestAt):0);}
+function scheduleNextTranscription(){
+ const entries=queueEntries().filter(({source,job})=>source&&job.status!=='error');if(entries.length&&navigator.onLine!==false)scheduleTranscriptionQueue(Math.max(0,Math.min(...entries.map(({job})=>transcriptionDueAt(job)-Date.now()))));
+}
 async function pumpTranscriptionQueue(){
  renderTranscriptionQueue();if(asrRuntime)return;
  const entries=queueEntries().filter(({source,job})=>source&&job.status!=='error');if(!entries.length)return;
- if(busy||ioBusy){scheduleTranscriptionQueue(500);return;}
- const{n,job,source}=entries[0],runtime={project:state,n,job,source,controller:new AbortController()};asrRuntime=runtime;
+ if(busy||ioBusy){scheduleTranscriptionQueue(500);return;}if(navigator.onLine===false)return;
+ const entry=entries.find(({job})=>transcriptionDueAt(job)<=Date.now()||job.sections.every(section=>section.done));if(!entry){scheduleNextTranscription();return;}
+ const{n,job,source}=entry,runtime={project:state,n,job,source,controller:new AbortController()};asrRuntime=runtime;
  try{
   const section=job.sections.find(s=>!s.done);if(!section){finishQueuedTranscript(runtime);return;}
-  if(navigator.onLine===false){job.status='waiting';return;}
-  const wait=Math.max(Number(state.asrNextRequestAt)||0,asrLastRequestAt)-Date.now();if(wait>0){job.status='paused';scheduleTranscriptionQueue(Math.min(wait,1000));return;}
-  const key=window.JEWCredential?.key||sessionApiKey;if(!key){job.status='error';job.error='The built-in Gemini credential is unavailable. Reopen an updated copy of Vision, then retry.';queueChanged(n);return;}
+  if(job.provider!=='gemini'){await pumpLocalTranscription(runtime);return;}
+  const key=window.JEWCredential?.key||sessionApiKey;if(!key)throw new Error('The built-in Gemini credential is unavailable. Choose Local PC or reopen an updated copy of Vision.');
   job.status='sending';job.error=null;if(job.sourceKind==='video')source.transcriptionStatus='sending';queueChanged(n);
   let text;
   try{text=await window.JEWTranscription.requestAudio(bytesFromDataURL(section.audioData),section.mimeType,key,runtime.controller.signal,section.start);}
@@ -704,15 +786,15 @@ async function pumpTranscriptionQueue(){
   source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';syncQueueHistory(n,job);queueChanged(n);
  }catch(error){
   if(!queueAlive(runtime))return;
-  job.status=networkQueueError(error)?'waiting':'error';job.error=job.status==='error'?String(error.message||'Transcription could not finish. Retry to continue.').slice(0,600):null;
+  const retryable=!error.status&&(networkQueueError(error)||error.retryable||error.code==='VISION_SERVER_UNAVAILABLE');
+  job.status=retryable?'waiting':'error';job.error=job.status==='error'?String(error.message||'Transcription could not finish. Retry to continue.').slice(0,600):null;job.nextAttemptAt=retryable?Date.now()+15000:0;
   source.status=job.status==='error'?'failed':'queued';if(job.sourceKind==='video')source.transcriptionStatus=job.status;
-  syncQueueHistory(n,job);queueChanged(n);if(job.status==='error')toast(job.sourceName+': '+job.error,true);
+  if(retryable&&job.provider==='local')renderTranscriptionQueue();else{syncQueueHistory(n,job);queueChanged(n);}if(job.status==='error')toast(job.sourceName+': '+job.error,true);
  }finally{
-  if(queueMember(runtime)&&job.status==='sending')job.status='waiting';if(asrRuntime===runtime)asrRuntime=null;renderTranscriptionQueue();
-  if(queueEntries().some(({source,job})=>source&&job.status!=='error')&&navigator.onLine!==false)scheduleTranscriptionQueue(Math.max(0,Math.min(1000,Math.max(Number(state.asrNextRequestAt)||0,asrLastRequestAt)-Date.now())));
+  if(queueMember(runtime)&&job.status==='sending')job.status='waiting';if(asrRuntime===runtime)asrRuntime=null;renderTranscriptionQueue();scheduleNextTranscription();
  }
 }
-async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress=()=>{}){
+async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress=()=>{},provider=transcriptionProvider()){
  const project=state,check=()=>{if(signal.aborted||state!==project||!state.nodes.includes(n)||!n.attachments.includes(source))throw new DOMException('Canceled','AbortError');};check();
  const existing=(n.transcriptionJobs||[]).find(j=>j.sourceId===source.id);if(existing)return existing;
  onProgress('Analyzing speech and pauses…',0);
@@ -721,15 +803,15 @@ async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress
  for(let i=0;i<planned.length;i++){
   check();const section=planned[i];onProgress(`Preparing audio section ${i+1} of ${planned.length}`,i/planned.length);
   const encoded=await decoder.request('transcription_chunk',{file,start:section.start,end:section.end});check();
-  if(!encoded.audio?.byteLength||encoded.audio.byteLength>window.JEWTranscription.MAX_INLINE_BYTES)throw new Error('An audio section could not be prepared within Gemini’s size limit.');
+  if(!encoded.audio?.byteLength||encoded.audio.byteLength>window.JEWTranscription.MAX_INLINE_BYTES)throw new Error('An audio section could not be prepared within the transcription size limit.');
   const audioData=await readFile(new Blob([encoded.audio],{type:encoded.mimeType}));check();sections.push({start:section.start,end:section.end,mimeType:encoded.mimeType,audioData,text:null,done:false});
  }
- check();const job={id:uid(),sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number(source.audioOffsetFromVideo)||0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};
+ check();const job={provider:provider==='gemini'?'gemini':'local',id:uid(),sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number(source.audioOffsetFromVideo)||0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};
  n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();onProgress(navigator.onLine===false?'Queued until internet reconnects. Save your project to keep the queue.':'Audio queued. You can keep editing while transcription runs.',1);return job;
 }
 async function runTranscription(){
  if(busy||ioBusy||!transcriptionQueue.length)return;checkpoint();busy=true;
- const tasks=transcriptionQueue.slice(),job={controller:new AbortController(),decoder:null};transcriptionJob=job;const signal=job.controller.signal;
+ const tasks=transcriptionQueue.slice(),provider=$('transcribeProvider')?.querySelector('select').value||transcriptionProvider(),job={controller:new AbortController(),decoder:null};transcriptionJob=job;const signal=job.controller.signal;
  $('runTranscription').disabled=true;$('geminiKey').disabled=true;$('skipTranscription').textContent='Cancel preparation';$('transcribeProgress').hidden=false;$('transcribeProgress').value=0;let prepared=0;
  const show=value=>$('transcribeStatus').textContent=value;
  try{
@@ -738,7 +820,7 @@ async function runTranscription(){
   for(let i=0;i<tasks.length;i++){
    if(signal.aborted)throw new DOMException('Canceled','AbortError');const q=tasks[i],n=nodeById(q.nodeId),source=n?.attachments?.find(a=>a.id===q.id);if(!source?.data)continue;
    const file=new File([bytesFromDataURL(source.data)],source.name,{type:source.mime});
-   await prepareTranscriptionQueue(n,source,file,job.decoder,signal,(message,fraction)=>{show(source.name+' · '+message);$('transcribeProgress').value=(i+fraction)/tasks.length;});prepared++;
+   await prepareTranscriptionQueue(n,source,file,job.decoder,signal,(message,fraction)=>{show(source.name+' · '+message);$('transcribeProgress').value=(i+fraction)/tasks.length;},provider);prepared++;
   }
   $('transcribeDialog').close();toast(`${prepared} transcription${prepared===1?'':'s'} queued${navigator.onLine===false?' until internet reconnects':''}. Save the project to keep pending work.`);
  }catch(error){show(signal.aborted?'Preparation canceled. Already queued audio and completed transcripts were kept.':'Audio preparation stopped: '+error.message);if(!signal.aborted)toast(error.message,true);}
@@ -788,16 +870,18 @@ function renderActivity(){
   const note=document.createElement('span');note.textContent=detail;row.appendChild(note);
   if(Number.isFinite(percent)){const bar=document.createElement('progress');bar.max=100;bar.value=percent;bar.setAttribute('aria-label',Math.round(percent)+'% complete');row.appendChild(bar);}
   if(retry){const button=document.createElement('button');button.className='ghost';button.textContent='Retry';button.onclick=retry;row.appendChild(button);}
-  host.appendChild(row);
+  host.appendChild(row);return row;
  };
  for(const task of active)add(task.title,task.detail+' · '+Math.round(task.progress||0)+'%',task.progress||0);
- for(const {job} of entries){const total=job.sections.length,done=job.sections.filter(s=>s.done).length,percent=100*done/total;add(job.sourceName,`${Math.round(percent)}% · ${total-done} section${total-done===1?'':'s'} left · ${queueStatusText(job)}`,percent,job.status==='error'?()=>retryTranscriptionQueue(job.id):null);}
+ for(const {job} of entries){const total=job.sections.length,done=job.sections.filter(s=>s.done).length,percent=job.provider==='local'&&job.remoteId?(100*done+(Number(job.progress)||0)*(total-done))/total:100*done/total;const row=add(job.sourceName,`${Math.round(percent)}% · ${total-done} section${total-done===1?'':'s'} left · ${queueStatusText(job)}`,percent,job.status==='error'?()=>retryTranscriptionQueue(job.id):null);addQueueProviderControl(row,job);}
  for(const entry of recentActivity)add(entry.title,entry.detail+' · '+new Date(entry.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),null);
  if(!count&&!recentActivity.length)add('No queued work','Video imports and transcriptions appear here.',null);
 }
-function openActivity(){renderActivity();$('activityDialog').showModal();}
+function openActivity(){syncTranscriptionProviderUI();renderActivity();$('activityDialog').showModal();}
 const activityBrand=document.querySelector('#appHeader .brand');
 if(activityBrand){activityBrand.setAttribute('role','button');activityBrand.setAttribute('tabindex','0');activityBrand.setAttribute('aria-label','View processing activity');activityBrand.setAttribute('title','Processing activity');activityBrand.onclick=openActivity;activityBrand.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openActivity();}};}
 $('closeActivity').onclick=()=>$('activityDialog').close();
+for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);}
+const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='Local PC uses Whisper without an API charge. Once its audio is accepted, the PC continues in the background. Gemini may incur API charges and requires this page to stay open.';$('activityProvider').after(asrNote);
 
 

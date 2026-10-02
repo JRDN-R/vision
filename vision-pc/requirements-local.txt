@@ -1,0 +1,9 @@
+# Optional CPU speech-to-text. Installed separately from the web processor.
+# Core runtime versions have Windows x64 CPython 3.13 wheels.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+huggingface-hub>=0.34,<1
+tokenizers>=0.21,<1
+onnxruntime>=1.22,<2
+av>=14,<17
+numpy>=2.2,<3

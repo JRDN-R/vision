@@ -21,6 +21,7 @@ from werkzeug.exceptions import HTTPException
 
 from media import normalize_url, process_job
 from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
+from transcription import LocalTranscription
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -71,6 +72,7 @@ def configure(config_path):
         ORIGINS.add(backend)
     initialize_db()
     sessions.initialize()
+    transcriptions.initialize(config, config_path)
     return config
 
 
@@ -110,7 +112,13 @@ def api_error(error):
 
 @app.errorhandler(HTTPException)
 def http_error(error):
-    return jsonify(error=('The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/') else 'Attachments exceed 25 MB. Export fewer or smaller images.') if error.code == 413 else error.description), error.code
+    if error.code == 413:
+        message = ('Local transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
+                   else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
+                   else 'Attachments exceed 25 MB. Export fewer or smaller images.')
+    else:
+        message = error.description
+    return jsonify(error=message), error.code
 
 
 @app.errorhandler(Exception)
@@ -156,10 +164,12 @@ def cors(response):
 def health():
     with connect_db() as db:
         queued = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+    local = transcriptions.capability()
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True})
+                   localTranscription=local,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'localTranscription': local['ready']})
 
 
 def get_job(job_id):
@@ -463,6 +473,7 @@ def openai_artifact(container_id, file_id):
 
 
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
+transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private PC processor')
@@ -499,6 +510,7 @@ def main():
         worker = threading.Thread(target=worker_loop, name='vision-media', daemon=True)
         worker.start()
         sessions.start()
+        transcriptions.start()
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
@@ -509,6 +521,8 @@ def main():
             WAKE.set()
             sessions.stop.set()
             sessions.wake.set()
+            transcriptions.stop.set()
+            transcriptions.wake.set()
         return 0
     except Exception as error:
         # Values and payloads are intentionally excluded from setup diagnostics.

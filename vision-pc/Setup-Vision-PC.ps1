@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop')]
+    [ValidateSet('Setup','Update','EnablePublic','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main'
@@ -94,7 +94,7 @@ function Connect-Tailscale([string]$Executable, $Configuration) {
         throw 'Tailscale is not connected with a DNS name yet. Complete sign-in and run the same command again.'
     }
     $Configuration.backendUrl = "https://$DnsName"
-    Write-Utf8 $ConfigPath ($Configuration | ConvertTo-Json)
+    Write-Utf8 $ConfigPath ($Configuration | ConvertTo-Json -Depth 20)
     return $DnsName
 }
 function Assert-VisionRoute([string]$Executable, [string]$DnsName, [bool]$PublicAccess) {
@@ -162,6 +162,138 @@ function Wait-Processor([string]$BaseUrl, [string]$Token) {
         Start-Sleep -Seconds 2
     }
     return $false
+}
+function Assert-InstalledProcessor {
+    $Owner = (Get-Acl -LiteralPath $InstallRoot).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($Owner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'The installation folder has an unexpected owner. No changes were made.' }
+    foreach ($Path in @($InstallRoot,$RuntimeDir,$ToolsDir,$DownloadDir)) {
+        if (-not (Test-Path -LiteralPath $Path) -or ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'The existing installation is incomplete or uses linked folders. Run Setup first.'
+        }
+    }
+    if (-not (Test-Path -LiteralPath $PythonExe)) { throw 'The private runtime is missing. Run Setup first.' }
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if (@($Task.Actions).Count -ne 1 -or $Task.Actions[0].Execute -ne $PythonExe -or $Task.Actions[0].Arguments -ne ('"' + (Join-Path $InstallRoot 'server.py') + '"')) {
+        throw 'The Vision task has a custom action. No changes were made; review it before installing a plugin.'
+    }
+}
+function Invoke-LocalLogged([string[]]$Arguments, [string]$LogBase) {
+    # Start-Process avoids PowerShell 5.1 treating native progress on stderr as
+    # a terminating error. No credentials are passed to these commands.
+    $Quoted = @($Arguments | ForEach-Object { '"' + $_.Replace('"','\"') + '"' })
+    $Process = Start-Process -FilePath $PythonExe -ArgumentList $Quoted -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$LogBase.log" -RedirectStandardError "$LogBase-errors.log"
+    if ($Process.ExitCode -ne 0) {
+        Get-Content -LiteralPath "$LogBase-errors.log" -Tail 12 | Out-Host
+        throw "Local transcription command failed ($($Process.ExitCode)). See $LogBase.log and $LogBase-errors.log. No paid fallback was enabled."
+    }
+    Get-Content -LiteralPath "$LogBase.log" -Tail 4 | Out-Host
+}
+function Stop-ProcessorForChange {
+    Stop-ScheduledTask -TaskName $TaskName
+    for ($Attempt = 0; $Attempt -lt 50; $Attempt++) {
+        if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Running') { return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw 'The Vision task did not stop. No application files should be changed until it stops.'
+}
+function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDirectory = '') {
+    $BackupDirectory = Join-Path $DownloadDir ('local-activation-backup-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
+    Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
+    $Files = @('server.py','media.py','sessions.py','transcription.py')
+    $PreviousFiles = @{}
+    foreach ($File in $Files) {
+        $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
+        if ($PreviousFiles[$File]) { Copy-Item -LiteralPath (Join-Path $InstallRoot $File) -Destination (Join-Path $BackupDirectory $File) }
+    }
+    $WasRunning = ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running')
+    $Changed = $false
+    try {
+        Stop-ProcessorForChange
+        $Changed = $true
+        if ($StageDirectory) {
+            foreach ($File in $Files) { Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force }
+        }
+        $TempConfig = "$ConfigPath.local-part"
+        Write-Utf8 $TempConfig ($Configuration | ConvertTo-Json -Depth 20)
+        Move-Item -LiteralPath $TempConfig -Destination $ConfigPath -Force
+        Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
+        Start-ScheduledTask -TaskName $TaskName
+        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The processor did not restart after the local transcription change.' }
+        if ($Enabled) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers @{ Authorization = "Bearer $($Configuration.token)" } -TimeoutSec 10
+            if ($Health.localTranscription.available -ne $true) { throw 'The processor did not report local transcription as available.' }
+        }
+    } catch {
+        $Failure = $_.Exception.Message
+        if (-not $Changed) {
+            Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+            throw "$Failure The application and configuration were not changed."
+        }
+        try {
+            Stop-ProcessorForChange
+            Copy-Item -LiteralPath (Join-Path $BackupDirectory 'config.json') -Destination $ConfigPath -Force
+            foreach ($File in $Files) {
+                if ($PreviousFiles[$File]) {
+                    Copy-Item -LiteralPath (Join-Path $BackupDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force
+                } elseif (Test-Path -LiteralPath (Join-Path $InstallRoot $File)) {
+                    Remove-Item -LiteralPath (Join-Path $InstallRoot $File) -Force
+                }
+            }
+            if ($WasRunning) {
+                Start-ScheduledTask -TaskName $TaskName
+                if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The restored processor did not become healthy.' }
+            }
+        } catch {
+            throw "$Failure Recovery also needs attention: $($_.Exception.Message) Protected backup: $BackupDirectory"
+        }
+        throw "$Failure Previous application and configuration restored."
+    }
+    Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+}
+function Install-LocalTranscription {
+    $Configuration = Read-Configuration
+    Assert-InstalledProcessor
+    $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
+    $InstallId = [Guid]::NewGuid().ToString('N')
+    $StageDirectory = Join-Path $DownloadDir ('local-transcription-' + $InstallId)
+    $PluginRoot = Join-Path $InstallRoot 'plugins'
+    $ModelRoot = Join-Path $InstallRoot 'models'
+    $LogRoot = Join-Path $InstallRoot 'data'
+    foreach ($Directory in @($StageDirectory,$PluginRoot,$ModelRoot,$LogRoot)) {
+        New-Item -ItemType Directory -Path $Directory -Force | Out-Null
+        if ((Get-Item -LiteralPath $Directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked folder: $Directory" }
+    }
+    Write-Stage '1/4 Preparing the optional CPU transcription plugin'
+    foreach ($File in @('server.py','media.py','sessions.py','transcription.py','requirements-local.txt','setup_local.py')) {
+        Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File)
+    }
+    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'setup_local.py'))
+    # Unique directories isolate this attempt from a previously enabled model,
+    # optional packages, and the base processor's site-packages.
+    $PackagesPath = Join-Path $PluginRoot ('whisper-' + $InstallId)
+    $ModelPath = Join-Path $ModelRoot ('whisper-small.en-' + $InstallId)
+    New-Item -ItemType Directory -Path $PackagesPath | Out-Null
+    Write-Stage '2/4 Installing private optional dependencies (the processor stays online)'
+    Write-Host 'This can take several minutes. Download progress is saved in the data folder.'
+    Invoke-LocalLogged @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','--no-cache-dir','--target',$PackagesPath,'-r',(Join-Path $StageDirectory 'requirements-local.txt')) (Join-Path $LogRoot ('local-install-' + $InstallId))
+    Write-Stage '3/4 Downloading and testing the English model locally (about 486 MB)'
+    Invoke-LocalLogged @((Join-Path $StageDirectory 'setup_local.py'),'--packages-path',$PackagesPath,'--model-path',$ModelPath,'--download') (Join-Path $LogRoot ('local-model-' + $InstallId))
+    # Preserve configuration changes made while the download was in progress.
+    $Configuration = Read-Configuration
+    $Configuration | Add-Member -NotePropertyName localTranscription -NotePropertyValue ([pscustomobject]@{
+        enabled = $true; modelPath = $ModelPath; packagesPath = $PackagesPath; cpuThreads = 4
+    }) -Force
+    Write-Stage '4/4 Enabling local transcription and restarting the processor'
+    Write-Host 'The brief restart interrupts in-progress local media work; stored projects and conversations are retained.'
+    Set-LocalTranscription $Configuration $true $StageDirectory
+    Copy-Item -LiteralPath (Join-Path $StageDirectory 'setup_local.py') -Destination (Join-Path $InstallRoot 'setup_local.py') -Force
+    if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
+        Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
+    }
+    Write-Host "`nLocal English transcription is ready: CPU int8, four threads, one worker." -ForegroundColor Green
+    Write-Host 'No Gemini or OpenAI API calls are needed for this plugin. Keep the processor PC awake and online.'
+    Write-Host 'Choose Local PC transcription in Vision. Other paid API features remain separate.'
 }
 function Export-Connection {
     $Config = Read-Configuration
@@ -251,6 +383,32 @@ try {
     }
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
+    if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
+    if ($Action -eq 'EnableLocalTranscription') {
+        $Config = Read-Configuration
+        Assert-InstalledProcessor
+        if (-not $Config.localTranscription -or -not (Test-Path -LiteralPath (Join-Path $InstallRoot 'setup_local.py'))) {
+            throw 'Install the optional model first with -Action InstallLocalTranscription.'
+        }
+        $LocalLog = Join-Path $InstallRoot ('data\local-check-' + [Guid]::NewGuid().ToString('N'))
+        Invoke-LocalLogged @((Join-Path $InstallRoot 'setup_local.py'),'--packages-path',[string]$Config.localTranscription.packagesPath,'--model-path',[string]$Config.localTranscription.modelPath) $LocalLog
+        $Config.localTranscription.enabled = $true
+        Set-LocalTranscription $Config $true
+        Write-Host 'Local transcription enabled using the existing downloaded model. No downloads were needed.'
+        exit 0
+    }
+    if ($Action -eq 'DisableLocalTranscription') {
+        $Config = Read-Configuration
+        Assert-InstalledProcessor
+        if (-not $Config.localTranscription -or $Config.localTranscription.enabled -ne $true) {
+            Write-Host 'Local transcription is already disabled. No restart was needed.'
+            exit 0
+        }
+        $Config.localTranscription.enabled = $false
+        Set-LocalTranscription $Config $false
+        Write-Host 'Local transcription disabled. The processor restarted; model files and saved work are retained.'
+        exit 0
+    }
 
     if ($Action -in @('EnablePublic','Update')) {
         Write-Stage '1/3 Updating the installed processor and saved sessions'
@@ -270,16 +428,16 @@ try {
         Assert-VisionRoute $Tailscale $DnsName $TargetPublic
         $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
         # Stage and check all components before stopping the existing processor. No runtime or pip reinstall.
-        foreach ($FileName in @('server.py','media.py','sessions.py')) {
+        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py')) {
             Get-Download "$SourceBase/$FileName" (Join-Path $DownloadDir $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'))
+        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $DownloadDir 'server.py'),(Join-Path $DownloadDir 'media.py'),(Join-Path $DownloadDir 'sessions.py'),(Join-Path $DownloadDir 'transcription.py'))
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName }
-        foreach ($FileName in @('server.py','media.py','sessions.py')) {
+        foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py')) {
             Copy-Item -LiteralPath (Join-Path $DownloadDir $FileName) -Destination (Join-Path $InstallRoot $FileName) -Force
         }
         $Config | Add-Member -NotePropertyName publicAccess -NotePropertyValue $TargetPublic -Force
-        Write-Utf8 $ConfigPath ($Config | ConvertTo-Json)
+        Write-Utf8 $ConfigPath ($Config | ConvertTo-Json -Depth 20)
         if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
             Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
         }
@@ -326,7 +484,7 @@ try {
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','sessions.py','requirements.txt')) {
+    foreach ($FileName in @('server.py','media.py','sessions.py','transcription.py','requirements.txt')) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {

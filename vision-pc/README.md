@@ -1,6 +1,6 @@
 # Vision PC processor
 
-Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links, save projects, and keep API conversations running when the browser closes. The website, downloaded HTML, and Vision copies hosted elsewhere can use this processor over the internet when public access is enabled. Firebase and Google Cloud are not needed. Gemini/OpenAI still use their online APIs when requested.
+Use an always-on Windows 10/11 Intel/AMD 64-bit PC to process Vision's YouTube links, save projects, transcribe speech with an optional local model, and keep API conversations running when the browser closes. The website, downloaded HTML, and Vision copies hosted elsewhere can use this processor over the internet when public access is enabled. Firebase and Google Cloud are not needed. Gemini/OpenAI still use their online APIs when requested.
 
 The setup script downloads the application and its own private runtime. You do not need to install Python or Node separately. This is an application background process, not a Windows Sandbox VM or an unrestricted remote shell.
 
@@ -32,7 +32,41 @@ Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vis
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Update
 ```
 
-`Update` downloads and checks the Python application components, restarts the processor, and restores its existing private/public HTTPS mode. It preserves configuration, the connection token, queued imports, saved projects, conversations, and retained files. It does not reinstall Python or video tools. The Windows update is required in addition to publishing the HTML.
+`Update` downloads and checks the Python application components, restarts the processor, and restores its existing private/public HTTPS mode. It preserves configuration, the connection token, queued imports, saved projects, conversations, retained files, and any installed local transcription model. It does not reinstall Python or video tools, install optional model dependencies, or download model weights. The Windows update is required in addition to publishing the HTML.
+
+## Optional local transcription without API charges
+
+The **Local PC** transcription option runs the open-source Whisper small English model on this PC. It uses CPU int8 inference, four CPU threads, and one transcription worker. It does not call Gemini or OpenAI for transcription, does not require an API key, and does not automatically switch to a paid provider when unavailable. Electricity, disk space, CPU time, and the existing internet connection still apply. Other features that explicitly use Gemini or OpenAI have their own provider charges.
+
+Run this once from **administrator PowerShell** on an already installed processor PC. Do it outside a service or an important active run because activation briefly restarts the processor:
+
+```powershell
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action InstallLocalTranscription
+```
+
+This action also stages the current processor application, so a separate `Update` is not needed first. It downloads about 486 MB of model files plus optional Python packages from PyPI. Allow several minutes and at least a few GB of temporary free space. The model is the fixed [Systran/faster-whisper-small.en](https://huggingface.co/Systran/faster-whisper-small.en/tree/d1d751a5f8271d482d14ca55d9e2deeebbae577f) revision `d1d751a5f8271d482d14ca55d9e2deeebbae577f`.
+
+The existing processor keeps running during installation and model validation. Optional packages and model files go into their own directories under `C:\ProgramData\VisionPC\plugins` and `models`; the base runtime packages are not replaced. The installer performs an offline model load and short CPU inference before enabling anything. Activation restores the previous application and configuration if the restarted processor fails its health check. It retains the connection token, projects, conversations, startup task, and Tailscale route. A failed download or validation leaves the previous processor running; diagnostic logs and unused download directories are retained for troubleshooting.
+
+After the command reports success, refresh Vision and select **Local PC** for transcription. Use a fresh HTML download for an older local copy. The PC must be awake and reachable while transferring audio and processing work. Model inference uses the already downloaded files, with online model downloads disabled at runtime. The model does English transcription with timestamps; timestamps can be approximate, and speaker labels are not provided. Review names, numbers, overlapping voices, music, and noisy speech before relying on the transcript.
+
+### Pause the local model for church services
+
+These actions restart the Vision processor, so use them before starting important work. They do not uninstall the model or remove saved projects:
+
+```powershell
+# Stop local transcription; keep the rest of the processor available:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action DisableLocalTranscription
+
+# Restore local transcription with the existing model, without downloading again:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action EnableLocalTranscription
+```
+
+Disabling the model does not stop separate YouTube imports, conversations, or other Windows applications. To stop all Vision work during a service, use the existing `Stop` action and later `Start`. Automatic service-hour scheduling is not configured.
+
+`InstallLocalTranscription` makes a fresh isolated installation each time; use `EnableLocalTranscription` for routine re-enabling. Logs are `C:\ProgramData\VisionPC\data\local-*.log`. On Windows, [CTranslate2 requires the Microsoft Visual C++ runtime](https://opennmt.net/CTranslate2/installation.html). If validation reports a missing runtime DLL, install or repair Microsoft's supported x64 runtime, then rerun installation. This script does not install a system Python, GPU drivers, CUDA, or the Visual C++ runtime, and it does not change the Windows password or login settings. The installer has static and isolated model checks; it has not been executed on this particular Windows PC by the developer.
 
 ### Saved projects and sessions
 
@@ -128,7 +162,7 @@ No router port forwarding is needed. The application listens only on the PC's lo
 
 ## What runs where
 
-The PC retrieves YouTube media, collects available captions, makes timestamped JPEG snapshots, and prepares audio when captions are unavailable. Vision receives the results and uses its existing Gemini queue if transcription is needed. Source video is temporary. Accepted jobs are stored on the PC so interrupted jobs can be retried after a restart; completed results are temporary and cleaned up. Vision retains waiting imports when the server is unavailable.
+The PC retrieves YouTube media, collects available captions, makes timestamped JPEG snapshots, and prepares audio when captions are unavailable. Vision receives the results and uses the selected transcription provider when transcription is needed. Local PC requires the optional installation above; Gemini is a separate online provider. Source video is temporary. Accepted jobs are stored on the PC so interrupted jobs can be retried after a restart; completed results are temporary and cleaned up. Vision retains waiting imports when the server is unavailable.
 
 YouTube can restrict videos or ask for verification. Public, unrestricted videos are the intended input; the processor does not guarantee every link can be retrieved.
 
@@ -169,5 +203,6 @@ Leave Tailscale installed if you use it for anything else.
 - [Tailscale Windows installation](https://tailscale.com/docs/install/windows/msi), [unattended mode](https://tailscale.com/docs/how-to/run-unattended), [private Serve](https://tailscale.com/docs/reference/tailscale-cli/serve), and [public Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel).
 - [FFmpeg Windows builds](https://ffmpeg.org/download.html#build-windows), from the linked Gyan provider with its SHA-256 check.
 - [Deno](https://docs.deno.com/runtime/getting_started/installation/), bundled for media-site processing.
+- Optional [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and [CTranslate2](https://opennmt.net/CTranslate2/), with the pinned English model linked above. Installation is separate from the standard setup/update.
 
 The installer verifies the Tailscale MSI checksum/signature and Python executable signature before running them. Application files come from this repository over HTTPS. It does not request your Windows password, Firebase credentials, or OpenAI key during setup.

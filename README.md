@@ -38,6 +38,21 @@ twinkling stars, or still dots, in Sage, Dusty rose, or Redshift mix. Reduced-mo
 preferences stop the animation. Use the compact undo/redo controls to step back
 through board changes.
 
+## Local speech transcription
+
+The optional **Local PC** transcription provider runs an open-source English
+Whisper model on the connected PC, using four CPU threads and one worker. It
+produces timestamped text without Gemini or OpenAI transcription API charges.
+The PC must stay awake and online for remote use; electricity and storage still
+apply. Local transcription does not silently fall back to a paid provider.
+
+Install the model explicitly with `-Action InstallLocalTranscription` using the
+[PC instructions](vision-pc/README.md#optional-local-transcription-without-api-charges).
+Normal updates preserve an installed model and do not download one automatically.
+The same instructions include disable/enable commands for church services.
+Gemini transcription and OpenAI conversations remain separate online options;
+their provider's billing terms apply when selected.
+
 ## Export to ChatGPT
 
 Prepare an AI package in Export. Supported devices can share the prepared ZIP
