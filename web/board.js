@@ -1,7 +1,8 @@
 // Board controls are separate from project/job identity and the run conversation.
 function syncBoardAppearance(){
  const mode=['drift','stars','static'].includes(state.settings.boardBackground)?state.settings.boardBackground:'drift';
- board.dataset.background=mode;const picker=$('boardBackground');if(picker)picker.value=mode;
+ const palette=['sage','rose','redshift'].includes(state.settings.boardPalette)?state.settings.boardPalette:'sage';
+ board.dataset.background=mode;board.dataset.palette=palette;const picker=$('boardBackground'),colors=$('boardPalette');if(picker)picker.value=mode;if(colors)colors.value=palette;
 }
 const boardHistory=document.createElement('div');
 boardHistory.className='board-history';boardHistory.setAttribute('role','group');boardHistory.setAttribute('aria-label','Edit history');
@@ -18,9 +19,9 @@ world.addEventListener('keydown',e=>{
 
 const inspector=$('inspectorPanel');
 const backgroundControls=document.createElement('details');
-backgroundControls.className='board-background-controls';backgroundControls.innerHTML='<summary>Board background</summary><label for="boardBackground">Appearance</label><select id="boardBackground" class="full"><option value="drift">Slow drifting dots</option><option value="stars">Sparse twinkling stars</option><option value="static">Still dots</option></select>';
+backgroundControls.className='board-background-controls';backgroundControls.innerHTML='<summary>Board background</summary><label for="boardBackground">Appearance</label><select id="boardBackground" class="full"><option value="drift">Slow drifting dots</option><option value="stars">Sparse twinkling stars</option><option value="static">Still dots</option></select><label for="boardPalette">Palette</label><select id="boardPalette" class="full"><option value="sage">Sage</option><option value="rose">Dusty rose</option><option value="redshift">Redshift mix</option></select><p class="mini-note">Saved with this project.</p>';
 inspector.appendChild(backgroundControls);
-$('boardBackground').onchange=()=>{checkpoint();state.settings.boardBackground=$('boardBackground').value;syncBoardAppearance();markDirty();};syncBoardAppearance();
+for(const id of ['boardBackground','boardPalette'])$(id).onchange=()=>{checkpoint();state.settings[id]=$(id).value;syncBoardAppearance();markDirty();};syncBoardAppearance();
 
 // Only mobile moves these existing controls into swipable pages. Restoring the
 // marker positions leaves the original desktop inspector layout intact.

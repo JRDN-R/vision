@@ -88,16 +88,18 @@ header .vision-tagline{font-size:9px}header .vision-credit{font-size:8px}
 .wire-end{fill:#d9fbb5;stroke:#253428;stroke-width:3;pointer-events:none}.wire-end-hit{fill:transparent;pointer-events:all;cursor:crosshair;touch-action:none}
 .board-history{position:absolute;right:18px;top:68px;display:flex;z-index:14;background:#202729f2;border:1px solid #485843;border-radius:10px;padding:2px;box-shadow:0 4px 15px #0003}
 .board-history button{width:36px;height:36px;padding:0;border:0;background:transparent;color:#d7e6ce;font-size:25px;line-height:1;border-radius:7px;touch-action:manipulation}.board-history button:hover:not(:disabled){background:#354338}.board-history button:disabled{opacity:.3}
-#board{background-image:none!important}
+#board{background-image:none!important;--board-dot:#384039;--board-star-a:#a8b7a5a6;--board-star-b:#91aa9c91;--board-star-c:#c3cbbaa6}
+#board[data-palette="rose"]{--board-dot:#453738;--board-star-a:#b39795a6;--board-star-b:#a7868991;--board-star-c:#c4b4a7a6}
+#board[data-palette="redshift"]{--board-dot:#403d38;--board-star-a:#a6b39ea6;--board-star-b:#b4949291;--board-star-c:#c4b3a5a6}
 #board::before,#board::after{content:"";position:absolute;inset:-300px;z-index:-1;pointer-events:none}
-#board::before{background-image:radial-gradient(#384039 1px,transparent 1px);background-size:var(--board-grid-size,24px) var(--board-grid-size,24px);background-position:calc(var(--board-grid-x,0px) + 300px) calc(var(--board-grid-y,0px) + 300px);animation:visionBoardDrift 120s linear infinite}
+#board::before{background-image:radial-gradient(var(--board-dot) 1px,transparent 1px);background-size:var(--board-grid-size,24px) var(--board-grid-size,24px);background-position:calc(var(--board-grid-x,0px) + 300px) calc(var(--board-grid-y,0px) + 300px);animation:visionBoardDrift 120s linear infinite}
 #board::after{display:none}
 #board[data-background="static"]::before{animation:none}
-#board[data-background="stars"]::before,#board[data-background="stars"]::after{background-image:radial-gradient(circle at 38px 64px,#fff9 .8px,transparent 1.4px),radial-gradient(circle at 184px 259px,#ffffff75 1px,transparent 1.5px),radial-gradient(circle at 358px 119px,#ffffff9c .8px,transparent 1.5px),radial-gradient(circle at 471px 391px,#ffffff62 .7px,transparent 1.4px);background-size:530px 470px;animation:visionBoardStars 8s ease-in-out infinite}
-#board[data-background="stars"]::after{display:block;transform:translate(167px,103px);background-position:var(--board-grid-x,0px) var(--board-grid-y,0px);animation-delay:-4s;opacity:.4}
+#board[data-background="stars"]::before,#board[data-background="stars"]::after{background-image:radial-gradient(circle at 38px 64px,var(--board-star-a) .8px,transparent 1.4px),radial-gradient(circle at 184px 259px,var(--board-star-b) 1px,transparent 1.5px),radial-gradient(circle at 358px 119px,var(--board-star-c) .8px,transparent 1.5px),radial-gradient(circle at 471px 391px,var(--board-star-b) .7px,transparent 1.4px);background-size:530px 470px;opacity:.42;animation:visionBoardStars 14s ease-in-out infinite}
+#board[data-background="stars"]::after{display:block;transform:translate(167px,103px);background-position:var(--board-grid-x,0px) var(--board-grid-y,0px);animation-duration:19s;animation-delay:-6s;opacity:.32}
 .board-background-controls select{margin-top:6px}.board-sheet-handle,.board-sheet-tabs,.board-sheet-track{display:none}
 @keyframes visionBoardDrift{to{transform:translate(var(--board-grid-size,24px),var(--board-grid-size,24px))}}
-@keyframes visionBoardStars{0%,100%{opacity:.35}50%{opacity:.8}}
+@keyframes visionBoardStars{0%,100%{opacity:.28}50%{opacity:.62}}
 .mobile-mode .board-history{right:12px;top:64px}.mobile-mode .board-history button{width:40px;height:40px}
 .mobile-mode #inspectorPanel.board-sheet{touch-action:pan-x pan-y;position:absolute;top:auto;left:0;right:0;bottom:0;width:100%;height:var(--board-sheet-height,38dvh);max-height:60dvh;min-height:min(250px,35dvh);display:flex;flex-direction:column;padding:0 0 env(safe-area-inset-bottom,0px);overflow:hidden;border:1px solid #51644b;border-bottom:0;border-radius:18px 18px 0 0;box-shadow:0 -12px 40px #0006;z-index:25;box-sizing:border-box;animation:visionBoardSheetIn .22s ease-out}
 .mobile-mode .board-sheet-handle{height:29px;min-height:29px;display:flex;position:relative;justify-content:center;align-items:center}.mobile-mode #boardSheetSize{width:90px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;padding:0;cursor:ns-resize;touch-action:none}.mobile-mode #boardSheetSize span{width:34px;height:4px;background:#657762;border-radius:8px}.mobile-mode #boardSheetClose{position:absolute;right:9px;top:0;padding:0 8px;height:30px;font-size:22px;line-height:1}
@@ -1155,7 +1157,7 @@ const APP_SOURCE='<!doctype html>\n'+document.documentElement.outerHTML;
 const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'), world=$('world');
 document.querySelector('.vision-header-banner').src=document.querySelector('.vision-hero-logo img').src;
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
-const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift'});
+const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage'});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
 let history=[],future=[],toastTimer,dragDepth=0,lastPointer=null,renderTickets=new Map();
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -1599,7 +1601,7 @@ async function validateProject(raw){
  for(let i=0;i<queue.length;i++){visited++;for(const to of outgoing.get(queue[i])){indegree.set(to,indegree.get(to)-1);if(indegree.get(to)===0)queue.push(to);}}
  if(visited!==nodes.length)throw new Error('The project contains a connection loop.');
  const s=raw.settings||{},v=raw.view||{};
- return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift'},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
+ return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift',boardPalette:['sage','rose','redshift'].includes(s.boardPalette)?s.boardPalette:'sage'},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
 }
 function refreshExport(){
  $('screenshotMode').value=state.settings.screenshotMode||'individual';
@@ -2515,7 +2517,8 @@ Promise.resolve().then(()=>projectRecoverStartup());
 // Board controls are separate from project/job identity and the run conversation.
 function syncBoardAppearance(){
  const mode=['drift','stars','static'].includes(state.settings.boardBackground)?state.settings.boardBackground:'drift';
- board.dataset.background=mode;const picker=$('boardBackground');if(picker)picker.value=mode;
+ const palette=['sage','rose','redshift'].includes(state.settings.boardPalette)?state.settings.boardPalette:'sage';
+ board.dataset.background=mode;board.dataset.palette=palette;const picker=$('boardBackground'),colors=$('boardPalette');if(picker)picker.value=mode;if(colors)colors.value=palette;
 }
 const boardHistory=document.createElement('div');
 boardHistory.className='board-history';boardHistory.setAttribute('role','group');boardHistory.setAttribute('aria-label','Edit history');
@@ -2532,9 +2535,9 @@ world.addEventListener('keydown',e=>{
 
 const inspector=$('inspectorPanel');
 const backgroundControls=document.createElement('details');
-backgroundControls.className='board-background-controls';backgroundControls.innerHTML='<summary>Board background</summary><label for="boardBackground">Appearance</label><select id="boardBackground" class="full"><option value="drift">Slow drifting dots</option><option value="stars">Sparse twinkling stars</option><option value="static">Still dots</option></select>';
+backgroundControls.className='board-background-controls';backgroundControls.innerHTML='<summary>Board background</summary><label for="boardBackground">Appearance</label><select id="boardBackground" class="full"><option value="drift">Slow drifting dots</option><option value="stars">Sparse twinkling stars</option><option value="static">Still dots</option></select><label for="boardPalette">Palette</label><select id="boardPalette" class="full"><option value="sage">Sage</option><option value="rose">Dusty rose</option><option value="redshift">Redshift mix</option></select><p class="mini-note">Saved with this project.</p>';
 inspector.appendChild(backgroundControls);
-$('boardBackground').onchange=()=>{checkpoint();state.settings.boardBackground=$('boardBackground').value;syncBoardAppearance();markDirty();};syncBoardAppearance();
+for(const id of ['boardBackground','boardPalette'])$(id).onchange=()=>{checkpoint();state.settings[id]=$(id).value;syncBoardAppearance();markDirty();};syncBoardAppearance();
 
 // Only mobile moves these existing controls into swipable pages. Restoring the
 // marker positions leaves the original desktop inspector layout intact.

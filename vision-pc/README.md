@@ -66,7 +66,48 @@ A new installation initially uses **private Tailscale Serve**. Run the **Enable 
 
 ## Keep the processor available
 
-In **Settings > System > Power & sleep**, set sleep to **Never while plugged in**. The screen may turn off. The processor starts automatically with Windows; no open terminal or logged-in desktop is required. A powered-off or sleeping PC must be turned on or woken. After an ordinary internet interruption, Tailscale reconnects when the PC is back online.
+The processor starts automatically with Windows; no open terminal, Windows password, or logged-in desktop is required. After an ordinary internet interruption, Tailscale reconnects when the PC is back online.
+
+Download the availability helper and apply it from **administrator PowerShell** on the PC:
+
+```powershell
+$VisionAvailability = Join-Path $env:TEMP 'Keep-Vision-PC-Available.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Keep-Vision-PC-Available.ps1' -OutFile $VisionAvailability
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionAvailability -Action Enable
+```
+
+The helper saves the original settings, turns off automatic sleep and hibernation **while plugged in on the current power plan**, and checks the existing Vision startup task. It preserves the task's application and service identity, enables startup/retry settings, and starts the task if it is stopped and the processor is offline. The display can still turn off. To apply it to a different power plan later, restore the original backup first, select the new plan, then enable it again. This does not prevent manual shutdowns, Windows restarts, crashes, overheating, or loss of electricity.
+
+It also writes a Desktop availability report with power settings, wired-network wake capabilities, Vision and Chrome Remote Desktop service/task status, and recent shutdown events. It does not include Vision connection tokens, Windows passwords, or API keys. Review it before sharing: it describes your machine and local network.
+
+Use the same downloaded script with `-Action Status` for a report without changing settings, or `-Action Restore` to restore the backed-up settings. Enable/Restore require administrator privileges. Wake-on-LAN changes are optional with `-Action Enable -EnableWakeOnLan -AdapterName 'Ethernet'`; substitute the physical adapter's actual name from the report. Supported adapter settings are applied without restarting the network adapter. BIOS and driver-specific wake options may still need manual configuration.
+
+### Recover after shutdown or power loss
+
+Keeping Windows awake handles idle time. Waking a PC that is already off is a separate function: software on that PC cannot receive commands while it is off. For offsite Wake-on-LAN, a router or another powered device on the PC's network must send the wake packet. The PC needs wired Ethernet, electricity, and compatible firmware/adapter settings. Test this with someone onsite before relying on it.
+
+For the **MSI MPG X570 GAMING EDGE WIFI**, the [official manual](https://download.msi.com/archive/mnu_exe/mb/E7C37v1.1.pdf), printed pages 52–53, documents these BIOS options under Settings > Advanced:
+
+| Menu | Setting | Purpose |
+| --- | --- | --- |
+| Power Management Setup | ErP Ready: Disabled | Permits supported network/device wake in low-power states. |
+| Power Management Setup | Restore after AC Power Loss: Power On | Boots when electricity returns after an outage. |
+| Wake Up Event Setup | Wake Up Event By: BIOS | Enables the firmware wake settings below. |
+| Wake Up Event Setup | Resume By PCI-E Device: Enabled | Enables supported wake through the integrated LAN controller. |
+
+The manual also provides an RTC alarm for scheduled starts. BIOS menus can vary with firmware version. These settings cannot be verified from the supplied Windows report, and the helper does not change them. Do BIOS setup while someone can access the physical PC.
+
+[Microsoft documents a Windows 10 limitation](https://learn.microsoft.com/en-us/troubleshoot/windows-client/setup-upgrade-and-drivers/wake-on-lan-feature): Fast Startup shutdown does not arm the network adapter for wake; wake from a full shutdown depends on firmware and hardware support. Enabling one Windows checkbox does not establish that shutdown wake works on this specific PC.
+
+Chrome Remote Desktop is separate from Vision. Its installed remote-access host should be checked after a restart at the Windows sign-in screen. Automatic Windows sign-in is not needed for Vision. A UPS can reduce outages, but recovery still depends on power and network service returning.
+
+### Replacing Tailscale later
+
+The PC already handles Vision files and background requests; Tailscale supplies the reachable HTTPS connection. Removing it does not remove charges for paid AI APIs. Current [Tailscale pricing](https://tailscale.com/pricing) is based on plans, users, and resources, not a per-request charge for each Vision action. Personal-plan eligibility and an organization's plan should be checked separately.
+
+Direct HTTPS is possible with a reverse proxy such as [Caddy](https://caddyserver.com/docs/quick-starts/https), DNS, and a router/ISP connection that permits inbound traffic. A private WireGuard connection is another option, but client devices then need VPN configuration. The router model, router access, and whether the ISP uses carrier-grade NAT determine which route works. A Firebase login can authenticate users; it does not make an offline PC reachable or replace a network route.
+
+Keep the working connection until its replacement has been tested. Changing the endpoint also needs a Vision connection/project migration so existing saves and conversations keep working. The availability helper does not alter this connection.
 
 To start the processor and restore its saved HTTPS mode manually, run from administrator PowerShell:
 

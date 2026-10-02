@@ -33,6 +33,11 @@ Update an existing PC installation using the instructions in
 project history are stored on that PC; Google Drive backup is not configured by
 the app.
 
+Board background controls save with each project: slow diagonal dots, sparse
+twinkling stars, or still dots, in Sage, Dusty rose, or Redshift mix. Reduced-motion
+preferences stop the animation. Use the compact undo/redo controls to step back
+through board changes.
+
 ## Export to ChatGPT
 
 Prepare an AI package in Export. Supported devices can share the prepared ZIP
