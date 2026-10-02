@@ -34,6 +34,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Upd
 
 `Update` downloads and checks the Python application components, restarts the processor, and restores its existing private/public HTTPS mode. It preserves configuration, the connection token, queued imports, saved projects, conversations, retained files, and any installed local transcription model. It does not reinstall Python or video tools, install optional model dependencies, or download model weights. The Windows update is required in addition to publishing the HTML.
 
+<a id="local-transcription"></a>
+
 ## Optional local transcription without API charges
 
 The **Local PC** transcription option runs the open-source Whisper small English model on this PC. It uses CPU int8 inference, four CPU threads, and one transcription worker. It does not call Gemini or OpenAI for transcription, does not require an API key, and does not automatically switch to a paid provider when unavailable. Electricity, disk space, CPU time, and the existing internet connection still apply. Other features that explicitly use Gemini or OpenAI have their own provider charges.
