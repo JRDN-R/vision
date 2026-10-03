@@ -1,0 +1,14 @@
+# Optional BEATs sound-event worker only: Windows x64 CPython 3.11.
+# Install in its own embedded runtime. Never add this to the processor/Whisper paths.
+# CPU wheels and hashes are from the official PyTorch wheel index.
+torch @ https://download.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp311-cp311-win_amd64.whl#sha256=24c9d3d13b9ea769dd7bd5c11cfa1fc463fd7391397156565484565ca685d908
+torchaudio @ https://download.pytorch.org/whl/cpu/torchaudio-2.6.0%2Bcpu-cp311-cp311-win_amd64.whl#sha256=79cd153330c071cb9582351c1f3c3c55a1adbf85556bfc5d521b744c7280728f
+numpy==1.26.4
+filelock==3.18.0
+typing-extensions==4.14.1
+networkx==3.4.2
+jinja2==3.1.6
+MarkupSafe==3.0.2
+fsspec==2025.3.0
+sympy==1.13.1
+mpmath==1.3.0

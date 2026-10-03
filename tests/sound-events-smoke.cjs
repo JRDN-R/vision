@@ -1,0 +1,53 @@
+/* Full application: sound-effects recording and account isolation. Mocked models/auth only. */
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const {chromium}=require('playwright');
+const appModule='export function initializeApp(config,name){return {config,name}}';
+const authModule=`const listeners=[];const auth={currentUser:null,authStateReady:async()=>{}};window.__fakeFirebase={auth,nextUID:'user-a'};export function getAuth(){return auth}export function useDeviceLanguage(){}export const browserLocalPersistence={};export async function setPersistence(){}export class GoogleAuthProvider{setCustomParameters(){}}export function onAuthStateChanged(a,fn){listeners.push(fn);fn(a.currentUser);return()=>{}}export async function signInWithPopup(){const uid=window.__fakeFirebase.nextUID;auth.currentUser={uid,email:uid+'@example.com',getIdToken:async()=>uid};for(const f of listeners)f(auth.currentUser);return{user:auth.currentUser}}export async function signOut(){auth.currentUser=null;for(const f of listeners)f(null)}`;
+(async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME||'/root/.cache/ms-playwright/chromium-1161/chrome-linux/chrome',args:['--no-sandbox']});
+ try{
+  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true});const errors=[],keys=new Map(),projects=new Map();
+  let soundComplete=false,soundSubmitted=null;
+  let html=fs.readFileSync('Vision.html','utf8');const end=html.lastIndexOf('})();');html=html.slice(0,end)+`Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[{stop(){},addEventListener(){},removeEventListener(){}}]})}});
+  window.MediaRecorder=class{constructor(stream,options){this.mimeType=options.mimeType;this.state='inactive';}static isTypeSupported(type){return type==='audio/webm;codecs=opus';}start(){this.state='recording';}stop(){this.state='inactive';queueMicrotask(()=>{this.ondataavailable?.({data:new Blob(['audio'],{type:this.mimeType})});this.onstop?.();});}};
+  embeddedBytes=async()=>new Uint8Array([1]);decoderClient=()=>({stop(){},request:async type=>type==='init'?{}:type==='analyze'?{duration:2,pauses:[],vadWindows:[]}:{audio:new Uint8Array([1]),mimeType:'audio/wav'}});
+  window.__soundTest={poll:()=>{for(const{job}of queueEntries())job.nextAttemptAt=0;scheduleTranscriptionQueue();},validated:()=>validateProject(projectSnapshot())};
+  window.__gateTest={state:()=>state,ready:()=>accountReady,signedIn:()=>accountSignedIn(),signOut:()=>accountGoogleSignOut(),clearGate:()=>accountUpdateGate()};\n`+html.slice(end);
+  const json=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(data)});
+  await context.route('**/*',async route=>{
+   const request=route.request(),url=new URL(request.url());
+   if(request.url()==='https://vision.test/')return route.fulfill({contentType:'text/html',body:fs.readFileSync('index.html','utf8')});
+   if(url.origin==='https://vision.test'&&url.pathname==='/Vision.html')return route.fulfill({contentType:'text/html',body:html});
+   if(url.pathname.endsWith('/firebase-app.js'))return route.fulfill({contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:appModule});
+   if(url.pathname.endsWith('/firebase-auth.js'))return route.fulfill({contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:authModule});
+   if(url.pathname.startsWith('/api/')){
+    const uid=(request.headers().authorization||'').replace('Bearer ','');
+    if(request.method()==='OPTIONS')return route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,content-type,x-vision-project-key','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE'}});
+    if(url.pathname==='/api/health')return json(route,{capabilities:{persistentProjects:true,projectRevision:true,accountProjects:true,localTranscription:true,soundEvents:true},localTranscription:{ready:true},localSoundEvents:{available:true,ready:true,engine:'PretrainedSED-BEATs'}});
+    if(url.pathname==='/api/account/openai-key'){if(request.method()==='PUT')keys.set(uid,request.postDataJSON().apiKey);if(request.method()==='DELETE')keys.delete(uid);return json(route,{saved:keys.has(uid),apiKey:keys.get(uid)||''});}
+    if(url.pathname.endsWith('/transcriptions')&&request.method()==='POST'){soundSubmitted=request.postDataJSON();return json(route,{id:'sound-123456',status:'queued'},202);}
+    if(url.pathname.endsWith('/transcriptions/sound-123456'))return json(route,soundComplete?{status:'complete',result:{sections:[{start:0,end:2,text:'[00:00:00.200] Hello.\n[00:00:01.000] *Cat meows*'}],speechText:'[00:00:00.200] Hello.',speechSegments:[{start:.2,end:.9,text:'Hello.'}],soundEvents:[{start:1,end:1.8,label:'Meow',score:.91}],soundEventStatus:'completed',warnings:[],combinedSrt:'1\n00:00:00,200 --> 00:00:00,900\nHello.\n\n2\n00:00:01,000 --> 00:00:01,800\n*Cat meows*\n'}}:{status:'processing',phase:'Detecting sound effects',progress:70});
+    if(url.pathname==='/api/projects')return json(route,{projects:[]});
+    const match=url.pathname.match(/^\/api\/projects\/([^/]+)$/);if(match){const old=projects.get(uid+match[1]);if(request.method()==='PUT'){const body=request.postDataJSON();projects.set(uid+match[1],{project:body.project,revision:(old?.revision||0)+1});}return json(route,projects.get(uid+match[1])||{error:'Missing'},projects.has(uid+match[1])?200:404);}
+    return json(route,{items:[],runs:[]});
+   }
+   return route.abort();
+  });
+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());await page.goto('https://vision.test/',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fakeFirebase);await page.evaluate(()=>window.__gateTest.ready());
+  assert.equal(await page.locator('#accountGate').isVisible(),true);assert.equal(await page.locator('#addNodeButton').isVisible(),false);assert.equal(await page.locator('#appHeader').evaluate(e=>e.inert),true);
+  await page.evaluate(()=>{const data=new DataTransfer();data.setData('text/plain','Must not import');document.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));document.getElementById('board').dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));window.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true,cancelable:true}));document.getElementById('addNodeButton').click();});
+  assert.equal(await page.evaluate(()=>window.__gateTest.state().nodes.length),0,'signed-out events must not create a module');
+  await page.locator('#accountGateSignIn').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>window.__gateTest.signedIn());await page.locator('#closeProjects').click();assert.equal(await page.locator('#accountGate').isVisible(),false);
+  await page.locator('#addNodeButton').click();await page.waitForFunction(()=>window.__gateTest.state().nodes.length===1);assert.equal(await page.locator('#world .node').count(),1);
+  await page.locator('#boardCaptureButton').click();assert.equal(await page.locator('#boardCaptureSounds input').isChecked(),false);
+  await page.locator('#boardCaptureSounds input').check();await page.locator('#boardCaptureProvider').selectOption('gemini');assert.equal(await page.locator('#boardCaptureSounds input').isDisabled(),true);assert.equal(await page.locator('#boardCaptureSounds input').isChecked(),false);await page.locator('#boardCaptureProvider').selectOption('local');assert.equal(await page.locator('#boardCaptureSounds input').isChecked(),true);
+  await page.locator('#boardCaptureStart').click();await page.waitForFunction(()=>!document.getElementById('boardCaptureStop').hidden);assert.equal(await page.locator('#boardCaptureSounds input').isDisabled(),true);await page.locator('#boardCaptureStop').click();await page.waitForFunction(()=>window.__gateTest.state().nodes.some(n=>n.transcriptionJobs?.some(j=>j.remoteId)));
+  assert.equal(soundSubmitted.includeSoundEvents,true);soundComplete=true;await page.evaluate(()=>window.__soundTest.poll());await page.waitForFunction(()=>window.__gateTest.state().nodes.some(n=>n.attachments?.some(a=>a.subtitleOf)));
+  const saved=await page.evaluate(async()=>{const project=await window.__soundTest.validated(),n=project.nodes.find(n=>n.attachments?.some(a=>a.subtitleOf));return{setting:project.settings.includeSoundEvents,node:n};});assert.equal(saved.setting,true);assert.match(saved.node.prompt,/Hello/);assert.doesNotMatch(saved.node.prompt,/Cat/);const subtitle=saved.node.attachments.find(a=>a.subtitleOf),transcript=saved.node.attachments.find(a=>a.transcriptOf);assert.ok(subtitle.name.endsWith('.srt'));assert.equal(subtitle.mime,'application/x-subrip');assert.match(Buffer.from(subtitle.data.split(',')[1],'base64').toString(),/\*Cat meows\*/);assert.match(Buffer.from(transcript.data.split(',')[1],'base64').toString(),/Sound labels are AI estimates/);
+  await page.evaluate(()=>{const input=document.getElementById('consoleKey');input.value='user-a-secret';input.dispatchEvent(new Event('input',{bubbles:true}));});await page.waitForFunction(()=>document.getElementById('accountKeyStatus').textContent==='Saved to your account on FUPCJ Server');
+  assert.equal(keys.get('user-a'),'user-a-secret');await page.evaluate(()=>window.__gateTest.signOut());assert.equal(await page.locator('#accountGate').isVisible(),true);assert.equal(await page.locator('#consoleKey').inputValue(),'');
+  await page.evaluate(()=>window.__fakeFirebase.nextUID='user-b');await page.locator('#accountGateSignIn').click();await page.waitForFunction(()=>window.__gateTest.signedIn());await page.locator('#closeProjects').click();assert.equal(await page.evaluate(()=>window.__gateTest.state().nodes.length),0);assert.equal(await page.locator('#consoleKey').inputValue(),'');
+  await page.evaluate(()=>window.__gateTest.signOut());await page.evaluate(()=>window.__fakeFirebase.nextUID='user-a');await page.locator('#accountGateSignIn').click();await page.waitForFunction(()=>document.getElementById('consoleKey').value==='user-a-secret');assert.equal(await page.evaluate(()=>window.__gateTest.state().nodes.length),2);
+  assert.deepEqual(errors,[]);await context.close();console.log('Full-app mobile sound opt-in, local-only provider control, frozen recording preference, combined text/SRT project persistence, Google gate and account isolation passed.');
+ }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1});

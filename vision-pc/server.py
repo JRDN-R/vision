@@ -107,6 +107,8 @@ def initialize_db():
             id TEXT PRIMARY KEY, uid TEXT NOT NULL, status TEXT, updated_at REAL, expires_at REAL)''')
         if 'uid' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
             db.execute("ALTER TABLE jobs ADD COLUMN uid TEXT NOT NULL DEFAULT 'installation-owner'")
+        if 'include_sound_events' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
+            db.execute('ALTER TABLE jobs ADD COLUMN include_sound_events INTEGER NOT NULL DEFAULT 0')
 
 
 def recover_jobs():
@@ -219,6 +221,7 @@ def health():
     with connect_db() as db:
         queued = db.execute("SELECT COUNT(*) FROM jobs WHERE uid=? AND status IN ('queued','processing')", (g.uid,)).fetchone()[0]
     local = transcriptions.capability()
+    sounds = transcriptions.sound_capability()
     video = uploaded_media.capability()
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    serverName='FUPCJ Server',
@@ -226,8 +229,8 @@ def health():
                    firebaseAuth={'enabled': bool(app.config.get('FIREBASE_IDENTITY')),
                                  'projectId': app.config['FIREBASE_IDENTITY'].project_id if app.config.get('FIREBASE_IDENTITY') else None},
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
-                   localTranscription=local, videoMedia=video,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'uploadedMedia': video['ready']})
+                   localTranscription=local, localSoundEvents=sounds, videoMedia=video,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready']})
 
 
 def get_job(job_id):
@@ -255,6 +258,9 @@ def youtube():
     client_id = payload.get('clientRequestId')
     if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
         raise APIError('Invalid request identifier.')
+    include_sound_events = payload.get('includeSoundEvents', False)
+    if not isinstance(include_sound_events, bool):
+        raise APIError('Choose whether to include sound effects.')
     # Existing installation receipts retain their IDs. New accounts cannot collide
     # with those receipts or infer another account's video URL/status.
     if client_id and g.auth_kind == 'firebase-google':
@@ -263,17 +269,19 @@ def youtube():
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
         if client_id:
-            old = db.execute('SELECT id,status,url FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
+            old = db.execute('SELECT id,status,url,include_sound_events FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
             if old:
-                if old['url'] != url:
-                    raise APIError('This request identifier belongs to another video.', 409)
+                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events:
+                    raise APIError('This request identifier belongs to another video or sound setting.', 409)
                 return jsonify(id=old['id'], status=old['status']), 202
+        if include_sound_events and not transcriptions.sound_capability()['ready']:
+            raise APIError('Sound detection is not ready on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallSoundEvents, or turn off Include sound effects.', 503)
         pending = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
         if pending >= 25:
             raise APIError('The server queue is full. Wait for an import to finish.', 429)
         job_id, now = secrets.token_hex(12), time.time()
-        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid)
-            VALUES(?,?,?,'queued','Waiting',?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid))
+        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events)
+            VALUES(?,?,?,'queued','Waiting',?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events)))
     WAKE.set()
     return jsonify(id=job_id, status='queued'), 202
 
@@ -320,7 +328,8 @@ def process_next_job():
     try:
         with MEDIA_LOCK:
             process_job(value['id'], value['url'], app.config['FFMPEG'], update,
-                        deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'))
+                        deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'),
+                        include_sound_events=bool(value['include_sound_events']))
     except Exception:
         update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
     finally:

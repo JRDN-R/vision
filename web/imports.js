@@ -59,27 +59,27 @@ function applyImportedTranscript(n,source,text){
  for(const saved of snapshots){const node=saved.nodes?.find(v=>v.id===n.id),a=node?.attachments?.find(v=>v.id===source.id);if(a&&a.promptTranscriptText!==transcript)apply(node,a);}
  renderNode(n);if(selected===n.id)$('modulePrompt').value=n.prompt;
 }
-async function queueImportedAudio(n,source,file,provider,context=boardImportContext()){
+async function queueImportedAudio(n,source,file,provider,context=boardImportContext(),includeSoundEvents=soundEventsSelected(provider)){
  assertBoardImportContext(context);
  const activity={title:source.name,detail:'Preparing audio',progress:0,finished:false};mediaActivity.push(activity);renderActivity();
  let decoder;const controller=new AbortController();boardImportControllers.add(controller);
  try{
   const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',controller.signal);assertBoardImportContext(context);const fvadBinary=await embeddedBytes('fvad-wasm-source',controller.signal);assertBoardImportContext(context);
   decoder=decoderClient();await decoder.request('init',{wasmBinary,fvadBinary},[wasmBinary.buffer,fvadBinary.buffer]);assertBoardImportContext(context);
-  await prepareTranscriptionQueue(n,source,file,decoder,controller.signal,(message,fraction)=>{if(!boardImportCurrent(context)){controller.abort();return;}activity.detail=message;activity.progress=fraction*100;renderActivity();},provider);assertBoardImportContext(context);
+  await prepareTranscriptionQueue(n,source,file,decoder,controller.signal,(message,fraction)=>{if(!boardImportCurrent(context)){controller.abort();return;}activity.detail=message;activity.progress=fraction*100;renderActivity();},provider,includeSoundEvents);assertBoardImportContext(context);
  }catch(error){if(boardImportCurrent(context)){source.status='failed';recordActivity(source.name,'Audio preparation failed. The file is kept; open Files to retry.');}throw error;}
  finally{boardImportControllers.delete(controller);decoder?.stop();activity.finished=true;if(boardImportCurrent(context)){renderActivity();refreshImportedModule(n);}}
 }
 async function importBoardFiles(files,location,options={}){
  const context=options.importContext||boardImportContext();if(!boardImportCurrent(context))return[];
  if(busy||ioBusy||boardImportRunning){toast('Finish the current import first.');return[];}
- const list=Array.from(files||[]);if(!list.length)return[];const added=[],errors=[],provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),rect=board.getBoundingClientRect(),origin=location||(list.length>1?{x:rect.left+board.clientWidth/2,y:rect.top+board.clientHeight/2}:undefined);boardImportRunning=true;
+ const list=Array.from(files||[]);if(!list.length)return[];const added=[],errors=[],provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=provider==='local'&&(typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider)),rect=board.getBoundingClientRect(),origin=location||(list.length>1?{x:rect.left+board.clientWidth/2,y:rect.top+board.clientHeight/2}:undefined);boardImportRunning=true;
  try{for(let index=0;index<list.length;index++){
   if(!boardImportCurrent(context))break;
   const file=list[index],info=boardFileInfo(file),point=boardImportLocation(origin,index);let n;
   try{
    if(info.kind==='video'&&typeof importPCVideoFiles==='function'){
-    const nodes=await importPCVideoFiles([file],point);assertBoardImportContext(context);for(const node of nodes||[]){node.fileType='Video';if(options.title)node.title=String(options.title).slice(0,150);else node.title=file.name;refreshImportedModule(node);added.push(node);}continue;
+    const nodes=await importPCVideoFiles([file],point,{provider,includeSoundEvents});assertBoardImportContext(context);for(const node of nodes||[]){node.fileType='Video';if(options.title)node.title=String(options.title).slice(0,150);else node.title=file.name;refreshImportedModule(node);added.push(node);}continue;
    }
    if(info.kind==='image'||info.kind==='video'){
     const before=new Set(state.nodes.map(v=>v.id));if(info.kind==='image')await importImages([file],point);else await importMedia([file],point);
@@ -88,7 +88,7 @@ async function importBoardFiles(files,location,options={}){
    ioBusy=true;n=await createModuleNode('node',String(options.title||file.name||info.label).slice(0,150),point);assertBoardImportContext(context);added.push(n);n.fileType=info.label;
    const data=await readFile(file);assertBoardImportContext(context);const source={id:uid(),name:file.name||'File',mime:info.mime,size:file.size,data,createdAt:new Date().toISOString(),generated:false,status:null};n.attachments.push(source);n.sourceAttachmentId=source.id;
    const poster=await fileModulePoster(file,info);assertBoardImportContext(context);n.src=poster;n.width=480;n.height=300;
-   if(info.kind==='audio'){source.role='audio';source.transcriptToPrompt=true;source.status='pending';n.promptEditing=true;renderNode(n);markDirty();await queueImportedAudio(n,source,file,provider,context);assertBoardImportContext(context);}
+   if(info.kind==='audio'){source.role='audio';source.transcriptToPrompt=true;source.status='pending';n.promptEditing=true;renderNode(n);markDirty();await queueImportedAudio(n,source,file,provider,context,includeSoundEvents);assertBoardImportContext(context);}
    renderNode(n);refreshNodeAttachments(n);markDirty();
   }catch(error){if(!boardImportCurrent(context))break;errors.push((file.name||'File')+': '+error.message);if(n){renderNode(n);refreshNodeAttachments(n);markDirty();}}
   finally{if(boardImportCurrent(context))ioBusy=false;}

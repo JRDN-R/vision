@@ -78,6 +78,26 @@ class ProcessorTests(unittest.TestCase):
         server.recover_jobs()
         self.assertEqual(server.get_job(job_id)['status'], 'error')
 
+    def test_youtube_sound_setting_is_validated_and_persisted(self):
+        payload = {'url': 'https://youtu.be/abcdefghijk', 'clientRequestId': 'sounds-1', 'includeSoundEvents': True}
+        self.assertEqual(self.client.post('/api/youtube', json={**payload, 'includeSoundEvents': 'true'}, headers=self.headers).status_code, 400)
+        self.assertEqual(self.client.post('/api/youtube', json=payload, headers=self.headers).status_code, 503)
+        with patch.object(server.transcriptions, 'sound_capability', return_value={'ready': True}):
+            response = self.client.post('/api/youtube', json=payload, headers=self.headers)
+            self.assertEqual(response.status_code, 202)
+            job_id = response.json['id']
+            self.assertTrue(server.get_job(job_id)['include_sound_events'])
+            self.assertEqual(self.client.post('/api/youtube', json=payload, headers=self.headers).json['id'], job_id)
+            mismatch = self.client.post('/api/youtube', json={**payload, 'includeSoundEvents': False}, headers=self.headers)
+            self.assertEqual(mismatch.status_code, 409)
+        # The accepted receipt is recoverable even if an administrator later disables sound detection.
+        self.assertEqual(self.client.post('/api/youtube', json=payload, headers=self.headers).json['id'], job_id)
+        def fake_process(job, url, ffmpeg, update, **kwargs):
+            self.assertTrue(kwargs['include_sound_events'])
+            update(job, status='complete', phase='Ready', progress=100, result=b'{"audio":{"data":"test"}}')
+        with patch.object(server, 'process_job', fake_process):
+            self.assertTrue(server.process_next_job())
+
     def test_result_cleanup_and_receipt(self):
         job_id = self.start_job()
         def fake_process(job, url, ffmpeg, update, **kwargs):

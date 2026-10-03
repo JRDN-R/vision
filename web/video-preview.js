@@ -10,7 +10,7 @@ function normalizePCVideo(value){
  const id=/^[-\w]{1,120}$/.test(value.id||'')?value.id:'';
  const status=['uploading','waiting','working','error','complete'].includes(value.status)?value.status:'waiting';
  const preview=value.preview&&value.preview.mime==='video/mp4'&&Number(value.preview.size)>0&&Number(value.preview.size)<=PC_VIDEO_PREVIEW_LIMIT?{mime:'video/mp4',size:Number(value.preview.size),width:Math.min(1920,Math.max(1,Number(value.preview.width)||480)),height:Math.min(1920,Math.max(1,Number(value.preview.height)||270))}:null;
- return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
+ return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.provider!=='gemini'&&value.includeSoundEvents===true,status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
 }
 function pcVideoCurrent(project,n,requestId){return state===project&&state.nodes.includes(n)&&n.pcVideo?.requestId===requestId;}
 function pcVideoUpdate(n,values,{save=true}={}){
@@ -49,7 +49,8 @@ async function pcVideoFirstFrame(n,file,project){
   if(data&&state===project&&state.nodes.includes(n)&&!n.pcVideo?.id)pcVideoSetPoster(n,data,project);
  }finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
 }
-async function importPCVideoFiles(files,location){
+async function importPCVideoFiles(files,location,options={}){
+ const provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=provider==='local'&&(typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider));
  const context=boardAsyncContext(),project=context.project,created=[];
  for(const [index,file]of Array.from(files).entries()){
   if(!boardAsyncCurrent(context))break;
@@ -57,7 +58,7 @@ async function importPCVideoFiles(files,location){
   const n=await createModuleNode('video',file.name||'Video',point);assertBoardAsyncContext(context);
   const meta=ensureProjectIdentity(),source={id:uid(),name:file.name||'video.mp4',mime:file.type||mimeFromName(file.name),size:file.size,metadataOnly:true,role:'video',generated:false,status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   n.attachments.push(source);n.videoSourceId=source.id;n.fileType='Video';
-  n.pcVideo={requestId:'media-'+uid(),id:'',projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',sourceId:source.id,sourceName:source.name,sourceSize:file.size,provider:transcriptionProvider(),status:'waiting',phase:'Waiting to upload · keep this page open',progress:0,error:'',preview:null};
+  n.pcVideo={requestId:'media-'+uid(),id:'',projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',sourceId:source.id,sourceName:source.name,sourceSize:file.size,provider,includeSoundEvents,status:'waiting',phase:'Waiting to upload · keep this page open',progress:0,error:'',preview:null};
   created.push(n);if(file.size>PC_VIDEO_UPLOAD_LIMIT)pcVideoUpdate(n,{status:'error',error:'This video exceeds FUPCJ Server’s 100 MB upload limit. Choose a smaller copy.'});else{pcVideoUploads.set(n.pcVideo.requestId,file);void pcVideoFirstFrame(n,file,project);}
   refreshNodeAttachments(n);installPCVideoControls(n);markDirty();
  }
@@ -141,7 +142,7 @@ async function applyPCVideoResult(runtime,result){
  check();n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);
  source.videoDuration=Number(result.duration)||0;source.snapshotInterval=Number(result.snapshotInterval)||0;source.videoHasAudio=!!result.audioSections.length;source.snapshotsStatus='complete';
  pcVideoSetPoster(n,result.thumbnail||frames[0].data,project);
- if(sections.length){const job={id:uid(),provider:n.pcVideo.provider,sourceId:source.id,sourceName:source.name,sourceKind:'video',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();}
+ if(sections.length){const job={id:uid(),provider:n.pcVideo.provider,includeSoundEvents:n.pcVideo.provider==='local'&&n.pcVideo.includeSoundEvents===true,sourceId:source.id,sourceName:source.name,sourceKind:'video',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();}
  else if(!result.audioSections.length)storeVideoTranscript(n,source,'No audio track was detected. Review the timestamped snapshots.','no-audio');
  markDirty();
 }

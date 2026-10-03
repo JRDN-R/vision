@@ -5,7 +5,7 @@ const APP_SOURCE='<!doctype html>\n'+document.documentElement.outerHTML;
 const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'), world=$('world');
 document.querySelector('.vision-header-banner').src=document.querySelector('.vision-hero-logo img').src;
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
-const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local'});
+const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local',includeSoundEvents:false});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
 let history=[],future=[],toastTimer,dragDepth=0,lastPointer=null,renderTickets=new Map();
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -148,7 +148,7 @@ function sourceExtension(n){const mime=/^data:([^;,]+)/.exec(n.src)?.[1];return(
 function offerTranscription(nodeId,ids){if(busy||ioBusy)return;const n=nodeById(nodeId);transcriptionQueue=ids.map(id=>({nodeId,id})).filter(q=>n?.attachments?.some(a=>a.id===q.id&&a.data&&mediaFile(a)));if(!transcriptionQueue.length)return;$('transcribeQuestion').textContent=transcriptionQueue.length===1?'Transcribe this audio?':`Transcribe audio from ${transcriptionQueue.length} files?`;$('transcribeFiles').textContent=transcriptionQueue.map(q=>n.attachments.find(a=>a.id===q.id).name).join('\n');$('geminiKey').value=sessionApiKey;syncTranscriptionProviderUI();$('transcribeStatus').textContent='The originals are already attached. Choosing Skip keeps them without a transcript.';$('transcribeProgress').hidden=true;$('runTranscription').disabled=false;$('geminiKey').disabled=false;$('skipTranscription').textContent='Skip';$('transcribeDialog').showModal();}
 async function embeddedBytes(id,signal){const encoded=$(id).textContent.trim(),bytes=new Uint8Array(encoded.length*3/4-(encoded.endsWith('==')?2:encoded.endsWith('=')?1:0));let offset=0;for(let i=0;i<encoded.length;i+=1048576){if(signal.aborted)throw new DOMException('Canceled','AbortError');const part=atob(encoded.slice(i,i+1048576));for(let j=0;j<part.length;j++)bytes[offset++]=part.charCodeAt(j);await new Promise(r=>setTimeout(r,0));}if($(id).dataset.compression==='gzip'){if(typeof DecompressionStream!=='function')throw new Error('Open Vision in a current Chrome, Edge, Firefox, or Safari browser to use the media decoder.');const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));const expanded=new Uint8Array(await new Response(stream).arrayBuffer());if(signal.aborted)throw new DOMException('Canceled','AbortError');return expanded;}return bytes;}
 function decoderClient(){const source=$('fvad-core-source').textContent+'\n'+$('ffmpeg-core-source').textContent+'\n'+$('decoder-source').textContent,url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));let worker;try{worker=new Worker(url);}catch(e){URL.revokeObjectURL(url);throw new Error('Could not start the media decoder. Open the downloaded HTML in a current desktop browser.');}let serial=0,dead=false;const pending=new Map();function stop(error=new DOMException('Canceled','AbortError')){dead=true;worker.terminate();URL.revokeObjectURL(url);for(const p of pending.values()){clearTimeout(p.timer);p.reject(error);}pending.clear();}worker.onmessage=e=>{const p=pending.get(e.data.id);if(!p)return;if(Number.isFinite(e.data.progress)){p.onProgress?.(e.data);return;}clearTimeout(p.timer);pending.delete(e.data.id);e.data.error?p.reject(new Error(e.data.error)):p.resolve(e.data);};worker.onerror=e=>stop(new Error(e.message||'The media decoder stopped.'));return{stop,request(type,payload={},transfer=[],onProgress){if(dead)return Promise.reject(new Error('Decoder unavailable.'));return new Promise((resolve,reject)=>{const id=++serial,timer=setTimeout(()=>{pending.delete(id);reject(new Error('Media processing timed out. Try a shorter clip.'));},1800000);pending.set(id,{resolve,reject,timer,onProgress});try{worker.postMessage({id,type,...payload},transfer);}catch(e){clearTimeout(timer);pending.delete(id);reject(e);}});}};}
-function saveTranscript(n,source,text,status){let a=n.attachments.find(a=>a.transcriptOf===source.id);const job=(n.transcriptionJobs||[]).find(j=>j.sourceId===source.id),provider=job?.provider||source.transcriptionProvider;source.transcriptionProvider=provider||'imported';const content=`Source: ${source.name}\nTranscription: ${provider==='local'?'FUPCJ Server (Whisper)':provider==='gemini'?'Gemini':provider==='captions'?'Source captions':'Imported transcript'}${job?.preservedSections?' · includes previously completed sections':''}\nStatus: ${status==='complete'?'Complete':'PARTIAL — transcription did not finish'}\n\n${text.trim()||'[No speech returned by the transcription service.]'}\n`;if(!a){a={id:uid(),name:source.name.replace(/\.[^.]+$/,'')+'.transcript.txt',mime:'text/plain',generated:true,role:'transcript',transcriptOf:source.id,createdAt:new Date().toISOString()};n.attachments.push(a);}a.data=textDataURL(content);a.size=new TextEncoder().encode(content).length;a.status=status;source.status=status;markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
+function saveTranscript(n,source,text,status){let a=n.attachments.find(a=>a.transcriptOf===source.id);const job=(n.transcriptionJobs||[]).find(j=>j.sourceId===source.id),provider=job?.provider||source.transcriptionProvider;source.transcriptionProvider=provider||'imported';const content=`Source: ${source.name}\nTranscription: ${provider==='local'?'FUPCJ Server (Whisper)':provider==='gemini'?'Gemini':provider==='captions'?'Source captions':'Imported transcript'}${job?.preservedSections?' · includes previously completed sections':''}\nStatus: ${status==='complete'?'Complete':'PARTIAL — transcription did not finish'}${soundTranscriptMetadata(job)}\n\n${text.trim()||'[No speech returned by the transcription service.]'}\n`;if(!a){a={id:uid(),name:source.name.replace(/\.[^.]+$/,'')+'.transcript.txt',mime:'text/plain',generated:true,role:'transcript',transcriptOf:source.id,createdAt:new Date().toISOString()};n.attachments.push(a);}a.data=textDataURL(content);a.size=new TextEncoder().encode(content).length;a.status=status;source.status=status;markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
 $('addAttachments').onclick=()=>{if(selected)chooseAttachments(selected);};$('attachmentInput').onchange=e=>{if(attachmentTarget)attachFiles(attachmentTarget,e.target.files);e.target.value='';};$('mainPrompt').onfocus=()=>checkpoint();$('mainPrompt').oninput=e=>{state.mainPrompt=e.target.value;markDirty();};$('runTranscription').onclick=runTranscription;$('skipTranscription').onclick=()=>{if(transcriptionJob){transcriptionJob.controller.abort();transcriptionJob.decoder?.stop();}else $('transcribeDialog').close();};$('transcribeDialog').addEventListener('cancel',e=>{if(transcriptionJob){e.preventDefault();transcriptionJob.controller.abort();transcriptionJob.decoder?.stop();}});
 
 // Keep the canvas usable at narrow widths; the panel can always be reopened.
@@ -259,7 +259,7 @@ async function attachFiles(id,files){
  selectNode(id);refreshNodeAttachments(n);updateSequence();toast(errors.length?errors.join('\n'):'Files added to this module.',!!errors.length);
  }finally{ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());}if(audio.length)offerTranscription(id,audio);
 }
-function removeAttachment(n,a){if(busy||ioBusy)return;checkpoint();const removed=new Set([a.id]);for(const f of n.attachments)if(f.videoOf===a.id||f.transcriptOf===a.id)removed.add(f.id);n.attachments=n.attachments.filter(f=>!removed.has(f.id));if(n.videoSourceId===a.id)n.videoSourceId=null;pruneTranscriptionQueue();markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
+function removeAttachment(n,a){if(busy||ioBusy)return;checkpoint();const removed=new Set([a.id]);for(const f of n.attachments)if(f.videoOf===a.id||f.transcriptOf===a.id||f.subtitleOf===a.id)removed.add(f.id);n.attachments=n.attachments.filter(f=>!removed.has(f.id));if(n.videoSourceId===a.id)n.videoSourceId=null;pruneTranscriptionQueue();markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
 function renderAttachments(){
  const host=$('attachmentsList');host.innerHTML='';const n=nodeById(selected);$('attachmentCount').textContent=(n?.attachments||[]).filter(a=>!a.metadataOnly).length;$('addAttachments').disabled=!n;if(!n)return;
  for(const a of n.attachments||[]){if(a.role==='video-frame')continue;const row=document.createElement('div');row.className='attachment-row';const info=document.createElement('div');info.className='attachment-info';const name=document.createElement('span');name.textContent=a.name;name.title=a.name;info.appendChild(name);const meta=document.createElement('small'),shots=n.attachments.filter(f=>f.videoOf===a.id&&f.role==='video-frame').length;meta.textContent=videoFile(a)?`${shots} screenshots · ${a.snapshotsStatus||'not processed'} · ${n.pcVideo?.sourceId===a.id?(n.pcVideo.preview?'small preview on FUPCJ Server · original omitted':n.pcVideo.previewDeleted?'FUPCJ Server preview removed · original omitted':'FUPCJ Server preview pending · original omitted'):'video not stored'}`:(a.metadataOnly&&isAudioSource(a)?'Audio removed · transcript saved':readableBytes(a.size))+(a.transcriptOf?' · transcript · '+(a.status||'pending'):a.status?' · '+a.status:'');info.appendChild(meta);row.appendChild(info);const buttons=document.createElement('div');buttons.className='attachment-actions';if(a.data){const down=document.createElement('button');down.textContent='↓';down.title='Download attachment';down.onclick=()=>download(new Blob([bytesFromDataURL(a.data)],{type:a.mime}),R.safeFilename(a.name));buttons.appendChild(down);if(mediaFile(a)){const tr=document.createElement('button');tr.textContent='Text';tr.title='Transcribe audio again';tr.onclick=()=>offerTranscription(n.id,[a.id]);buttons.appendChild(tr);}}const remove=document.createElement('button');remove.textContent='×';remove.title='Remove file and its generated screenshots/transcript';remove.onclick=()=>removeAttachment(n,a);buttons.appendChild(remove);row.appendChild(buttons);host.appendChild(row);
@@ -369,7 +369,7 @@ function storeVideoTranscript(n,source,text,status){
   source.status=status;source.transcriptionStatus=status;updateVideoAttachments(n);
 }
 async function processVideoFile(n,file,{primary=false}={}){
-  const context=boardAsyncContext();
+  const context=boardAsyncContext(),provider=transcriptionProvider(),includeSoundEvents=soundEventsSelected(provider);
   const source={id:uid(),name:file.name||'video.mp4',mime:file.type||mimeFromName(file.name),size:file.size,metadataOnly:true,createdAt:new Date().toISOString(),generated:false,role:'video',status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending'};
   n.attachments=n.attachments||[];n.attachments.push(source);if(primary){n.kind='video';n.videoSourceId=source.id;}updateVideoAttachments(n);
   const dialog=$('videoDialog'),status=$('videoStatus'),progress=$('videoProgress'),cancel=$('videoCancel'),controller=new AbortController(),signal=controller.signal;let decoder=null,partial='',phase='setup';
@@ -402,7 +402,7 @@ async function processVideoFile(n,file,{primary=false}={}){
     check();phase='transcription';
     if(!info.hasAudio){storeVideoTranscript(n,source,'No audio track was detected. No audio was sent for transcription. Review the visual screenshots for this video.','no-audio');show('Screenshots ready; video has no audio track.',1);}
     else{
-      await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>show(message,.6+.4*fraction));check();
+      await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>show(message,.6+.4*fraction),provider,includeSoundEvents);check();
       show('Screenshots ready; transcription queued. Save your project to keep pending audio.',1);
     }
     updateVideoAttachments(n);
@@ -439,8 +439,8 @@ function validateAttachments(raw){
   if(!a||typeof a.id!=='string'||!/^[\w-]{1,100}$/.test(a.id)||ids.has(a.id)||(!exportIsVideo(a)&&!completedAudio&&(typeof a.data!=='string'||!/^data:[^,]*;base64,[A-Za-z0-9+/]*={0,2}$/i.test(a.data))))throw new Error('An attachment is missing or damaged.');
   ids.add(a.id);const video=exportIsVideo(a),metadataOnly=video||completedAudio,bytes=metadataOnly?null:bytesFromDataURL(a.data);
   const item={id:a.id,name:String(a.name||'Attachment').slice(0,250),mime:typeof a.mime==='string'&&/^[\w.+-]+\/[\w.+-]+$/.test(a.mime)?a.mime:mimeFromName(a.name),size:metadataOnly?(Number.isFinite(a.size)?Math.max(0,a.size):0):bytes.length,...(metadataOnly?{metadataOnly:true,role:video?'video':'audio'}:{data:a.data}),generated:!!a.generated,transcriptOf:validRef(a.transcriptOf),status:['complete','partial','failed','canceled','pending','no-audio','queued','waiting','sending','paused','error'].includes(a.status)?a.status:null,createdAt:typeof a.createdAt==='string'?a.createdAt:null};
-  if(!video&&['audio','video-frame','transcript','video-transcript'].includes(a.role))item.role=a.role;
-  if(validRef(a.videoOf))item.videoOf=a.videoOf;
+  if(!video&&['audio','video-frame','transcript','video-transcript','subtitles'].includes(a.role))item.role=a.role;
+  if(validRef(a.videoOf))item.videoOf=a.videoOf;if(validRef(a.subtitleOf))item.subtitleOf=a.subtitleOf;
   for(const name of ['timestamp','requestedTimestamp','videoDuration','snapshotInterval'])if(typeof a[name]==='number'&&Number.isFinite(a[name])&&a[name]>=0)item[name]=a[name];
   if(['complete','partial','failed','canceled','pending'].includes(a.snapshotsStatus))item.snapshotsStatus=a.snapshotsStatus;
   if(typeof a.snapshotError==='string')item.snapshotError=a.snapshotError.slice(0,2000);
@@ -481,7 +481,7 @@ async function validateProject(raw){
  for(let i=0;i<queue.length;i++){visited++;for(const to of outgoing.get(queue[i])){indegree.set(to,indegree.get(to)-1);if(indegree.get(to)===0)queue.push(to);}}
  if(visited!==nodes.length)throw new Error('The project contains a connection loop.');
  const s=raw.settings||{},v=raw.view||{};
- return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift',boardPalette:['sage','rose','redshift'].includes(s.boardPalette)?s.boardPalette:'sage',transcriptionProvider:s.transcriptionProvider==='gemini'?'gemini':'local'},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
+ return{youtubeImports:normalizeYouTubeImports(raw.youtubeImports),consoleSession:normalizeConsoleSession(raw.consoleSession),asrNextRequestAt:finite(raw.asrNextRequestAt,0,Date.now()+60000,0),title:String(raw.title||'Untitled timeline').slice(0,100),mainPrompt:normalizedMainPrompt(raw.mainPrompt),nodes,edges,settings:{fontSize:finite(s.fontSize,16,80,32),padding:finite(s.padding,10,100,36),minCaption:[0,50,100,200,300].includes(s.minCaption)?s.minCaption:100,align:s.align==='center'?'center':'left',outputWidth:[1600,2400,3200,4800].includes(s.outputWidth)?s.outputWidth:2400,screenshotMode:s.screenshotMode==='contact-sheets'?'contact-sheets':'individual',boardBackground:['drift','stars','static'].includes(s.boardBackground)?s.boardBackground:'drift',boardPalette:['sage','rose','redshift'].includes(s.boardPalette)?s.boardPalette:'sage',transcriptionProvider:s.transcriptionProvider==='gemini'?'gemini':'local',includeSoundEvents:s.includeSoundEvents===true},view:{x:finite(v.x,-1e7,1e7,120),y:finite(v.y,-1e7,1e7,90),scale:finite(v.scale,.08,4,1)}};
 }
 function refreshExport(){
  $('screenshotMode').value=state.settings.screenshotMode||'individual';
@@ -589,7 +589,7 @@ function normalizeCompletedAudio(nodes){
 }
 function releaseCompletedSourceAudio(n,source){
  if(!sourceAudioComplete(n,source))return false;
- const transcript=completeAudioTranscript(n,source);eraseSourceAudioPayload(source);
+ const transcript=completeAudioTranscript(n,source),subtitle=n.attachments.find(a=>a.subtitleOf===source.id);eraseSourceAudioPayload(source);
  const snapshots=[],seen=new Set(),collect=saved=>{if(!saved||seen.has(saved))return;seen.add(saved);snapshots.push(saved);for(const item of saved.history||[])collect(item);for(const item of saved.future||[])collect(item);};
  if(typeof history!=='undefined')for(const saved of history)collect(saved);
  if(typeof future!=='undefined')for(const saved of future)collect(saved);
@@ -598,6 +598,7 @@ function releaseCompletedSourceAudio(n,source){
   const target=saved.nodes?.find(v=>v.id===n.id),old=target?.attachments?.find(a=>a.id===source.id);if(!old)continue;
   eraseSourceAudioPayload(old);target.transcriptionJobs=(target.transcriptionJobs||[]).filter(j=>j.sourceId!==source.id);
   const index=target.attachments.findIndex(a=>a.transcriptOf===source.id);if(index>=0)target.attachments[index]={...transcript};else target.attachments.push({...transcript});
+  if(subtitle){const index=target.attachments.findIndex(a=>a.subtitleOf===source.id);if(index>=0)target.attachments[index]={...subtitle};else target.attachments.push({...subtitle});}
   if(typeof state!=='undefined')saved.asrNextRequestAt=state.asrNextRequestAt;
  }
  return true;
@@ -646,6 +647,40 @@ const LOCAL_ASR_HELP='https://github.com/JRDN-R/vision/tree/main/vision-pc#local
 const LOCAL_ASR_MAX_BYTES=100*1024*1024;
 function transcriptionProvider(){return state.settings?.transcriptionProvider==='gemini'?'gemini':'local';}
 function transcriptionProviderLabel(provider){return provider==='gemini'?'Gemini · API billing may apply':'FUPCJ Server · Whisper · no API charge';}
+function soundEventsSelected(provider=transcriptionProvider()){return provider==='local'&&state.settings?.includeSoundEvents===true;}
+function setIncludeSoundEvents(value){checkpoint();state.settings.includeSoundEvents=value===true;markDirty();syncTranscriptionProviderUI();}
+function soundEventsChoice(id){
+ const wrapper=document.createElement('div');wrapper.id=id;wrapper.className='sound-events-choice';
+ const label=document.createElement('label');label.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px';
+ const input=document.createElement('input');input.type='checkbox';input.style.width='auto';input.onchange=()=>setIncludeSoundEvents(input.checked);label.append(input,document.createTextNode('Include sound effects'));
+ const note=document.createElement('p');note.className='mini-note';note.textContent='Runs on FUPCJ Server; requires sound-detection setup. Sound labels are AI estimates.';wrapper.append(label,note);return wrapper;
+}
+function syncSoundEventsChoice(id,active=false){const host=$(id);if(!host)return;const input=host.querySelector('input');input.checked=soundEventsSelected();input.disabled=active||transcriptionProvider()!=='local';}
+const SOUND_RESULT_LIMIT=50000,SOUND_TEXT_LIMIT=4*1024*1024;
+function soundResultText(value,max=SOUND_TEXT_LIMIT){if(typeof value!=='string'||value.length>max)throw new Error('FUPCJ Server returned invalid sound transcription text. The original audio was kept.');return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'');}
+function validateSoundResult(value,job){
+ if(!value||!['completed','failed'].includes(value.soundEventStatus)||!Array.isArray(value.soundEvents)||value.soundEvents.length>SOUND_RESULT_LIMIT||!Array.isArray(value.speechSegments)||value.speechSegments.length>2*SOUND_RESULT_LIMIT||!Array.isArray(value.warnings)||value.warnings.length>20)throw new Error('FUPCJ Server did not return the requested sound results. Update FUPCJ Server, then retry. The original audio was kept.');
+ const first=Math.min(...job.sections.map(s=>s.start)),last=Math.max(...job.sections.map(s=>s.end));
+ const timing=item=>{if(!item||!Number.isFinite(item.start)||!Number.isFinite(item.end)||item.start<first-.05||item.end<=item.start||item.end>last+.1)throw new Error('FUPCJ Server returned invalid sound timeline timing. The original audio was kept.');return{start:item.start,end:item.end};};
+ const soundEvents=value.soundEvents.map(item=>{const t=timing(item);if(!Number.isFinite(item.score)||item.score<0||item.score>1)throw new Error('FUPCJ Server returned invalid sound confidence.');return{...t,label:soundResultText(item.label,200),score:item.score};});
+ const speechSegments=value.speechSegments.map(item=>({...timing(item),text:soundResultText(item.text,10000)}));
+ const warnings=value.warnings.map(item=>soundResultText(item,600));if(value.soundEventStatus==='failed'&&!warnings.length)warnings.push('Sound detection did not finish. The complete speech transcript was kept.');
+ const combinedSrt=soundResultText(value.combinedSrt),speechText=soundResultText(value.speechText);
+ // Parsing before source audio is released also rejects malformed or oversized subtitle output.
+ const checkedSrt=offsetSoundSrt(combinedSrt,job.sourceKind==='video'?job.offsetSeconds:0,first,last);
+ return{soundEventStatus:value.soundEventStatus,soundEvents,speechSegments,speechText,combinedSrt:checkedSrt,warnings};
+}
+function soundSrtTime(seconds){const ms=Math.max(0,Math.round(seconds*1000)),h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,sec=Math.floor(ms/1000)%60;return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')+','+String(ms%1000).padStart(3,'0');}
+function offsetSoundSrt(raw,offset=0,first=0,last=Infinity){
+ const text=soundResultText(raw).replace(/\r\n?/g,'\n').trim();if(!text)return'';const blocks=text.split(/\n[ \t]*\n/);if(blocks.length>4*SOUND_RESULT_LIMIT)throw new Error('FUPCJ Server returned too many subtitle cues.');
+ const seconds=value=>{const match=value.match(/^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3})$/);return match?Number(match[1])*3600+Number(match[2])*60+Number(match[3])+Number(match[4])/1000:NaN;};
+ const cues=[];for(const block of blocks){const lines=block.split('\n'),times=lines[1]?.match(/^(\d{2,}:[0-5]\d:[0-5]\d,\d{3}) --> (\d{2,}:[0-5]\d:[0-5]\d,\d{3})$/);if(!/^\d+$/.test(lines[0])||!times||lines.length<3)throw new Error('FUPCJ Server returned invalid subtitles.');const start=seconds(times[1]),end=seconds(times[2]);if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||start<first-.05||end>last+.1)throw new Error('FUPCJ Server returned invalid subtitle timing.');const shiftedEnd=end+(Number(offset)||0);if(shiftedEnd<=0)continue;cues.push((cues.length+1)+'\n'+soundSrtTime(start+(Number(offset)||0))+' --> '+soundSrtTime(shiftedEnd)+'\n'+lines.slice(2).join('\n'));}return cues.join('\n\n')+(cues.length?'\n':'');
+}
+function soundTranscriptMetadata(job){if(!job?.includeSoundEvents)return'';const result=job.soundResult;return'\nSound effects: '+(result?.soundEventStatus==='completed'?'Detection complete':'INCOMPLETE; speech transcript retained')+'\nSound labels are AI estimates.'+(result?.warnings?.length?'\nWarnings: '+result.warnings.join(' '):'');}
+function saveSoundSubtitles(n,source,job){
+ if(!job.soundResult)return;const text=job.soundResult.combinedSrt;let a=n.attachments.find(a=>a.subtitleOf===source.id);if(!a){a={id:uid(),name:source.name.replace(/\.[^.]+$/,'')+'.srt',mime:'application/x-subrip',role:'subtitles',subtitleOf:source.id,generated:true,createdAt:new Date().toISOString()};n.attachments.push(a);}a.data=textDataURL(text);a.size=new TextEncoder().encode(text).length;a.status=job.soundResult.soundEventStatus==='completed'?'complete':'partial';
+}
+
 function validASRReference(value){return typeof value==='string'&&/^[-\w]{1,120}$/.test(value)?value:null;}
 function validASRBackend(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&['','/'].includes(u.pathname)?u.origin:null;}catch{return null;}}
 function cloneTranscriptionJobs(jobs){return(jobs||[]).map(job=>({...job,sections:job.sections.map(section=>({...section}))}));}
@@ -664,7 +699,7 @@ function validateTranscriptionJobs(raw,attachments){
   const source=attachments.find(a=>a.id===job.sourceId),provider=job.provider==='gemini'?'gemini':'local',migrated=job.provider!=='local'&&job.provider!=='gemini';
   const remote=provider==='local'?{remoteId:validASRReference(job.remoteId),remoteRequestId:validASRReference(job.remoteRequestId)||job.id,backendUrl:validASRBackend(job.backendUrl),remoteProjectId:validASRReference(job.remoteProjectId),submitted:job.submitted===true,remoteTerminal:job.remoteTerminal===true,phase:typeof job.phase==='string'?job.phase.slice(0,150):'',progress:Number.isFinite(job.progress)?Math.max(0,Math.min(100,job.progress)):0}:{};
   if(remote.remoteId&&(!remote.backendUrl||!remote.remoteProjectId))throw new Error('The saved FUPCJ Server transcription connection is incomplete.');
-  return{provider,...remote,preservedSections:job.preservedSections===true||(migrated&&sections.some(section=>section.done)),id:job.id,sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number.isFinite(job.offsetSeconds)?job.offsetSeconds:0,createdAt:typeof job.createdAt==='string'?job.createdAt:new Date().toISOString(),status:!migrated&&job.status==='error'?'error':'waiting',error:!migrated&&typeof job.error==='string'?job.error.slice(0,600):null,sections};
+  return{provider,includeSoundEvents:provider==='local'&&job.includeSoundEvents===true,...remote,preservedSections:job.preservedSections===true||(migrated&&sections.some(section=>section.done)),id:job.id,sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number.isFinite(job.offsetSeconds)?job.offsetSeconds:0,createdAt:typeof job.createdAt==='string'?job.createdAt:new Date().toISOString(),status:!migrated&&job.status==='error'?'error':'waiting',error:!migrated&&typeof job.error==='string'?job.error.slice(0,600):null,sections};
  });
 }
 function queueEntries(){return state.nodes.flatMap(n=>(n.transcriptionJobs||[]).map(job=>({n,job,source:n.attachments?.find(a=>a.id===job.sourceId)})));}
@@ -702,7 +737,7 @@ function providerChoice(value,onchange,label){
  for(const provider of ['local','gemini']){const option=document.createElement('option');option.value=provider;option.textContent=transcriptionProviderLabel(provider);select.appendChild(option);}select.value=value;select.onchange=()=>onchange(select.value);wrapper.appendChild(select);return wrapper;
 }
 function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';markDirty();syncTranscriptionProviderUI();}
-function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();}}
+function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider','youtubeProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();syncSoundEventsChoice(id+'Sounds');}}
 function addQueueProviderControl(row,job){
  const choice=providerChoice(job.provider||'local',value=>changeQueuedProvider(job.id,value),'Transcription provider for '+job.sourceName);
  choice.querySelector('select').disabled=job.provider==='local'&&(job.submitted||!!job.remoteId)&&!job.remoteTerminal;
@@ -712,7 +747,7 @@ function addQueueProviderControl(row,job){
 function changeQueuedProvider(id,provider){
  const entry=queueEntries().find(e=>e.job.id===id);if(!entry||!['local','gemini'].includes(provider))return;const{n,job,source}=entry;
  if(job.provider===provider||job.provider==='local'&&(job.submitted||job.remoteId)&&!job.remoteTerminal)return;
- checkpoint();if(asrRuntime?.job===job)asrRuntime.controller.abort();job.provider=provider;job.preservedSections=job.sections.some(section=>section.done);job.status='waiting';job.error=null;job.nextAttemptAt=0;
+ checkpoint();if(asrRuntime?.job===job)asrRuntime.controller.abort();job.provider=provider;if(provider!=='local')job.includeSoundEvents=false;job.preservedSections=job.sections.some(section=>section.done);job.status='waiting';job.error=null;job.nextAttemptAt=0;
  for(const field of ['remoteId','backendUrl','remoteProjectId','submitted','remoteTerminal','phase','progress','connectionError'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
  syncQueueHistory(n,job);queueChanged(n);scheduleTranscriptionQueue();
 }
@@ -739,12 +774,13 @@ function resumePCTranscriptionQueue(){
 }
 function networkQueueError(error){return navigator.onLine===false||error instanceof TypeError||/could not reach Google|failed to fetch|network(?:error| request| connection| failure)?|internet connection|load failed|timed out/i.test(error?.message||'');}
 function syncQueueHistory(n,job,finished=false){
- const transcript=n.attachments.find(a=>a.transcriptOf===job.sourceId),source=n.attachments.find(a=>a.id===job.sourceId);
+ const transcript=n.attachments.find(a=>a.transcriptOf===job.sourceId),subtitle=n.attachments.find(a=>a.subtitleOf===job.sourceId),source=n.attachments.find(a=>a.id===job.sourceId);
  const snapshots=[...history,...future];if(typeof touchBackup!=='undefined'&&touchBackup)snapshots.push(touchBackup,...touchBackup.history,...touchBackup.future);
  for(const saved of snapshots){const target=saved.nodes?.find(v=>v.id===n.id),queued=target?.transcriptionJobs?.find(j=>j.id===job.id);if(!queued)continue;
   if(finished)target.transcriptionJobs=target.transcriptionJobs.filter(j=>j.id!==job.id);else Object.assign(queued,cloneTranscriptionJobs([job])[0],{status:job.status==='sending'?'waiting':job.status});
   const old=target.attachments.find(a=>a.id===job.sourceId);if(old&&source){old.status=source.status;old.transcriptionStatus=source.transcriptionStatus;}
   if(transcript){const index=target.attachments.findIndex(a=>a.transcriptOf===job.sourceId);if(index>=0)target.attachments[index]={...transcript};else target.attachments.push({...transcript});}
+  if(subtitle){const index=target.attachments.findIndex(a=>a.subtitleOf===job.sourceId);if(index>=0)target.attachments[index]={...subtitle};else target.attachments.push({...subtitle});}
   saved.asrNextRequestAt=state.asrNextRequestAt;
  }
 }
@@ -755,8 +791,9 @@ function finishQueuedTranscript(runtime){
  const{n,source,job}=runtime,text=queuedTranscriptText(job);
  if(job.sourceKind==='video')storeVideoTranscript(n,source,videoTranscriptClock(text,job.offsetSeconds)||'[The transcription service returned no speech.]','complete');
  else saveTranscript(n,source,text,'complete');
- if(source.transcriptToPrompt&&typeof applyImportedTranscript==='function')applyImportedTranscript(n,source,text);
- syncQueueHistory(n,job,true);n.transcriptionJobs=n.transcriptionJobs.filter(j=>j!==job);releaseCompletedSourceAudio(n,source);queueChanged(n);if(typeof recordActivity==='function')recordActivity(job.sourceName,'Transcription complete');toast('Transcription complete: '+job.sourceName);
+ if(job.includeSoundEvents)saveSoundSubtitles(n,source,job);
+ if(source.transcriptToPrompt&&typeof applyImportedTranscript==='function')applyImportedTranscript(n,source,job.soundResult?.speechText??text);
+ syncQueueHistory(n,job,true);n.transcriptionJobs=n.transcriptionJobs.filter(j=>j!==job);releaseCompletedSourceAudio(n,source);queueChanged(n);const warning=job.soundResult?.warnings?.join(' ');if(typeof recordActivity==='function')recordActivity(job.sourceName,warning?'Speech saved · '+warning:job.includeSoundEvents?'Speech and sound effects complete':'Transcription complete');toast(warning?job.sourceName+': '+warning:'Transcription complete: '+job.sourceName,!!warning);
 }
 async function localASRRequest(runtime,path,options={}){
  const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,options.method==='POST'?120000:15000);
@@ -776,9 +813,10 @@ async function pumpLocalTranscription(runtime){
   job.connectionError=false;job.phase='Saving project to FUPCJ Server';renderTranscriptionQueue();
   const caps=health.capabilities,available=Array.isArray(caps)?caps.includes('localTranscription'):caps?.localTranscription===true;
   if(!available||health.localTranscription?.ready===false)throw new Error('Local transcription is not ready on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallLocalTranscription on that FUPCJ Server, then Retry. No Gemini request was made.');
+  if(job.includeSoundEvents&&(!health.localSoundEvents?.available||!health.localSoundEvents?.ready))throw new Error('Sound detection is not ready on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallSoundEvents there, then Retry. No paid provider was used.');
   const meta=await ensureRemoteProject();if(!queueAlive(runtime))return;
   job.remoteRequestId=job.remoteRequestId||job.id;job.backendUrl=meta.backendUrl;job.remoteProjectId=meta.id;
-  const payload=JSON.stringify({clientRequestId:job.remoteRequestId,sourceName:job.sourceName,sections:job.sections.filter(section=>!section.done).map(({start,end,mimeType,audioData})=>({start,end,mimeType,audioData}))});
+  const payload=JSON.stringify({clientRequestId:job.remoteRequestId,sourceName:job.sourceName,includeSoundEvents:job.includeSoundEvents===true,sections:job.sections.filter(section=>!section.done).map(({start,end,mimeType,audioData})=>({start,end,mimeType,audioData}))});
   if(new Blob([payload]).size>Math.min(LOCAL_ASR_MAX_BYTES,Number(health.localTranscription?.maxRequestBytes)||LOCAL_ASR_MAX_BYTES))throw new Error('This audio exceeds FUPCJ Server upload limit of 100 MiB. Split the source into shorter clips. No paid provider was used.');
   job.submitted=true;job.status='sending';job.error=null;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();if(!queueAlive(runtime))return;
   let accepted;
@@ -797,7 +835,9 @@ async function pumpLocalTranscription(runtime){
   if(!Array.isArray(returned)||returned.length!==pending.length)throw new Error('FUPCJ Server returned an incomplete transcript. The original audio was kept.');
   const matches=pending.map(section=>returned.filter(item=>item.start===section.start&&item.end===section.end&&typeof item.text==='string'));
   if(matches.some(items=>items.length!==1))throw new Error('FUPCJ Server transcript sections do not match this audio. The original audio was kept.');
-  pending.forEach((section,index)=>{section.text=matches[index][0].text;section.done=true;section.audioData=null;});finishQueuedTranscript(runtime);return;
+  if(returned.some(item=>item.text.length>SOUND_TEXT_LIMIT)||returned.reduce((total,item)=>total+item.text.length,0)>SOUND_TEXT_LIMIT)throw new Error('FUPCJ Server returned an oversized transcript. The original audio was kept.');
+  if(job.includeSoundEvents)job.soundResult=validateSoundResult(result.result,job);
+  pending.forEach((section,index)=>{section.text=soundResultText(matches[index][0].text);section.done=true;section.audioData=null;});finishQueuedTranscript(runtime);return;
  }
  if(!['queued','processing'].includes(result.status))throw new Error('FUPCJ Server returned an unknown transcription status. The original audio was kept.');
  // Poll progress is display-only; avoid repeatedly autosaving the full pending audio payload.
@@ -837,7 +877,7 @@ async function pumpTranscriptionQueue(){
   if(queueMember(runtime)&&job.status==='sending')job.status='waiting';if(asrRuntime===runtime)asrRuntime=null;renderTranscriptionQueue();scheduleNextTranscription();
  }
 }
-async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress=()=>{},provider=transcriptionProvider()){
+async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress=()=>{},provider=transcriptionProvider(),includeSoundEvents=soundEventsSelected(provider)){
  const project=state,check=()=>{if(signal.aborted||state!==project||!state.nodes.includes(n)||!n.attachments.includes(source))throw new DOMException('Canceled','AbortError');};check();
  const existing=(n.transcriptionJobs||[]).find(j=>j.sourceId===source.id);if(existing)return existing;
  onProgress('Analyzing speech and pauses…',0);
@@ -849,12 +889,12 @@ async function prepareTranscriptionQueue(n,source,file,decoder,signal,onProgress
   if(!encoded.audio?.byteLength||encoded.audio.byteLength>window.JEWTranscription.MAX_INLINE_BYTES)throw new Error('An audio section could not be prepared within the transcription size limit.');
   const audioData=await readFile(new Blob([encoded.audio],{type:encoded.mimeType}));check();sections.push({start:section.start,end:section.end,mimeType:encoded.mimeType,audioData,text:null,done:false});
  }
- check();const job={provider:provider==='gemini'?'gemini':'local',id:uid(),sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number(source.audioOffsetFromVideo)||0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};
+ check();const job={provider:provider==='gemini'?'gemini':'local',includeSoundEvents:provider==='local'&&includeSoundEvents===true,id:uid(),sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number(source.audioOffsetFromVideo)||0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};
  n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();onProgress(navigator.onLine===false?'Queued until internet reconnects. Save your project to keep the queue.':'Audio queued. You can keep editing while transcription runs.',1);return job;
 }
 async function runTranscription(){
  if(busy||ioBusy||!transcriptionQueue.length)return;checkpoint();busy=true;
- const tasks=transcriptionQueue.slice(),provider=$('transcribeProvider')?.querySelector('select').value||transcriptionProvider(),job={controller:new AbortController(),decoder:null};transcriptionJob=job;const signal=job.controller.signal;
+ const tasks=transcriptionQueue.slice(),provider=$('transcribeProvider')?.querySelector('select').value||transcriptionProvider(),includeSoundEvents=soundEventsSelected(provider),job={controller:new AbortController(),decoder:null};transcriptionJob=job;const signal=job.controller.signal;
  $('runTranscription').disabled=true;$('geminiKey').disabled=true;$('skipTranscription').textContent='Cancel preparation';$('transcribeProgress').hidden=false;$('transcribeProgress').value=0;let prepared=0;
  const show=value=>$('transcribeStatus').textContent=value;
  try{
@@ -863,7 +903,7 @@ async function runTranscription(){
   for(let i=0;i<tasks.length;i++){
    if(signal.aborted)throw new DOMException('Canceled','AbortError');const q=tasks[i],n=nodeById(q.nodeId),source=n?.attachments?.find(a=>a.id===q.id);if(!source?.data)continue;
    const file=new File([bytesFromDataURL(source.data)],source.name,{type:source.mime});
-   await prepareTranscriptionQueue(n,source,file,job.decoder,signal,(message,fraction)=>{show(source.name+' · '+message);$('transcribeProgress').value=(i+fraction)/tasks.length;},provider);prepared++;
+   await prepareTranscriptionQueue(n,source,file,job.decoder,signal,(message,fraction)=>{show(source.name+' · '+message);$('transcribeProgress').value=(i+fraction)/tasks.length;},provider,includeSoundEvents);prepared++;
   }
   $('transcribeDialog').close();toast(`${prepared} transcription${prepared===1?'':'s'} queued${navigator.onLine===false?' until internet reconnects':''}. Save the project to keep pending work.`);
  }catch(error){show(signal.aborted?'Preparation canceled. Already queued audio and completed transcripts were kept.':'Audio preparation stopped: '+error.message);if(!signal.aborted)toast(error.message,true);}
@@ -924,5 +964,5 @@ function openActivity(){syncTranscriptionProviderUI();renderActivity();$('activi
 const activityBrand=document.querySelector('#appHeader .brand');
 if(activityBrand){activityBrand.setAttribute('role','button');activityBrand.setAttribute('tabindex','0');activityBrand.setAttribute('aria-label','View processing activity');activityBrand.setAttribute('title','Processing activity');activityBrand.onclick=openActivity;activityBrand.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openActivity();}};}
 $('closeActivity').onclick=()=>$('activityDialog').close();
-for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);}
+for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary'],['youtubeProvider','youtubeNotice']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);control.after(soundEventsChoice(id+'Sounds'));}
 const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='FUPCJ Server uses Whisper without an API charge. Once its audio is accepted, FUPCJ Server continues in the background. Gemini may incur API charges and requires this page to stay open.';$('activityProvider').after(asrNote);

@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
@@ -23,6 +23,8 @@ $ToolsDir = Join-Path $InstallRoot 'tools'
 $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
+# Keep every activation/rollback path in sync, including optional workers.
+$ProcessorFiles = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -251,9 +253,9 @@ function Stop-ProcessorForChange {
     }
     throw 'The Vision task did not stop. No application files should be changed until it stops.'
 }
-function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false) {
+function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false) {
     Initialize-ServerConfiguration $Configuration
-    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')
+    $Files = $ProcessorFiles
     $BackupDirectory = Join-Path $DownloadDir ('processor-update-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
     Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
@@ -274,6 +276,10 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The updated processor did not become healthy.' }
+        if ($CheckSoundEvents) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.localSoundEvents.available -ne $true) { throw 'The processor did not confirm the tested sound-event worker as available.' }
+        }
         if ($CheckGoogleSignIn) {
             $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
             if ($Health.firebaseAuth.enabled -ne $true -or $Health.firebaseAuth.projectId -ne $Configuration.firebaseAuth.projectId -or $Health.capabilities.accountProjects -ne $true) {
@@ -312,7 +318,7 @@ function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDi
     $BackupDirectory = Join-Path $DownloadDir ('local-activation-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
     Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
-    $Files = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py')
+    $Files = $ProcessorFiles
     $PreviousFiles = @{}
     foreach ($File in $Files) {
         $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
@@ -377,10 +383,11 @@ function Install-LocalTranscription {
         if ((Get-Item -LiteralPath $Directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked folder: $Directory" }
     }
     Write-Stage '1/4 Preparing the optional CPU transcription plugin'
-    foreach ($File in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','requirements-local.txt','setup_local.py')) {
+    foreach ($File in ($ProcessorFiles + @('requirements-local.txt'))) {
         Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File)
     }
-    Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'firebase_auth.py'),(Join-Path $StageDirectory 'audit_logs.py'),(Join-Path $StageDirectory 'setup_local.py'))
+    $CompileArguments = @('-m','py_compile') + @($ProcessorFiles | Where-Object { $_.EndsWith('.py') } | ForEach-Object { Join-Path $StageDirectory $_ })
+    Invoke-Checked $PythonExe $CompileArguments
     # Unique directories isolate this attempt from a previously enabled model,
     # optional packages, and the base processor's site-packages.
     $PackagesPath = Join-Path $PluginRoot ('whisper-' + $InstallId)
@@ -406,6 +413,143 @@ function Install-LocalTranscription {
     Write-Host "`nLocal English transcription is ready: CPU int8, four threads, one worker." -ForegroundColor Green
     Write-Host 'No Gemini or OpenAI API calls are needed for this plugin. Keep the FUPCJ Server awake and online.'
     Write-Host 'Choose FUPCJ Server transcription in Vision. Other paid API features remain separate.'
+}
+function Invoke-SoundLogged([string]$Executable, [string[]]$Arguments, [string]$LogBase) {
+    $Quoted = @($Arguments | ForEach-Object { '"' + $_.Replace('"','\"') + '"' })
+    $Process = Start-Process -FilePath $Executable -ArgumentList $Quoted -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$LogBase.log" -RedirectStandardError "$LogBase-errors.log"
+    if ($Process.ExitCode -ne 0) {
+        Get-Content -LiteralPath "$LogBase.log" -Tail 10 | Out-Host
+        Get-Content -LiteralPath "$LogBase-errors.log" -Tail 15 | Out-Host
+        throw "Sound-event setup/check failed ($($Process.ExitCode)). See $LogBase.log and $LogBase-errors.log. Existing processor and Whisper settings were retained."
+    }
+    Get-Content -LiteralPath "$LogBase.log" -Tail 6 | Out-Host
+}
+function Assert-PrivateSoundPath([string]$Path, [bool]$File = $false) {
+    if (-not $Path -or -not [IO.Path]::IsPathRooted($Path)) { throw 'The private sound runtime/assets path is invalid.' }
+    $FullPath = [IO.Path]::GetFullPath($Path)
+    $RootPrefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    if (-not $FullPath.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Sound runtime/assets must stay in the protected Vision installation.' }
+    $Current = Get-Item -LiteralPath $FullPath -Force
+    if ($File -and $Current.PSIsContainer) { throw 'The sound Python executable is missing.' }
+    while ($Current -and $Current.FullName.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        if ($Current.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked sound path: $($Current.FullName)" }
+        if ($Current.PSIsContainer) { $Current = $Current.Parent } else { $Current = $Current.Directory }
+    }
+}
+function Install-SoundEvents {
+    $Configuration = Read-Configuration
+    Assert-InstalledProcessor
+    if ($Configuration.localTranscription.enabled -ne $true) {
+        throw 'Combined speech and sound recognition requires local Whisper. Run -Action InstallLocalTranscription first (or EnableLocalTranscription if already installed), then InstallSoundEvents.'
+    }
+    $SpeechHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+    if ($SpeechHealth.localTranscription.available -ne $true) {
+        throw 'Local Whisper is not ready. Run -Action CheckLocalTranscription and resolve its reported issue before InstallSoundEvents.'
+    }
+    $InstallId = [Guid]::NewGuid().ToString('N')
+    $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
+    $StageDirectory = Join-Path $DownloadDir ('sound-install-' + $InstallId)
+    $PluginRoot = Join-Path $InstallRoot 'plugins'
+    $ModelRoot = Join-Path $InstallRoot 'models'
+    $LogRoot = Join-Path $InstallRoot 'data'
+    foreach ($Directory in @($StageDirectory,$PluginRoot,$ModelRoot,$LogRoot)) {
+        New-Item -ItemType Directory -Path $Directory -Force | Out-Null
+        Assert-PrivateSoundPath $Directory
+    }
+    Write-Stage '1/5 Preparing the optional sound-event worker'
+    foreach ($File in $ProcessorFiles) { Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File) }
+    $CompileArguments = @('-m','py_compile') + @($ProcessorFiles | Where-Object { $_.EndsWith('.py') } | ForEach-Object { Join-Path $StageDirectory $_ })
+    Invoke-Checked $PythonExe $CompileArguments
+    $RequirementsHash = (Get-FileHash -LiteralPath (Join-Path $StageDirectory 'requirements-sound.txt') -Algorithm SHA256).Hash
+    $SoundPythonVersion = '3.11.9'
+    $SoundPythonHash = '009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b'
+    $SoundRuntime = Join-Path $PluginRoot ('sound-runtime-' + $InstallId)
+    $SoundPython = Join-Path $SoundRuntime 'python.exe'
+    $ReuseRuntime = $false
+    if ($Configuration.localSoundEvents.pythonPath) {
+        $ExistingPython = [string]$Configuration.localSoundEvents.pythonPath
+        Assert-PrivateSoundPath $ExistingPython $true
+        $ExistingRuntime = Split-Path -Parent $ExistingPython
+        $RuntimeMarker = Join-Path $ExistingRuntime 'vision-sound-runtime.json'
+        if (Test-Path -LiteralPath $RuntimeMarker) {
+            $SavedRuntime = Get-Content -LiteralPath $RuntimeMarker -Raw | ConvertFrom-Json
+            if ($SavedRuntime.pythonVersion -eq $SoundPythonVersion -and $SavedRuntime.requirementsSha256 -eq $RequirementsHash) {
+                $SoundRuntime = $ExistingRuntime
+                $SoundPython = $ExistingPython
+                $ReuseRuntime = $true
+            }
+        }
+    }
+    Write-Stage '2/5 Preparing a separate private Python runtime (Whisper stays unchanged)'
+    if (-not $ReuseRuntime) {
+        New-Item -ItemType Directory -Path $SoundRuntime | Out-Null
+        Assert-PrivateSoundPath $SoundRuntime
+        $Archive = Join-Path $DownloadDir "python-$SoundPythonVersion-sound-embed-amd64.zip"
+        if (-not (Test-Path -LiteralPath $Archive) -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $SoundPythonHash) {
+            Get-Download "https://www.python.org/ftp/python/$SoundPythonVersion/python-$SoundPythonVersion-embed-amd64.zip" $Archive
+        }
+        if ((Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $SoundPythonHash) { throw 'The sound runtime download checksum did not match.' }
+        Expand-Archive -LiteralPath $Archive -DestinationPath $SoundRuntime -Force
+        $Signature = Get-AuthenticodeSignature -FilePath $SoundPython
+        if ($Signature.Status -ne 'Valid' -or $Signature.SignerCertificate.Subject -notmatch 'Python Software Foundation') { throw 'Sound runtime signature could not be verified.' }
+        # The path file contains only this runtime's packages and the protected
+        # application source. It never imports the Whisper package directory.
+        Write-Utf8 (Join-Path $SoundRuntime 'python311._pth') "python311.zip`r`n.`r`nLib\site-packages`r`n$InstallRoot`r`nimport site`r`n"
+        Write-Stage '3/5 Installing the private CPU model dependencies'
+        Write-Host 'The processor remains online during downloads. Progress is recorded in the data folder.'
+        # pip's --python targets the optional interpreter, even without pip in it.
+        # This does not install/upgrade anything in the running processor runtime.
+        Invoke-SoundLogged $PythonExe @('-m','pip','--isolated','--python',$SoundPython,'install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','-r',(Join-Path $StageDirectory 'requirements-sound.txt')) (Join-Path $LogRoot ('sound-install-' + $InstallId))
+    } else {
+        Write-Stage '3/5 Reusing the isolated sound runtime and cached dependencies'
+    }
+    $AssetsPath = Join-Path $ModelRoot 'sound-beats-db13a79ae90a'
+    New-Item -ItemType Directory -Path $AssetsPath -Force | Out-Null
+    Assert-PrivateSoundPath $AssetsPath
+    Write-Stage '4/5 Verifying the model download and running offline inference'
+    Write-Host 'The trained checkpoint is about 364 MB and is downloaded once. No training dataset or paid API is used.'
+    $CheckScript = Join-Path $StageDirectory 'setup_sound_events.py'
+    # setup_sound_events launches the worker with its own interpreter; the
+    # worker imports its sibling source path explicitly.
+    Invoke-SoundLogged $SoundPython @($CheckScript,'--assets',$AssetsPath,'--manifest',(Join-Path $StageDirectory 'sound-model-manifest.json'),'--worker',(Join-Path $StageDirectory 'sound_model.py'),'--download','--threads','2') (Join-Path $LogRoot ('sound-model-' + $InstallId))
+    Write-Utf8 (Join-Path $SoundRuntime 'vision-sound-runtime.json') (([ordered]@{ pythonVersion = $SoundPythonVersion; requirementsSha256 = $RequirementsHash } | ConvertTo-Json))
+    # Read current settings only after all downloads and actual inference pass.
+    $Configuration = Read-Configuration
+    $Configuration | Add-Member -NotePropertyName localSoundEvents -NotePropertyValue ([pscustomobject]@{
+        enabled = $true; pythonPath = $SoundPython; assetsPath = $AssetsPath; device = 'cpu'; cpuThreads = 2
+    }) -Force
+    Write-Stage '5/5 Enabling sound events with a brief processor restart'
+    Write-Host 'Stored projects, models and API settings are retained. Active processing may briefly reconnect.'
+    Set-ProcessorUpdate $Configuration $StageDirectory ($Configuration.firebaseAuth.enabled -eq $true) $true
+    if ($PSCommandPath -and [IO.Path]::GetFullPath($PSCommandPath) -ne (Join-Path $InstallRoot 'Setup-Vision-PC.ps1')) {
+        Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Force
+    }
+    Write-Host "`nSound-event recognition is ready on FUPCJ Server: CPU, two threads, one low-priority worker." -ForegroundColor Green
+    Write-Host 'Refresh Vision and select Include sound effects when processing audio or video. Speech-only processing is unchanged.'
+}
+function Check-SoundEvents {
+    $Configuration = Read-Configuration
+    Assert-InstalledProcessor
+    if (-not $Configuration.localSoundEvents.pythonPath -or -not $Configuration.localSoundEvents.assetsPath) { throw 'Install sound recognition first with -Action InstallSoundEvents.' }
+    Assert-PrivateSoundPath ([string]$Configuration.localSoundEvents.pythonPath) $true
+    Assert-PrivateSoundPath ([string]$Configuration.localSoundEvents.assetsPath)
+    Invoke-SoundLogged ([string]$Configuration.localSoundEvents.pythonPath) @((Join-Path $InstallRoot 'setup_sound_events.py'),'--assets',[string]$Configuration.localSoundEvents.assetsPath,'--threads','2') (Join-Path $InstallRoot ('data\sound-check-' + [Guid]::NewGuid().ToString('N')))
+    Write-Host 'The installed sound-event model passed offline inference. No downloads or server restart were needed.' -ForegroundColor Green
+}
+function Disable-SoundEvents {
+    $Configuration = Read-Configuration
+    Assert-InstalledProcessor
+    if (-not $Configuration.localSoundEvents -or $Configuration.localSoundEvents.enabled -ne $true) {
+        Write-Host 'Sound events are already disabled. No restart was needed.'
+        return
+    }
+    # Use the same transaction and rollback path without downloading code.
+    $StageDirectory = Join-Path $DownloadDir ('sound-disable-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $StageDirectory | Out-Null
+    foreach ($File in $ProcessorFiles) { Copy-Item -LiteralPath (Join-Path $InstallRoot $File) -Destination (Join-Path $StageDirectory $File) }
+    $Configuration.localSoundEvents.enabled = $false
+    Set-ProcessorUpdate $Configuration $StageDirectory
+    Write-Host 'Sound events disabled. Models and completed transcripts are retained; speech transcription remains available.'
 }
 function Export-Connection {
     $Config = Read-Configuration
@@ -504,6 +648,9 @@ try {
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
     if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
+    if ($Action -eq 'InstallSoundEvents') { Install-SoundEvents; exit 0 }
+    if ($Action -eq 'CheckSoundEvents') { Check-SoundEvents; exit 0 }
+    if ($Action -eq 'DisableSoundEvents') { Disable-SoundEvents; exit 0 }
     if ($Action -eq 'CheckLocalTranscription') {
         Assert-InstalledProcessor
         $CheckScript = Join-Path $InstallRoot 'setup_local.py'
@@ -553,10 +700,11 @@ try {
         New-Item -ItemType Directory -Path $StageDirectory | Out-Null
         # Stage source and install only missing/incompatible base dependencies
         # before the brief activation restart. Whisper packages/model are separate.
-        foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')) {
+        foreach ($FileName in $ProcessorFiles) {
             Get-Download "$SourceBase/$FileName" (Join-Path $StageDirectory $FileName)
         }
-        Invoke-Checked $PythonExe @('-m','py_compile',(Join-Path $StageDirectory 'server.py'),(Join-Path $StageDirectory 'media.py'),(Join-Path $StageDirectory 'uploaded_media.py'),(Join-Path $StageDirectory 'sessions.py'),(Join-Path $StageDirectory 'transcription.py'),(Join-Path $StageDirectory 'firebase_auth.py'),(Join-Path $StageDirectory 'audit_logs.py'),(Join-Path $StageDirectory 'setup_local.py'))
+        $CompileArguments = @('-m','py_compile') + @($ProcessorFiles | Where-Object { $_.EndsWith('.py') } | ForEach-Object { Join-Path $StageDirectory $_ })
+        Invoke-Checked $PythonExe $CompileArguments
         Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','-r',(Join-Path $StageDirectory 'requirements.txt'))
         Invoke-Checked $PythonExe @('-c','import jwt; from jwt.algorithms import RSAAlgorithm')
         # Reload after downloads to retain any intervening configuration changes.
@@ -622,7 +770,7 @@ try {
 
     Write-Stage '2/5 Downloading the processor and its private runtime'
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
-    foreach ($FileName in @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt')) {
+    foreach ($FileName in $ProcessorFiles) {
         Get-Download "$SourceBase/$FileName" (Join-Path $InstallRoot $FileName)
     }
     if (-not (Test-Path -LiteralPath $PythonExe)) {

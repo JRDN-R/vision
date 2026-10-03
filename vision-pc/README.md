@@ -252,6 +252,68 @@ To remove the processor, stop it, delete its **Vision Private FUPCJ Server** sch
 
 Leave Tailscale installed if you use it for anything else.
 
+## Optional local sound-event recognition
+
+Vision can add timestamped non-speech sounds beside the spoken-word transcript.
+Whisper continues recognizing speech; a separate PretrainedSED/BEATs worker
+recognizes sound events. Sound labels are estimates and can miss or misidentify
+events, especially over music or several simultaneous sounds.
+
+On **FUPCJ Server**, run this once in **Administrator PowerShell**:
+
+```powershell
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action InstallSoundEvents
+```
+
+Local Whisper must already be installed, enabled and healthy. If it is missing,
+run `InstallLocalTranscription` first; the sound installer checks this before
+downloading anything.
+
+The existing processor stays online while the installer prepares a separate,
+private Python 3.11 runtime with CPU PyTorch and NumPy 1.26. It does not change
+Whisper's Python 3.13 runtime or NumPy packages, install a system-wide Python,
+alter OBS/Tailscale, or install training dependencies. The trained checkpoint is
+364 MB; runtime/dependencies require additional download and disk space. Matching
+model assets and an already verified matching runtime are reused on a repeat
+installation. No training dataset is downloaded, and inference uses no paid API.
+
+Downloads use a pinned upstream source commit and SHA-256 hashes for each source
+file, checkpoint and ontology. The Windows Python archive is hash-checked, and
+its executable's Python Software Foundation signature is checked before use.
+The installer runs actual offline inference on generated silence before enabling
+the feature. This checks that the model executes, not its recognition accuracy.
+Only then does it briefly restart Vision, with rollback if the processor fails
+its health check. Saved projects, Google accounts, API settings and Whisper
+models are retained.
+
+After setup finishes, refresh Vision and select **Include sound effects** for the audio or
+video you want to process. Sound detection is optional; speech-only processing
+continues normally. The initial configuration uses **CPU, two threads and one
+low-priority worker**. Processing speed depends on the server and clip length;
+long recordings can take time. GPU installation is not included in this version.
+
+```powershell
+# Check the installed model with real offline inference, without restarting Vision:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action CheckSoundEvents
+
+# Disable new sound-event jobs and retain the downloaded model/completed transcripts:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action DisableSoundEvents
+```
+
+Run `InstallSoundEvents` again to re-enable and check the cached installation.
+Install/check details are written to `C:\ProgramData\VisionPC\data\sound-*.log`.
+The normal processor imports only the lightweight sound-worker controller;
+PyTorch and model weights load in the isolated subprocess when sound processing
+is requested, then unload when that job finishes.
+
+Model: [PretrainedSED](https://github.com/fschmid56/PretrainedSED), pinned at
+`1aa47e482f7e89904cba2338999345025d8b4e36`, using the release `v0.0.1`
+`BEATs_strong_1.pt` checkpoint. Upstream source retains its MIT license.
+The exact files, hashes and AudioSet ontology revision are recorded in
+`sound-model-manifest.json`; there is no automatic upstream code update.
+
 ## Installed components and official references
 
 - [Python embedded distribution](https://docs.python.org/3/using/windows.html#the-embeddable-package), contained inside Vision's installation.

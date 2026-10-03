@@ -127,7 +127,7 @@ def friendly_error(error):
     return "The video could not be processed. Try again later, or upload a video file directly."
 
 
-def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None):
+def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False):
     import yt_dlp
     from PIL import Image, ImageDraw, ImageFont
 
@@ -167,7 +167,7 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None):
                     return "Live broadcasts must finish first."
 
             options.update({
-                "format": "bv[height<=720]/b[height<=720]/b" if transcript else "bv*[height<=720]+ba/b[height<=720]/b",
+                "format": "bv[height<=720]/b[height<=720]/b" if transcript and not include_sound_events else "bv*[height<=720]+ba/b[height<=720]/b",
                 "merge_output_format": "mkv", "outtmpl": str(directory / "source.%(ext)s"),
                 "progress_hooks": [progress_hook], "match_filter": duration_filter,
             })
@@ -208,8 +208,8 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None):
                     frames.append({"name": f"frame-{index + 1:04d}-{timestamp(when).replace(':', '-')}.jpg",
                                    "timestamp": when, "mime": "image/jpeg", "data": data_url(output.getvalue(), "image/jpeg")})
             audio = None
-            if transcript is None:
-                update(job_id, phase="Preparing audio for Gemini", progress=90)
+            if transcript is None or include_sound_events:
+                update(job_id, phase="Preparing audio for speech and sound detection" if include_sound_events else "Preparing audio for transcription", progress=90)
                 audio_path = directory / "speech.m4a"
                 command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source), "-vn",
                            "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "32k", str(audio_path)]
@@ -219,10 +219,10 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None):
                 elif b"does not contain any stream" not in converted.stderr and b"matches no streams" not in converted.stderr:
                     raise ValueError("Screenshots were created, but the audio could not be prepared. Try uploading the video directly.")
             result = {"title": title, "url": url, "duration": duration, "snapshotInterval": interval,
-                      "thumbnail": frames[0]["data"], "frames": frames, "transcript": transcript, "audio": audio}
+                      "thumbnail": frames[0]["data"], "frames": frames, "transcript": transcript, "audio": audio,
+                      "includeSoundEvents": bool(include_sound_events)}
             encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         # The temporary directory (including source video and extracted audio) is gone.
         update(job_id, status="complete", phase="Ready to add to Vision", progress=100, result=encoded)
     except Exception as error:
         update(job_id, status="error", phase="Stopped", error=friendly_error(error))
-

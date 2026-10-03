@@ -8,6 +8,8 @@ const ROOT=path.resolve(__dirname,'..');
 const fixture=`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{background:#111;color:white}dialog{background:#222;color:white}button,select{font:16px sans-serif}button{padding:10px}button[hidden]{display:none!important}.tools{width:50px}.tools button{width:44px;height:44px}.full{width:100%}${fs.readFileSync(path.join(ROOT,'web/capture.css'),'utf8')}</style><div class="tools"></div><div id="board" style="width:300px;height:300px"></div><script>
 const $=id=>document.getElementById(id),board=$('board');let state={settings:{transcriptionProvider:'local'}},busy=false,ioBusy=false,accountAuthEpoch=0;
 function transcriptionProvider(){return state.settings.transcriptionProvider;}function setTranscriptionProvider(value){state.settings.transcriptionProvider=value;syncTranscriptionProviderUI();}function syncTranscriptionProviderUI(){}
+${fs.readFileSync(path.join(ROOT,'web/base.js'),'utf8').split('function soundEventsSelected(')[1].split('const SOUND_RESULT_LIMIT')[0].replace(/^/, 'function soundEventsSelected(')}
+function checkpoint(){}function markDirty(){}
 const captures=[],notices=[],streams=[],recorders=[];function toast(message){notices.push(message);}async function importBoardFiles(files,location,options){captures.push({files:files.map(f=>({name:f.name,type:f.type,size:f.size})),location,options});}
 let permissionMode='allow',permissionResolve,permissionReject,recorderFailure=false;
 function makeStream(){const track=new EventTarget();track.stopped=false;track.stop=()=>{track.stopped=true;};const stream={getTracks:()=>[track],track};streams.push(stream);return stream;}

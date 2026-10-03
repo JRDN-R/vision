@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -358,6 +359,186 @@ class TranscriptionTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
+
+    def test_sound_request_requires_installation_and_boolean_option(self):
+        health = self.client.get('/api/health', headers=self.headers).json
+        self.assertFalse(health['localSoundEvents']['ready'])
+        self.assertFalse(health['capabilities']['soundEvents'])
+        self.assertEqual(health['localSoundEvents']['engine'], 'PretrainedSED-BEATs')
+        self.assertEqual(self.submit({**self.body, 'includeSoundEvents': 'true'}).status_code, 400)
+        denied = self.submit({**self.body, 'includeSoundEvents': True})
+        self.assertEqual(denied.status_code, 503)
+        self.assertIn('InstallSoundEvents', denied.json['error'])
+        self.assertEqual(self.submit().status_code, 202)
+
+    def test_disabled_sound_installation_never_reports_ready(self):
+        adapter = SimpleNamespace(capability=lambda settings: {'ready': True, 'available': False, 'installed': True, 'status': 'disabled'})
+        with patch.dict(sys.modules, {'sound_model': adapter}):
+            result = self.service.sound_capability({'enabled': False})
+        self.assertFalse(result['ready'])
+        self.assertFalse(result['available'])
+        self.assertEqual(result['status'], 'disabled')
+
+    def test_sound_request_hash_snapshot_and_account_isolation(self):
+        self.service.sound_settings = {'enabled': True, 'pythonPath': '/sound/python', 'assetsPath': '/sound/assets',
+                                       'device': 'cpu', 'cpuThreads': 2}
+        body = {**self.body, 'includeSoundEvents': True}
+        with patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            job = self.submit(body).json['id']
+        self.assertEqual(self.submit(body).json['id'], job, 'Accepted receipts survive later installation changes')
+        self.assertEqual(self.submit().status_code, 409, 'Speech-only and sound requests cannot share a receipt')
+        self.service.sound_settings['assetsPath'] = '/different/assets'
+        self.service.settings['cpuThreads'] = 1
+        manifest = json.loads((self.service.root / job / 'manifest.json').read_text())
+        self.assertTrue(manifest['includeSoundEvents'])
+        self.assertEqual(manifest['soundSettings']['assetsPath'], '/sound/assets')
+        self.assertEqual(manifest['whisperSettings']['cpuThreads'], 4)
+        self.assertEqual(self.status(job, headers={**self.headers, 'X-Vision-Project-Key': 'z'*48}).status_code, 403)
+
+    def test_sound_merge_offsets_gaps_overlaps_and_speech_preserved(self):
+        speech = {'text': '[00:10:01.000] Hello\n\n[00:20:00.000] Again',
+                  'sections': [{'start': 600, 'end': 610, 'text': 'Hello'}, {'start': 1200, 'end': 1210, 'text': 'Again'}],
+                  'speechSegments': [{'start': 601, 'end': 604, 'text': 'Hello'}, {'start': 1200, 'end': 1202, 'text': 'Again'}]}
+        sound = {'status': 'completed', 'soundEvents': [{'start': 600, 'end': 602, 'label': 'Meow', 'score': .9},
+                                                     {'start': 1203, 'end': 1204, 'label': 'Smash, crash', 'score': .8}]}
+        result = local.combine_transcription(speech, sound)
+        self.assertEqual(result['speechText'], speech['text'])
+        self.assertIn('[00:10:00.000] *cat meows*', result['sections'][0]['text'])
+        self.assertIn('[00:20:03.000] *smash/crash*', result['sections'][1]['text'])
+        self.assertEqual(result['soundEventStatus'], 'completed')
+        self.assertEqual(result['warnings'], [])
+        self.assertIn('00:10:01,000 --> 00:10:02,000\n*cat meows*\nHello', result['combinedSrt'])
+        self.assertNotIn('00:10:04,000 --> 00:20:00,000', result['combinedSrt'], 'Section gaps must not get captions')
+        failed = local.combine_transcription(speech, None)
+        self.assertEqual(failed['speechSegments'], speech['speechSegments'])
+        self.assertEqual(failed['soundEventStatus'], 'failed')
+        self.assertIn('speech transcript is preserved', failed['warnings'][0])
+        self.assertIn('Hello', failed['combinedSrt'])
+        self.assertNotIn('meows', failed['text'])
+        with self.assertRaises(ValueError):
+            local.combine_transcription(speech, {'status': 'completed', 'soundEvents': [{'start': 800, 'end': 801, 'label': 'Meow', 'score': .9}]})
+        with self.assertRaises(ValueError):
+            local.combine_transcription(speech, {'status': 'partial', 'soundEvents': []})
+
+    def test_sound_failure_keeps_speech_and_sanitizes_failure_without_fallback(self):
+        with patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            job = self.submit({**self.body, 'includeSoundEvents': True}).json['id']
+        speech = {'text': '[00:10:01.000] Hello', 'sections': [{'start': 600, 'end': 630, 'text': 'Hello'}],
+                  'speechSegments': [{'start': 601, 'end': 602, 'text': 'Hello'}]}
+        with patch.object(self.service, 'run_worker', return_value=speech) as worker, \
+                patch.object(self.service, 'run_sound_events', side_effect=RuntimeError('secret /private sk-hidden')), \
+                patch.object(server.requests, 'request') as network, self.assertLogs(server.app.logger, level='ERROR'):
+            self.service.work_once()
+        self.assertEqual(worker.call_count, 1)
+        network.assert_not_called()
+        result = self.status(job).json
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['result']['speechText'], speech['text'])
+        self.assertEqual(result['result']['soundEventStatus'], 'failed')
+        self.assertNotIn('secret', json.dumps(result))
+        self.assertNotIn('/private', json.dumps(result))
+        self.service.prune()
+        self.assertFalse((self.service.root / job).exists())
+        self.assertEqual(self.status(job).json['result']['speechText'], speech['text'])
+
+    def test_sound_worker_is_sequential_and_restart_reuses_speech(self):
+        with patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            job = self.submit({**self.body, 'includeSoundEvents': True}).json['id']
+        speech = {'text': 'Hello', 'sections': [{'start': 600, 'end': 630, 'text': 'Hello'}],
+                  'speechSegments': [{'start': 601, 'end': 602, 'text': 'Hello'}]}
+        calls = []
+        def whisper(*args, **kwargs):
+            self.assertFalse(kwargs['sound'])
+            calls.append('whisper-finished')
+            local.atomic_json(self.service.root / job / 'result.json', speech)
+            return speech
+        def sounds(*args, **kwargs):
+            self.assertTrue((self.service.root / job / 'result.json').is_file())
+            calls.append('sound-started')
+            return {'status': 'completed', 'soundEvents': []}
+        with patch.object(self.service, 'run_worker', side_effect=whisper), patch.object(self.service, 'run_sound_events', side_effect=sounds):
+            self.service.run_local(self.service.row(job))
+        self.assertEqual(calls, ['whisper-finished', 'sound-started'])
+        with patch.object(self.service, 'run_worker') as whisper_worker, patch.object(self.service, 'run_sound_events', side_effect=sounds):
+            result = self.service.run_local(self.service.row(job))
+        whisper_worker.assert_not_called()
+        self.assertEqual(result['speechText'], 'Hello')
+
+    def test_sound_cancellation_cannot_publish_completed_result(self):
+        with patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            job = self.submit({**self.body, 'includeSoundEvents': True}).json['id']
+        speech = {'text': 'Hello', 'sections': [{'start': 600, 'end': 630, 'text': 'Hello'}],
+                  'speechSegments': [{'start': 601, 'end': 602, 'text': 'Hello'}]}
+        def cancel(*args):
+            self.client.delete(self.base+'/transcriptions/'+job, headers=self.headers)
+            return {'status': 'completed', 'soundEvents': []}
+        with patch.object(self.service, 'run_worker', return_value=speech), patch.object(self.service, 'run_sound_events', side_effect=cancel):
+            self.service.work_once()
+        result = self.status(job).json
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertNotIn('result', result)
+
+    def test_sound_enabled_whisper_writes_real_segment_ends_and_durable_offsets(self):
+        with patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            job = self.submit({**self.body, 'includeSoundEvents': True}).json['id']
+        model = Mock()
+        model.transcribe.return_value = (iter([SimpleNamespace(start=1.25, end=3.75, text='Hello')]), None)
+        def fake_media(command, **kwargs):
+            if 'ffprobe' in str(command[0]):
+                return SimpleNamespace(stdout=b'{"format":{"duration":"30"}}')
+            Path(command[-1]).write_bytes(b'wav')
+            return SimpleNamespace()
+        directory = self.service.root / job
+        with patch.object(local.subprocess, 'run', side_effect=fake_media):
+            local.process_directory(directory, self.model, 2, str(self.ffmpeg), model_factory=Mock(return_value=model))
+            local.process_directory(directory, self.model, 2, str(self.ffmpeg), model_factory=Mock(return_value=model))
+        self.assertEqual(model.transcribe.call_count, 1)
+        result = json.loads((directory / 'result.json').read_text())
+        self.assertEqual(result['speechSegments'], [{'start': 601.25, 'end': 603.75, 'text': 'Hello'}])
+        self.assertFalse((directory / 'working.wav').exists())
+
+    def test_real_sound_subprocess_lifecycle_and_cancellation(self):
+        job = self.submit().json['id']
+        value = self.service.row(job)
+        directory = self.service.root / job
+        adapter = self.root / 'sound_model.py'
+        adapter.write_text("import sys,os,json\nfrom pathlib import Path\n"
+                          "p=Path(sys.argv[sys.argv.index('--process')+1])\n"
+                          "assert os.environ['HF_HUB_OFFLINE']=='1'\n"
+                          "assert os.environ['OMP_NUM_THREADS']=='2'\n"
+                          "(p/'sound-result.json').write_text(json.dumps({'status':'completed','soundEvents':[]}))\n")
+        settings = {'enabled': True, 'pythonPath': sys.executable, 'assetsPath': str(self.root), 'cpuThreads': 2, 'device': 'cpu'}
+        with patch.object(local, '__file__', str(self.root / 'transcription.py')), \
+                patch.object(self.service, 'sound_capability', return_value={'ready': True}):
+            result = self.service.run_sound_events(value, settings)
+        self.assertEqual(result, {'status': 'completed', 'soundEvents': []})
+        (directory / 'sound-result.json').unlink()
+        adapter.write_text("import time,sys\nfrom pathlib import Path\n"
+                          "p=Path(sys.argv[sys.argv.index('--process')+1])\n"
+                          "(p/'started').touch()\ntime.sleep(60)\n")
+        children = []
+        launch = subprocess.Popen
+        def remember(*args, **kwargs):
+            child = launch(*args, **kwargs)
+            children.append(child)
+            return child
+        def request_cancel():
+            deadline = time.monotonic() + 5
+            while not (directory / 'started').is_file() and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.service.update(job, status='cancelled', cancel_requested=1)
+        thread = threading.Thread(target=request_cancel)
+        thread.start()
+        try:
+            with patch.object(local, '__file__', str(self.root / 'transcription.py')), \
+                    patch.object(self.service, 'sound_capability', return_value={'ready': True}), \
+                    patch.object(local.subprocess, 'Popen', side_effect=remember):
+                self.assertIsNone(self.service.run_sound_events(value, settings))
+        finally:
+            thread.join(timeout=6)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll(), 'Cancelling sound recognition must terminate its worker')
+        self.assertFalse((directory / 'sound-result.json').exists())
 
 
 if __name__ == '__main__':

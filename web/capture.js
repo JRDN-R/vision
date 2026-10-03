@@ -4,6 +4,7 @@ const boardCaptureDialog=document.createElement('dialog');
 boardCaptureDialog.id='boardCaptureDialog';boardCaptureDialog.setAttribute('aria-labelledby','boardCaptureTitle');
 boardCaptureDialog.innerHTML='<div class="capture-heading"><h2 id="boardCaptureTitle">Voice note</h2><button type="button" id="boardCaptureClose" class="dialog-close" aria-label="Close voice note">×</button></div><p class="intro">Record your instructions. Stop to add a module; its text fills in when transcription finishes.</p><label for="boardCaptureProvider">Transcription for new recordings and files</label><select id="boardCaptureProvider" class="full"><option value="local">FUPCJ Server · Whisper · no API charge</option><option value="gemini">Gemini · API billing may apply</option></select><p id="boardCaptureProviderNote" class="mini-note"></p><div class="capture-clock" aria-hidden="true"><span class="capture-light"></span><span id="boardCaptureClock">00:00</span></div><p id="boardCaptureStatus" role="status" aria-live="polite"></p><div class="capture-actions"><button type="button" id="boardCaptureCancel" class="ghost">Close</button><button type="button" id="boardCaptureStart" class="primary">Start recording</button><button type="button" id="boardCaptureStop" class="primary" hidden>Stop and add module</button></div>';
 document.body.appendChild(boardCaptureDialog);
+$('boardCaptureProviderNote').after(soundEventsChoice('boardCaptureSounds'));
 const boardCaptureButton=document.createElement('button');boardCaptureButton.type='button';boardCaptureButton.id='boardCaptureButton';boardCaptureButton.title='Voice note and transcription settings';boardCaptureButton.setAttribute('aria-label','Voice note and transcription settings');
 boardCaptureButton.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 11.5v1a6.5 6.5 0 0 0 13 0v-1M12 19v3M8.5 22h7"/></svg>';
 document.querySelector('.tools').appendChild(boardCaptureButton);
@@ -13,11 +14,11 @@ function boardCaptureCurrent(session){return state===session.project&&session.ac
 function boardCaptureAvailable(){return !!navigator.mediaDevices?.getUserMedia&&typeof MediaRecorder==='function';}
 function boardCaptureMessage(message,error=false){$('boardCaptureStatus').textContent=message;boardCaptureDialog.classList.toggle('capture-error',error);}
 function syncBoardCaptureProvider(){
- const provider=transcriptionProvider();$('boardCaptureProvider').value=provider;
+ const provider=transcriptionProvider();$('boardCaptureProvider').value=provider;syncSoundEventsChoice('boardCaptureSounds',!!boardCaptureSession);
  $('boardCaptureProviderNote').textContent=provider==='gemini'?'Gemini may incur API charges. This preference is saved with the project. Keep Vision open while Gemini transcribes.':'Whisper runs on FUPCJ Server without an API charge. Keep Vision open until FUPCJ Server accepts the audio.';
 }
 function boardCaptureControls(mode='idle'){
- const active=mode!=='idle';$('boardCaptureProvider').disabled=active;$('boardCaptureStart').hidden=mode==='recording'||mode==='stopping';$('boardCaptureStart').disabled=active||!boardCaptureAvailable();$('boardCaptureStop').hidden=mode!=='recording';$('boardCaptureCancel').textContent=active?'Cancel recording':'Close';boardCaptureDialog.classList.toggle('capture-recording',mode==='recording');
+ const active=mode!=='idle';$('boardCaptureProvider').disabled=active;syncSoundEventsChoice('boardCaptureSounds',active);$('boardCaptureStart').hidden=mode==='recording'||mode==='stopping';$('boardCaptureStart').disabled=active||!boardCaptureAvailable();$('boardCaptureStop').hidden=mode!=='recording';$('boardCaptureCancel').textContent=active?'Cancel recording':'Close';boardCaptureDialog.classList.toggle('capture-recording',mode==='recording');
  boardCaptureButton.setAttribute('aria-pressed',String(mode==='recording'));
 }
 function releaseBoardCapture(session){
@@ -53,7 +54,7 @@ async function finishBoardCapture(session){
  const extension=/mp4|aac/.test(type)?'m4a':/ogg/.test(type)?'ogg':'webm';
  const file=new File([audio],'Voice note '+new Date().toISOString().replace(/[:.]/g,'-')+'.'+extension,{type});
  boardCaptureDialog.close();
- try{await importBoardFiles([file],session.location,{dictation:true,title:'Voice note',provider:session.provider,importContext:session.importContext});}
+ try{await importBoardFiles([file],session.location,{dictation:true,title:'Voice note',provider:session.provider,includeSoundEvents:session.includeSoundEvents,importContext:session.importContext});}
  catch(error){if(boardCaptureCurrent(session))toast('Could not add the recording: '+error.message,true);}
 }
 function stopBoardCapture(message='Adding your voice note…'){
@@ -65,7 +66,7 @@ function stopBoardCapture(message='Adding your voice note…'){
 async function startBoardCapture(){
  if(boardCaptureSession||busy||ioBusy||(typeof projectAccountSwitching!=='undefined'&&projectAccountSwitching))return;
  if(!boardCaptureAvailable()){boardCaptureMessage('This browser cannot record audio. Import a recording instead.',true);return;}
- const r=board.getBoundingClientRect(),session={serial:++boardCaptureSerial,project:state,accountEpoch:typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch,importContext:typeof boardImportContext==='function'?boardImportContext():null,provider:transcriptionProvider(),location:{x:r.left+r.width/2,y:r.top+r.height/2},chunks:[],bytes:0,stream:null,recorder:null,trackListeners:[]};
+ const r=board.getBoundingClientRect(),session={serial:++boardCaptureSerial,project:state,accountEpoch:typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch,importContext:typeof boardImportContext==='function'?boardImportContext():null,provider:transcriptionProvider(),includeSoundEvents:soundEventsSelected(),location:{x:r.left+r.width/2,y:r.top+r.height/2},chunks:[],bytes:0,stream:null,recorder:null,trackListeners:[]};
  boardCaptureSession=session;boardCaptureControls('requesting');boardCaptureMessage('Waiting for microphone permission…');
  try{
   const stream=await navigator.mediaDevices.getUserMedia({audio:true});

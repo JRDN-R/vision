@@ -91,7 +91,7 @@ function normalizeYouTubeImports(raw){
   if(!value||typeof value!=='object')return[];try{
    const text=(x,max=180)=>String(x||'').slice(0,max),clientRequestId=text(value.clientRequestId),targetId=text(value.targetId),sourceId=text(value.sourceId),u=new URL(value.backendUrl);
    if(!/^[\w-]{8,180}$/.test(clientRequestId)||!targetId||!sourceId||u.protocol!=='https:'||u.username||u.password||u.search||u.hash||ids.has(clientRequestId))return[];
-   ids.add(clientRequestId);return[{url:normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
+   ids.add(clientRequestId);return[{provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.provider!=='gemini'&&value.includeSoundEvents===true,url:normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
   }catch{return[];}
  });
 }
@@ -122,19 +122,19 @@ function resumeYouTubeImports(){
  renderActivity();scheduleYouTubeImports();
 }
 function openYouTubeDialog(){
- $('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Otherwise, audio goes to your selected transcription provider. Save your project to keep pending imports; reopen it to resume.';
+ syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Include sound effects sends the full audio to FUPCJ Server Whisper and sound detection. Save your project to keep pending imports; reopen it to resume.';
  $('youtubeImport').disabled=youtubeImportRunning;$('youtubeDialog').showModal();$('youtubeURL').focus();
 }
 async function importYouTube(){
  if(youtubeImportRunning||busy||ioBusy)return;let url;
  try{url=normalizeYouTubeURL($('youtubeURL').value);}catch(e){$('youtubeNotice').textContent=e.message;return;}
- const createNew=$('youtubeNewModule').checked||!nodeById(selected),targetId=selected,project=state;
+ const createNew=$('youtubeNewModule').checked||!nodeById(selected),targetId=selected,project=state,provider=transcriptionProvider(),includeSoundEvents=soundEventsSelected(provider);
  try{
   $('youtubeImport').disabled=true;await ensureCloudSession();if(state!==project)return;
   const n=createNew?await createModuleNode('video','YouTube video'):nodeById(targetId);if(state!==project||!n||!state.nodes.includes(n))return;
   const source={id:uid(),name:'YouTube video.mp4',mime:'video/mp4',size:0,metadataOnly:true,role:'video',status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   checkpoint();n.attachments.push(source);if(createNew)n.videoSourceId=source.id;
-  const job={url,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
+  const job={url,provider,includeSoundEvents,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
   state.youtubeImports=state.youtubeImports||[];state.youtubeImports.push(job);youtubeTask(job);markDirty();updateVideoAttachments(n);renderActivity();$('youtubeDialog').close();
   toast('YouTube import queued. Save your project to keep pending work.');scheduleYouTubeImports();
  }catch(error){$('youtubeNotice').textContent=error.message;toast(error.message,true);}finally{$('youtubeImport').disabled=youtubeImportRunning;}
@@ -158,7 +158,7 @@ async function pumpYouTubeImports(){
  const check=()=>{if(signal.aborted||state!==project||!state.nodes.includes(n)||!n.attachments.includes(source)||!state.youtubeImports?.includes(job))throw new DOMException('The destination module is no longer open.','AbortError');if(job.backendUrl!==cloudConfig?.backendUrl)throw new DOMException('The connection changed.','AbortError');};
  try{
   check();job.status='working';task.detail=job.remoteId?'Reconnecting':'Connecting';renderActivity();
-  if(!job.remoteId){const accepted=await youtubeAPI('youtube',{method:'POST',body:JSON.stringify({url:job.url,clientRequestId:job.clientRequestId}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
+  if(!job.remoteId){const accepted=await youtubeAPI('youtube',{method:'POST',body:JSON.stringify({url:job.url,clientRequestId:job.clientRequestId,includeSoundEvents:job.includeSoundEvents===true}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
   let result;
   while(true){check();const status=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{signal});check();task.detail=status.phase||status.status;task.progress=Math.min(90,Number(status.progress||0)*.9);renderActivity();if(['error','failed','cancelled'].includes(status.status)){terminal=true;throw new Error(status.error||'The video could not be imported.');}if(status.status==='complete'){result=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId)+'/result',{signal});check();break;}await new Promise(resolve=>setTimeout(resolve,1200));}
   while(busy||ioBusy){check();await new Promise(resolve=>setTimeout(resolve,250));}check();ioBusy=true;ownsIO=true;
@@ -171,13 +171,14 @@ async function pumpYouTubeImports(){
   // Replace only generated frames belonging to this import when recovering an interrupted application.
   n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);source.snapshotsStatus='complete';
   if(n.videoSourceId===source.id){n.title=title;n.src=result.frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;await renderNode(n);}
-  if(result.transcript?.text){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
+  if(job.includeSoundEvents&&!result.audio?.data)throw new Error('Sound effects require the full YouTube audio. Update FUPCJ Server and retry this import. Captions alone cannot detect sounds.');
+  if(result.transcript?.text&&!job.includeSoundEvents){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
   else if(result.audio?.data){
    if(!(n.transcriptionJobs||[]).some(j=>j.sourceId===source.id)&&source.transcriptionStatus!=='complete'){
     task.detail='Preparing audio for transcription';task.progress=90;renderActivity();
     const file=new File([bytesFromDataURL(result.audio.data)],result.audio.name||'youtube-audio.m4a',{type:result.audio.mime||'audio/mp4'});
     const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',signal),fvadBinary=await embeddedBytes('fvad-wasm-source',signal);check();decoder=decoderClient();await decoder.request('init',{wasmBinary,fvadBinary},[wasmBinary.buffer,fvadBinary.buffer]);check();
-    await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>{task.detail=message;task.progress=90+10*fraction;renderActivity();});check();
+    await prepareTranscriptionQueue(n,source,file,decoder,signal,(message,fraction)=>{task.detail=message;task.progress=90+10*fraction;renderActivity();},job.provider,job.includeSoundEvents);check();
    }
    recordActivity(title,'Screenshots ready · transcription queued');toast('Screenshots ready. Audio queued for transcription.');
   }else{storeVideoTranscript(n,source,'No captions or audio track were available.','no-audio');recordActivity(title,'Screenshots ready');toast('YouTube screenshots ready.');}

@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,10 @@ DISK_RESERVE = 1024 * 1024 * 1024
 RETAIN_SECONDS = 35 * 86400
 CHUNK_SECONDS = 900
 RESULT_LIMIT = 4 * 1024 * 1024
+# A combined receipt also carries the untouched speech track and export SRT.
+# Each text/worker result remains bounded at 4 MiB; allow their representations.
+COMBINED_RESULT_LIMIT = 16 * 1024 * 1024
+SOUND_WARNING = 'Sound recognition could not finish. The speech transcript is preserved; retry with sound recognition enabled after checking FUPCJ Server.'
 MIME_FORMATS = {'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav'}
 TERMINAL = ('complete', 'error', 'cancelled')
 DIAGNOSTIC_LIMIT = 64 * 1024
@@ -115,6 +120,82 @@ def timestamp(value):
     return f'{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d}.{ms % 1000:03d}'
 
 
+def sound_caption(label):
+    aliases = {'Meow': 'cat meows', 'Bark': 'dog barks', 'Smash, crash': 'smash/crash', 'Wail, moan': 'wail/moan'}
+    return '*' + aliases.get(label, label.lower()) + '*'
+
+
+def combined_srt(cues):
+    """Split overlaps into valid, non-overlapping SRT cues with both tracks."""
+    boundaries = {}
+    for number, cue in enumerate(cues):
+        start, end = round(cue['start'] * 1000), round(cue['end'] * 1000)
+        if end <= start:
+            continue
+        boundaries.setdefault(start, [[], []])[0].append(number)
+        boundaries.setdefault(end, [[], []])[1].append(number)
+    active, previous, blocks, text_size = set(), None, [], 0
+    for moment in sorted(boundaries):
+        if previous is not None and moment > previous and active:
+            text = '\n'.join(dict.fromkeys(cues[index]['text'] for index in sorted(active)))
+            if blocks and blocks[-1][1] == previous and blocks[-1][2] == text:
+                blocks[-1][1] = moment
+            else:
+                blocks.append([previous, moment, text])
+                text_size += len(text.encode('utf-8')) + 70
+                if text_size > RESULT_LIMIT:
+                    raise ValueError('combined-srt-too-large')
+        begins, ends = boundaries[moment]
+        active.difference_update(ends)
+        active.update(begins)
+        previous = moment
+    return '\n\n'.join(f'{index}\n{timestamp(start / 1000).replace(".", ",")} --> '
+                       f'{timestamp(end / 1000).replace(".", ",")}\n{text}'
+                       for index, (start, end, text) in enumerate(blocks, 1)) + ('\n' if blocks else '')
+
+
+def combine_transcription(speech, sound_result):
+    """Keep speech recoverable even if the optional sound worker fails."""
+    events = []
+    sections = speech.get('sections', [])
+    if sound_result is not None:
+        if not isinstance(sound_result, dict) or sound_result.get('status') != 'completed':
+            raise ValueError('sound-recognition-incomplete')
+        raw = sound_result.get('soundEvents')
+        if not isinstance(raw, list) or len(raw) > 50000:
+            raise ValueError('invalid-sound-events')
+        for event in raw:
+            if not isinstance(event, dict):
+                raise ValueError('invalid-sound-event')
+            start, end, score, label = (event.get(name) for name in ('start', 'end', 'score', 'label'))
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in (start, end, score)):
+                raise ValueError('invalid-sound-event-timing')
+            if not (0 <= start < end <= MAX_DURATION and 0 <= score <= 1):
+                raise ValueError('invalid-sound-event-bounds')
+            if not isinstance(label, str) or not label.strip() or len(label) > 160:
+                raise ValueError('invalid-sound-event-label')
+            if not any(section['start'] <= start < end <= section['end'] + .001 for section in sections):
+                raise ValueError('sound-event-outside-audio-section')
+            label = ' '.join(label.split())
+            events.append({'start': start, 'end': end, 'label': label, 'score': score})
+    events.sort(key=lambda value: (value['start'], value['end'], value['label']))
+    segments = speech.get('speechSegments', [])
+    cues = [dict(value) for value in segments]
+    cues.extend({'start': event['start'], 'end': event['end'], 'text': sound_caption(event['label'])} for event in events)
+    cues.sort(key=lambda value: (value['start'], value['end'], value['text']))
+    combined_sections = []
+    for section in sections:
+        section_cues = [cue for cue in cues if section['start'] <= cue['start'] < section['end']]
+        text = '\n'.join(f'[{timestamp(cue["start"])}] {cue["text"]}' for cue in section_cues)
+        combined_sections.append({**section, 'text': text or section.get('text', '')})
+    if sum(len(section['text'].encode('utf-8')) for section in combined_sections) > RESULT_LIMIT:
+        raise ValueError('combined-timeline-too-large')
+    return {**speech, 'speechText': speech.get('text', ''), 'speechSegments': segments,
+            'text': '\n\n'.join(section['text'] for section in combined_sections), 'sections': combined_sections,
+            'soundEvents': events, 'soundEventStatus': 'completed' if sound_result is not None else 'failed',
+            'warnings': [] if sound_result is not None else [SOUND_WARNING], 'combinedSrt': combined_srt(cues)}
+
+
 class LocalTranscription:
     def __init__(self, app, connect_db, api_error, sessions):
         self.app, self.db, self.Error, self.sessions = app, connect_db, api_error, sessions
@@ -139,6 +220,19 @@ class LocalTranscription:
             self.settings['cpuThreads'] = max(1, min(4, int(supplied.get('cpuThreads', 4))))
         except (ValueError, TypeError):
             self.settings['cpuThreads'] = 4
+        sound = config.get('localSoundEvents')
+        sound = sound if isinstance(sound, dict) else {}
+        self.sound_settings = {'enabled': sound.get('enabled') is True,
+                               'device': sound.get('device') if sound.get('device') in ('cpu', 'cuda') else 'cpu'}
+        for key in ('pythonPath', 'assetsPath'):
+            path = sound.get(key)
+            if isinstance(path, str) and path:
+                path = Path(path)
+                self.sound_settings[key] = str((path if path.is_absolute() else Path(config_path).parent / path).resolve())
+        try:
+            self.sound_settings['cpuThreads'] = max(1, min(4, int(sound.get('cpuThreads', 2))))
+        except (TypeError, ValueError):
+            self.sound_settings['cpuThreads'] = 2
         self.root.mkdir(exist_ok=True, mode=0o700)
         with self.db() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS local_transcriptions (
@@ -167,6 +261,25 @@ class LocalTranscription:
         return dict(installed=installed, ready=ready, available=ready, status=status, engine='faster-whisper',
                     model=model.name if model_ok else None, cpuThreads=self.settings['cpuThreads'], maxRequestBytes=BODY_LIMIT)
 
+    def sound_capability(self, settings=None):
+        settings = self.sound_settings if settings is None else settings
+        # Import only the standard-library adapter here, never the model runtime.
+        try:
+            from sound_model import capability
+            result = capability(settings)
+        except (ImportError, OSError, ValueError):
+            result = dict(available=False, ready=False, installed=False,
+                          status='not-installed' if settings.get('enabled') else 'disabled')
+        result = dict(result, engine='PretrainedSED-BEATs')
+        ffmpeg = Path(self.app.config['FFMPEG'])
+        tools_ready = ffmpeg.is_file() and ffmpeg.with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe').is_file()
+        result['ready'] = result['available'] = bool(settings.get('enabled') is True and result.get('available', result.get('ready')) and tools_ready)
+        if settings.get('enabled') is not True:
+            result['status'] = 'disabled'
+        if settings.get('enabled') is True and not tools_ready and result.get('installed'):
+            result['status'] = 'missing-media-tools'
+        return result
+
     def row(self, job_id, project_id=None):
         if not re.fullmatch(r'[0-9a-f]{24}', job_id):
             raise self.Error('This transcription is not part of the project.', 404)
@@ -187,6 +300,8 @@ class LocalTranscription:
     def validate(self, body):
         if not isinstance(body, dict):
             raise self.Error('Send audio sections for transcription.')
+        if not isinstance(body.get('includeSoundEvents', False), bool):
+            raise self.Error('includeSoundEvents must be true or false.')
         client = body.get('clientRequestId')
         if not isinstance(client, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client):
             raise self.Error('A valid transcription request identifier is required.')
@@ -200,6 +315,9 @@ class LocalTranscription:
         validated, previous_end, duration, encoded_size = [], 0, 0, 0
         digest = hashlib.sha256()
         digest.update(source.encode('utf-8'))
+        # Keep existing speech-only receipts idempotent across this upgrade.
+        if body.get('includeSoundEvents'):
+            digest.update(b'\x00includeSoundEvents:true\x00')
         for section in sections:
             if not isinstance(section, dict):
                 raise self.Error('Invalid audio section.')
@@ -238,7 +356,9 @@ class LocalTranscription:
         def local_transcription_create(project_id):
             self.sessions.project(project_id)
             request.max_content_length = BODY_LIMIT
-            client, source, sections, duration, content_hash = self.validate(request.get_json(silent=True))
+            body = request.get_json(silent=True)
+            client, source, sections, duration, content_hash = self.validate(body)
+            include_sounds = body.get('includeSoundEvents', False)
             directory = None
             try:
                 with self.db() as db:
@@ -250,6 +370,8 @@ class LocalTranscription:
                         return jsonify(id=previous['id'], status=previous['status']), 202
                     if not self.capability()['ready']:
                         raise self.Error('Server transcription is not ready. Enable the server transcription plugin on FUPCJ Server first.', 503)
+                    if include_sounds and not self.sound_capability()['ready']:
+                        raise self.Error('Sound recognition is not ready. Run InstallSoundEvents on FUPCJ Server first, or turn off Include sound effects to transcribe speech only.', 503)
                     pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing')").fetchone()[0]
                     if pending >= MAX_QUEUED:
                         raise self.Error('The server transcription queue is full. Wait for a job to finish.', 429)
@@ -266,7 +388,8 @@ class LocalTranscription:
                             out.flush()
                             os.fsync(out.fileno())
                         manifest.append({k: v for k, v in section.items() if k != 'data'} | {'file': path.name})
-                    atomic_json(directory / 'manifest.json', {'sections': manifest})
+                    atomic_json(directory / 'manifest.json', {'sections': manifest, 'includeSoundEvents': include_sounds,
+                        'whisperSettings': dict(self.settings), 'soundSettings': dict(self.sound_settings) if include_sounds else None})
                     db.execute('''INSERT INTO local_transcriptions
                         (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at)
                         VALUES(?,?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?)''',
@@ -275,7 +398,7 @@ class LocalTranscription:
             finally:
                 if directory:
                     shutil.rmtree(directory, ignore_errors=True)
-            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType='whisper',
+            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType='whisper_sound' if include_sounds else 'whisper',
                                                         uploadedBytes=sum(len(s['data']) for s in sections))
             self.wake.set()
             return jsonify(id=job_id, status='queued'), 202
@@ -336,7 +459,11 @@ class LocalTranscription:
                 value = dict(row)
                 db.execute("UPDATE local_transcriptions SET status='processing',phase='Loading Whisper model',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
             processing_started = time.monotonic()
+            job_type, partial = 'whisper', False
             try:
+                manifest = json.loads((self.root / value['id'] / 'manifest.json').read_text(encoding='utf-8'))
+                if manifest.get('includeSoundEvents'):
+                    job_type = 'whisper_sound'
                 result = self.run_local(value)
                 current = self.row(value['id'])
                 if current['status'] == 'cancelled':
@@ -344,10 +471,11 @@ class LocalTranscription:
                 if self.stop.is_set():
                     self.update(value['id'], only_processing=True, status='queued', phase='Waiting for FUPCJ Server restart')
                 elif result is not None:
+                    partial = result.get('soundEventStatus') == 'failed'
                     result_json = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
-                    if len(result_json.encode()) > RESULT_LIMIT:
+                    if len(result_json.encode()) > (COMBINED_RESULT_LIMIT if 'soundEventStatus' in result else RESULT_LIMIT):
                         raise RuntimeError('result-too-large')
-                    self.update(value['id'], only_processing=True, status='complete', phase='Ready', progress=100, result_json=result_json, error=None)
+                    self.update(value['id'], only_processing=True, status='complete', phase='Speech ready; sound recognition failed' if partial else 'Ready', progress=100, result_json=result_json, error=None)
                 else:
                     raise RuntimeError('no-result')
             except Exception as error:
@@ -357,8 +485,8 @@ class LocalTranscription:
                     self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=str(safe))
             finally:
                 current = self.row(value['id'])
-                self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType='whisper',
-                    outcome=current['status'], processingWallSeconds=time.monotonic()-processing_started,
+                self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType=job_type,
+                    outcome='speech_only' if partial and current['status'] == 'complete' else current['status'], processingWallSeconds=time.monotonic()-processing_started,
                     outputBytes=len((current.get('result_json') or '').encode('utf-8')))
             return True
         finally:
@@ -366,15 +494,56 @@ class LocalTranscription:
 
     def run_local(self, value):
         directory = self.root / value['id']
+        manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+        settings = manifest.get('whisperSettings') or self.settings
+        include_sounds = manifest.get('includeSoundEvents') is True
         command = [sys.executable, str(Path(__file__).resolve()), '--process', str(directory),
-                   '--model', self.settings['modelPath'], '--threads', str(self.settings['cpuThreads']),
+                   '--model', settings['modelPath'], '--threads', str(settings['cpuThreads']),
                    '--ffmpeg', self.app.config['FFMPEG']]
-        if self.settings.get('packagesPath'):
-            command += ['--packages', self.settings['packagesPath']]
+        if settings.get('packagesPath'):
+            command += ['--packages', settings['packagesPath']]
+        # Save speech before loading a separate sound model. A service restart
+        # during sound recognition can reuse the completed speech transcript.
+        speech_path = directory / 'result.json'
+        if include_sounds and speech_path.is_file() and speech_path.stat().st_size <= RESULT_LIMIT:
+            result = json.loads(speech_path.read_text(encoding='utf-8'))
+        else:
+            result = self.run_worker(value, command, settings['cpuThreads'], sound=False, combined=include_sounds)
+        if result is None or not include_sounds:
+            return result
+        if self.stop.is_set() or self.row(value['id'])['cancel_requested']:
+            return None
+        try:
+            sounds = self.run_sound_events(value, manifest.get('soundSettings') or {})
+            if sounds is None:
+                return None
+            combined = combine_transcription(result, sounds)
+            if len(json.dumps(combined, ensure_ascii=False, separators=(',', ':')).encode('utf-8')) > COMBINED_RESULT_LIMIT:
+                raise ValueError('combined-result-too-large')
+            return combined
+        except Exception:
+            self.app.logger.exception('Sound recognition job %s failed; preserving speech.', value['id'])
+            return combine_transcription(result, None)
+
+    def run_sound_events(self, value, settings):
+        if not self.sound_capability(settings)['ready']:
+            raise RuntimeError('sound-recognition-not-ready')
+        directory = self.root / value['id']
+        command = [settings['pythonPath'], str(Path(__file__).with_name('sound_model.py').resolve()),
+                   '--process', str(directory), '--assets', settings['assetsPath'],
+                   '--ffmpeg', self.app.config['FFMPEG'], '--device', settings.get('device', 'cpu'),
+                   '--threads', str(settings.get('cpuThreads', 2))]
+        self.update(value['id'], only_processing=True, phase='Recognizing sound events', progress=50)
+        return self.run_worker(value, command, settings.get('cpuThreads', 2), sound=True, combined=True)
+
+    def run_worker(self, value, command, threads, sound=False, combined=False):
+        directory = self.root / value['id']
+        prefix = 'sound-' if sound else ''
         env = os.environ.copy()
-        env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', OMP_NUM_THREADS=str(self.settings['cpuThreads']),
-                   OPENBLAS_NUM_THREADS='1', MKL_NUM_THREADS=str(self.settings['cpuThreads']))
-        flags = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == 'nt' else {}
+        env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', OMP_NUM_THREADS=str(threads),
+                   OPENBLAS_NUM_THREADS='1', MKL_NUM_THREADS=str(threads))
+        flags = ({'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+                 if os.name == 'nt' else {'start_new_session': True} if sound else {})
         child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, **flags)
         diagnostic = bytearray()
         def drain_errors():
@@ -388,24 +557,27 @@ class LocalTranscription:
             while child.poll() is None:
                 if self.stop.wait(0.5) or self.row(value['id'])['cancel_requested']:
                     return None
-                if time.monotonic() - started > min(12 * 3600, max(1800, value['duration'] * 4 + 900)):
+                if time.monotonic() - started > min(12 * 3600, max(1800, value['duration'] * (8 if sound else 4) + 900)):
                     raise TimeoutError('local-transcription-timeout')
-                checkpoint = directory / 'progress.json'
+                checkpoint = directory / (prefix + 'progress.json')
                 if checkpoint.is_file():
                     progress = json.loads(checkpoint.read_text(encoding='utf-8'))
                     last_stage = progress.get('stage', 'startup')
                     state = (progress.get('phase'), progress.get('progress'))
                     if state != previous:
-                        self.update(value['id'], only_processing=True, phase=str(state[0])[:120], progress=min(99, max(0, float(state[1]))))
+                        percent = min(99, max(0, float(state[1] or 0)))
+                        if combined:
+                            percent = (50 if sound else 0) + percent / 2
+                        self.update(value['id'], only_processing=True, phase=str(state[0] or 'Recognizing sound events')[:120], progress=percent)
                         previous = state
-                if last_stage in ('startup', 'dependencies') and time.monotonic() - started > DEPENDENCY_TIMEOUT:
+                if last_stage in ('startup', 'dependencies') and time.monotonic() - started > (max(300, DEPENDENCY_TIMEOUT) if sound else DEPENDENCY_TIMEOUT):
                     raise LocalRunnerError('dependency-timeout', last_stage)
             if child.returncode:
                 reader.join(timeout=2)
-                self.app.logger.error('Local transcription job %s worker exited %s. Local diagnostic:\n%s',
-                    value['id'], child.returncode, diagnostic.decode('utf-8', errors='replace'))
+                self.app.logger.error('%s job %s worker exited %s. Local diagnostic:\n%s',
+                    'Sound recognition' if sound else 'Local transcription', value['id'], child.returncode, diagnostic.decode('utf-8', errors='replace'))
                 failure, progress = {}, {}
-                for name, target in (('failure.json', failure), ('progress.json', progress)):
+                for name, target in ((prefix + 'failure.json', failure), (prefix + 'progress.json', progress)):
                     try:
                         path = directory / name
                         if path.stat().st_size <= 8192:
@@ -416,7 +588,7 @@ class LocalTranscription:
                         pass
                 raise LocalRunnerError(failure.get('code', 'worker'), progress.get('stage', 'startup'),
                                        failure.get('exception'), child.returncode)
-            path = directory / 'result.json'
+            path = directory / (prefix + 'result.json')
             if path.stat().st_size > RESULT_LIMIT:
                 raise RuntimeError('result-too-large')
             return json.loads(path.read_text(encoding='utf-8'))
@@ -424,7 +596,22 @@ class LocalTranscription:
             if child.stdin:
                 child.stdin.close()
             if child.poll() is None:
-                child.terminate()
+                if sound and os.name == 'nt':
+                    # The decoder belongs to this one worker; terminate its
+                    # process tree so cancellation cannot leave FFmpeg running.
+                    try:
+                        subprocess.run(['taskkill.exe', '/PID', str(child.pid), '/T', '/F'],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+                    except (OSError, subprocess.TimeoutExpired):
+                        child.terminate()
+                elif sound:
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    child.terminate()
                 try:
                     child.wait(timeout=5)
                 except subprocess.TimeoutExpired:
@@ -467,9 +654,13 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
     stage('model')
     model = model_factory(str(model_path), device='cpu', compute_type='int8', cpu_threads=max(1, min(4, cpu_threads)),
                           num_workers=1, local_files_only=True)
-    sections = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))['sections']
+    manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+    sections = manifest['sections']
+    include_sounds = manifest.get('includeSoundEvents') is True
     checkpoint_path = directory / 'checkpoint.json'
     checkpoint = json.loads(checkpoint_path.read_text(encoding='utf-8')) if checkpoint_path.is_file() else {'chunks': {}}
+    if include_sounds:
+        checkpoint.setdefault('speechChunks', {})
     flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
     probe = str(Path(ffmpeg).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe'))
     actual_total = 0
@@ -485,13 +676,13 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
         actual_total += actual
     if actual_total > MAX_DURATION + 5:
         raise ValueError('audio-too-long')
-    completed, result_sections = 0, []
+    completed, result_sections, speech_segments = 0, [], []
     for index, section in enumerate(sections):
         lines = []
         for offset in range(0, math.ceil(section['duration']), CHUNK_SECONDS):
             length = min(CHUNK_SECONDS, section['duration'] - offset)
             key = f'{index}:{offset}'
-            if key not in checkpoint['chunks']:
+            if key not in checkpoint['chunks'] or (include_sounds and key not in checkpoint['speechChunks']):
                 if shutil.disk_usage(directory).free < DISK_RESERVE:
                     raise OSError('low-disk-space')
                 wav = directory / 'working.wav'
@@ -505,13 +696,21 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
                     stage('transcribe', phase, min(99, 100 * completed / actual_total))
                     segments, _info = model.transcribe(str(wav), beam_size=3, vad_filter=True,
                         condition_on_previous_text=False, word_timestamps=False)
-                    chunk_lines, text_size, last_progress = [], 0, 0
+                    chunk_lines, chunk_segments, text_size, last_progress = [], [], 0, 0
                     for segment in segments:
                         text = ' '.join(str(segment.text).split())
                         if text and math.isfinite(float(segment.start)):
                             when = min(section['end'], section['start'] + offset + max(0, float(segment.start)))
                             chunk_lines.append(f'[{timestamp(when)}] {text}')
                             text_size += len(chunk_lines[-1])
+                            if include_sounds:
+                                section_limit = min(section['end'], section['start'] + offset + length)
+                                start = min(section_limit, when)
+                                finish = float(getattr(segment, 'end', float(segment.start) + 1))
+                                if math.isfinite(finish):
+                                    finish = min(section_limit, section['start'] + offset + max(0, finish))
+                                    if finish > start:
+                                        chunk_segments.append({'start': start, 'end': finish, 'text': text})
                         if text_size > RESULT_LIMIT:
                             raise ValueError('transcript-too-large')
                         if time.monotonic() - last_progress > 1:
@@ -519,17 +718,24 @@ def process_directory(directory, model_path, cpu_threads, ffmpeg, packages=None,
                             stage('transcribe', phase, min(99, 100 * (completed + position) / actual_total))
                             last_progress = time.monotonic()
                     checkpoint['chunks'][key] = chunk_lines
+                    if include_sounds:
+                        checkpoint['speechChunks'][key] = chunk_segments
                     atomic_json(checkpoint_path, checkpoint)
                     if checkpoint_path.stat().st_size > RESULT_LIMIT:
                         raise ValueError('transcript-too-large')
                 finally:
                     wav.unlink(missing_ok=True)
             lines.extend(checkpoint['chunks'][key])
+            if include_sounds:
+                speech_segments.extend(checkpoint['speechChunks'][key])
             completed += length
             stage('transcribe', f'Transcribing section {index+1} of {len(sections)}', min(99, 100 * completed / actual_total))
         result_sections.append({'start': section['start'], 'end': section['end'], 'text': '\n'.join(lines)})
     stage('save', progress=99)
-    atomic_json(directory / 'result.json', {'text': '\n\n'.join(s['text'] for s in result_sections), 'sections': result_sections})
+    result = {'text': '\n\n'.join(s['text'] for s in result_sections), 'sections': result_sections}
+    if include_sounds:
+        result['speechSegments'] = speech_segments
+    atomic_json(directory / 'result.json', result)
 
 
 def start_parent_watch():

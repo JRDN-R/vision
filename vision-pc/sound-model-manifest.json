@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "engine": "PretrainedSED-BEATs",
+  "upstreamCommit": "1aa47e482f7e89904cba2338999345025d8b4e36",
+  "checkpoint": "BEATs_strong_1",
+  "sampleRate": 16000,
+  "segmentSeconds": 10,
+  "frameSeconds": 0.04,
+  "classes": 447,
+  "files": [
+    {
+      "path": "PretrainedSED/config.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/config.py",
+      "sha256": "10e4012076a9b884d1222c9b199b8bbd7a916775d46d1c2425c264d12cebe683",
+      "size": 1372
+    },
+    {
+      "path": "PretrainedSED/LICENSE",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/LICENSE",
+      "sha256": "399acc6d903cfd65a6cd5baba6a99af3ee534d79161b07854c1a6ffeab3dc88b",
+      "size": 1071
+    },
+    {
+      "path": "PretrainedSED/data_util/audioset_classes.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/data_util/audioset_classes.py",
+      "sha256": "771adb63768b349171a1668b4b0c2f932f6db1b21e10450c7e9136c0397e076f",
+      "size": 54411
+    },
+    {
+      "path": "PretrainedSED/models/beats/BEATs.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/beats/BEATs.py",
+      "sha256": "c7dba46d9f83a09b0096337816795a2239cbab5f9e979c558c57f15953667765",
+      "size": 6931
+    },
+    {
+      "path": "PretrainedSED/models/beats/BEATs_wrapper.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/beats/BEATs_wrapper.py",
+      "sha256": "2b8b73b6752c58feb5f26432e659d3345a68ef10f5928c4af8c70eed23d6e04f",
+      "size": 2041
+    },
+    {
+      "path": "PretrainedSED/models/beats/backbone.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/beats/backbone.py",
+      "sha256": "5df93ef883d2fea0f9a3763caa93690b706905094d6ec727f86f68a827b87c5d",
+      "size": 30779
+    },
+    {
+      "path": "PretrainedSED/models/beats/modules.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/beats/modules.py",
+      "sha256": "c4b4170b1c4286717b606788f617a0a768af076cdeaaa9b1d35bf70d6c3859fe",
+      "size": 7386
+    },
+    {
+      "path": "PretrainedSED/models/prediction_wrapper.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/prediction_wrapper.py",
+      "sha256": "53f37f7870a85e64242d07dd087ffb4c72a8a8413d43a593ab46bba85b3983eb",
+      "size": 10385
+    },
+    {
+      "path": "PretrainedSED/models/seq_models.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/seq_models.py",
+      "sha256": "d7ac2ab967ce65e3dad7dd3cf717163a107e8cc0b57bdab0d775a72f075ca667",
+      "size": 1163
+    },
+    {
+      "path": "PretrainedSED/models/transformer_wrapper.py",
+      "url": "https://raw.githubusercontent.com/fschmid56/PretrainedSED/1aa47e482f7e89904cba2338999345025d8b4e36/models/transformer_wrapper.py",
+      "sha256": "8ca7284475e47dc00a5f476bd8d937400e35c95ae3164b8fd9111505c4a4dee8",
+      "size": 506
+    },
+    {
+      "path": "BEATs_strong_1.pt",
+      "url": "https://github.com/fschmid56/PretrainedSED/releases/download/v0.0.1/BEATs_strong_1.pt",
+      "sha256": "db13a79ae90a0cfd0f9911a6a1d8cdb89324322bee642dcfe32de022123b8b54",
+      "size": 364091999
+    },
+    {
+      "path": "ontology.json",
+      "url": "https://raw.githubusercontent.com/audioset/ontology/d417d32bf59c711abb5910fd2f76a0eb44697991/ontology.json",
+      "sha256": "9c685f4403eecc3ca9be37fd7285cf212feaaea6ff7229d3e7ca89e0d1f2d15d",
+      "size": 342780
+    }
+  ]
+}
