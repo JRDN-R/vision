@@ -19,10 +19,10 @@ DURATION = 300
 
 
 class Trials:
-    def __init__(self, app, db, error, sessions, transcriptions, uploaded_media, youtube_lock):
+    def __init__(self, app, db, error, sessions, transcriptions, uploaded_media, youtube_lock, documents=None):
         self.app, self.db, self.Error = app, db, error
         self.sessions, self.transcriptions, self.uploaded_media = sessions, transcriptions, uploaded_media
-        self.youtube_lock = youtube_lock
+        self.youtube_lock, self.documents = youtube_lock, documents
         self.stop = threading.Event()
         self.lock = threading.RLock()
         self.inflight = {}
@@ -110,7 +110,7 @@ class Trials:
             allowed = ((path in ('/api/health', '/api/trial/status') and method == 'GET') or
                        (path in ('/api/youtube', '/api/trial/end') and method == 'POST') or
                        (re.fullmatch(r'/api/jobs/[0-9a-f]{24}(?:/result)?', path) and method in ('GET', 'DELETE')) or
-                       (re.fullmatch(r'/api/projects/' + re.escape(pid) + r'/(?:media|transcriptions|runs)(?:/[A-Za-z0-9_./-]+)?', path)
+                       (re.fullmatch(r'/api/projects/' + re.escape(pid) + r'/(?:media|transcriptions|runs|documents)(?:/[A-Za-z0-9_./-]+)?', path)
                         and method in ('GET', 'POST', 'DELETE')))
             if not allowed:
                 raise self.Error('Sign in with Google to save projects or use account features.', 403, 'trial-account-required')
@@ -155,13 +155,15 @@ class Trials:
                 db.execute("UPDATE local_transcriptions SET cancel_requested=1,status='cancelled',phase='Trial ended',result_json=NULL WHERE project_id=?", (pid,))
                 db.execute("UPDATE uploaded_media SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE project_id=?", (pid,))
                 db.execute('UPDATE project_runs SET cancel_requested=1 WHERE project_id=?', (pid,))
+                if self.documents is not None:
+                    db.execute("UPDATE document_jobs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE project_id=?", (pid,))
                 db.execute("UPDATE jobs SET status='error',phase='Trial ended' WHERE uid=? AND status='queued'", ('trial:' + ident,))
             self.sessions.wake.set()
             with self.lock:
                 if self.inflight.get(ident):
                     continue
                 with ExitStack() as stack:
-                    locks = (self.sessions.worker_lock, self.transcriptions._worker_lock, self.uploaded_media.worker_lock, self.youtube_lock)
+                    locks = (self.sessions.worker_lock, self.transcriptions._worker_lock, self.uploaded_media.worker_lock, self.youtube_lock) + ((self.documents.worker_lock,) if self.documents is not None else ())
                     if not all(self._acquire(stack, lock) for lock in locks):
                         continue
                     with self.db() as db:
@@ -171,6 +173,10 @@ class Trials:
                             for row in db.execute('SELECT id FROM ' + table + ' WHERE project_id=?', (pid,)).fetchall():
                                 self.remove_directory(root / row['id'])
                             db.execute('DELETE FROM ' + table + ' WHERE project_id=?', (pid,))
+                        if self.documents is not None:
+                            for row in db.execute('SELECT id FROM document_jobs WHERE project_id=?', (pid,)).fetchall():
+                                self.remove_directory(self.documents.root / row['id'])
+                            db.execute('DELETE FROM document_jobs WHERE project_id=?', (pid,))
                         for row in db.execute('SELECT id FROM project_runs WHERE project_id=?', (pid,)).fetchall():
                             db.execute('DELETE FROM run_events WHERE run_id=?', (row['id'],))
                             db.execute('DELETE FROM run_artifacts WHERE run_id=?', (row['id'],))

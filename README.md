@@ -131,3 +131,9 @@ python web/build.py
 The builder updates the portable HTML and the small GitHub Pages loader's cache
 version. Both use the same application. Server service source and tests are in
 `vision-pc/`. Tests use mocked OpenAI responses and do not make billable API calls.
+
+## Background document preparation
+
+The new Standard document installer prepares PDFs, Office files, spreadsheet data,
+image OCR and common text/archive formats on FUPCJ Server while you build a board.
+See [installation, storage and format coverage](vision-pc/DOCUMENTS.md). The larger Docling profile is optional.

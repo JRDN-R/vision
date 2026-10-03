@@ -384,3 +384,9 @@ Audio preparation preserves the video timeline: it pads a delayed audio track
 at the start, fills timestamp gaps and trailing silence, then takes each section
 at its video-relative offset. Timestamped transcripts therefore stay aligned
 with video snapshots even when the original audio starts late or finishes early.
+
+## Background document preparation
+
+The new Standard document installer prepares PDFs, Office files, spreadsheet data,
+image OCR and common text/archive formats on FUPCJ Server while you build a board.
+See [installation, storage and format coverage](DOCUMENTS.md). The larger Docling profile is optional.

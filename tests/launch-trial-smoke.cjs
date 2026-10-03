@@ -7,7 +7,7 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
  const browser=await chromium.launch({headless:true,...(process.env.CHROME?{executablePath:process.env.CHROME}:{}),args:['--no-sandbox']});
  try{
   let html=fs.readFileSync('Vision.html','utf8');const end=html.lastIndexOf('})();');
-  html=html.slice(0,end)+`window.__trialTest={state:()=>state,ready:()=>accountReady,active:()=>trialActive(),signed:()=>accountSignedIn(),expire:()=>{trialSession.until=performance.now()-1;return trialFinish()},session:()=>trialSession,cloud:(p,o)=>cloudFetch(p,o),remote:()=>ensureRemoteProject(),dirty:()=>markDirty(),backup:()=>projectBackup(),signOut:()=>accountGoogleSignOut()};\n`+html.slice(end);
+  html=html.slice(0,end)+`window.__trialTest={state:()=>state,ready:()=>accountReady,active:()=>trialActive(),signed:()=>accountSignedIn(),expire:()=>{trialSession.until=performance.now()-1;return trialFinish()},session:()=>trialSession,cloud:(p,o)=>cloudFetch(p,o),remote:()=>ensureRemoteProject(),dirty:()=>markDirty(),backup:()=>projectBackup(),signOut:()=>accountGoogleSignOut(),collectDocuments:()=>collectDocumentSources()};\n`+html.slice(end);
   const errors=[],requests=[],receipts=new Map();let serverOffset=0;
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true});
   const json=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(data)});
@@ -25,9 +25,12 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
     return json(route,{...r,serverNow:now},201);
    }
    if(u.pathname==='/api/trial/end'){for(const r of receipts.values())if(auth==='Bearer '+r.token)r.closed=true;return json(route,{ended:true});}
-   if(u.pathname==='/api/health')return json(route,{capabilities:{persistentProjects:true,projectRevision:true,accountProjects:true,temporarySessions:true,localTranscription:true,soundEvents:true,uploadedMedia:true}});
+   if(u.pathname==='/api/health')return json(route,{capabilities:{persistentProjects:true,projectRevision:true,accountProjects:true,temporarySessions:true,localTranscription:true,soundEvents:true,uploadedMedia:true,documentProcessing:true},documentProcessing:{ready:true}});
    if(u.pathname==='/api/account/openai-key')return json(route,{saved:false,apiKey:''});
    if(u.pathname==='/api/projects')return json(route,{projects:[]});
+   if(u.pathname.includes('/documents/request/'))return json(route,{error:'No receipt yet'},404);
+   if(u.pathname.endsWith('/documents')&&req.method()==='POST')return json(route,{id:'d'.repeat(24),status:'queued',sourceSha256:'e'.repeat(64)},202);
+   if(u.pathname.includes('/documents/'))return json(route,{id:'d'.repeat(24),status:'processing',phase:'Processing document'});
    if(u.pathname.endsWith('/transcriptions'))return json(route,{id:'f'.repeat(24),status:'queued'},202);
    if(u.pathname.startsWith('/api/projects/'))return json(route,{runs:[],items:[],revision:1});
    return route.abort();
@@ -55,6 +58,13 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   assert.equal(requests.filter(r=>r.auth.startsWith('Bearer trial_')&&r.method==='PUT').length,0);
   const storage=await page.evaluate(()=>JSON.stringify({...localStorage})+JSON.stringify({...sessionStorage}));
   assert.ok(!storage.includes('GUEST CONTENT MUST NOT PERSIST'));assert.ok(!storage.includes('guest-api-key'));
+  await page.evaluate(()=>{
+   const n=window.__trialTest.state().nodes[0];n.attachments.push({id:'trial-doc-file',name:'trial.txt',mime:'text/plain',data:'data:text/plain;base64,VGVtcG9yYXJ5',size:9,generated:false});
+   window.__trialTest.collectDocuments();
+   if(!n.attachments.find(a=>a.id==='trial-doc-file').documentJob)throw new Error('Guest document was not scheduled');
+  });
+  await page.waitForFunction(()=>window.__trialTest.state().nodes[0].attachments.find(a=>a.id==='trial-doc-file').documentJob.id==='d'.repeat(24));
+  assert.ok(requests.some(r=>r.path.endsWith('/documents')&&r.method==='POST'&&r.auth.startsWith('Bearer trial_')));
   const expiry=await page.evaluate(()=>window.__trialTest.session().expiresAt);
   serverOffset=45;await page.reload();await page.waitForFunction(()=>window.__trialTest?.active());
   assert.equal(await page.evaluate(()=>window.__trialTest.session().expiresAt),expiry);
@@ -79,6 +89,6 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   assert.equal(await page.locator('#consoleKey').inputValue(),'');
   assert.equal(await page.locator('#trialBanner').isVisible(),false);
   assert.deepEqual(errors,[]);await context.close();
-  console.log('PASS: small supplied logo; accessible Why modal; no auto-consumption; trial processing without saved project; no guest persistence; refresh retains deadline; expiry wipes and locks; Google sign-in unaffected.');
+  console.log('PASS: small supplied logo; accessible Why modal; no auto-consumption; trial processing and document extraction without saved project; no guest persistence; refresh retains deadline; expiry wipes and locks; Google sign-in unaffected.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

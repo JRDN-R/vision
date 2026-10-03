@@ -146,6 +146,32 @@ class TrialTests(unittest.TestCase):
         server.configure(self.config)
         self.assertEqual(self.start()[0], 403)
 
+    def test_guest_document_jobs_are_isolated_expire_and_remove_temporary_files(self):
+        _, lease = self.start()
+        _, other = self.start('b', '198.51.100.2')
+        base = '/api/projects/' + lease['project']['id'] + '/documents'
+        with patch.object(server.documents, 'capability', return_value={'ready': True}):
+            status, job = self.call('POST', base, headers=self.headers(lease),
+                data={'requestId': 'doc-trial', 'file': (io.BytesIO(b'Temporary document'), 'trial.txt')})
+        self.assertEqual(status, 202, job)
+        directory = server.documents.root / job['id']
+        self.assertTrue((directory / 'source').exists())
+        self.assertEqual(self.call('GET', base + '/' + job['id'], headers=self.headers(other))[0], 403)
+        self.assertEqual(self.call('GET', base, headers=self.headers(lease))[0], 200)
+        self.expire(lease)
+        with patch.object(server.documents, 'capability', return_value={'ready': True}), \
+             patch.object(server.documents, 'process') as processor:
+            server.documents.work_once()
+            processor.assert_not_called()
+        with server.documents.worker_lock:
+            server.trials.sweep()
+            self.assertTrue(directory.exists(), 'Do not delete while a document writer holds the lock')
+        server.trials.sweep()
+        self.assertFalse(directory.exists())
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM document_jobs').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM projects').fetchone()[0], 0)
+
     def test_early_signin_end_revokes_and_does_not_reset(self):
         _, lease = self.start()
         self.assertEqual(self.call('POST', '/api/trial/end', headers=self.headers(lease))[0], 200)

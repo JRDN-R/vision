@@ -2,10 +2,11 @@
 // Only a random device receipt is persisted, never guest projects, files or API keys.
 const TRIAL_RECEIPT='vision-guest-receipt-v1';
 let trialSession=null,trialStarting=false,trialTimer=0,trialFinishing=null;
+function trialRemaining(){return trialSession?Math.max(0,Math.min(trialSession.until-performance.now(),trialSession.wallUntil-Date.now())):0;}
 const trialRequests=new Set();
 function trialRead(){try{const v=JSON.parse(localStorage.getItem(TRIAL_RECEIPT)||'null');return v&&/^[a-f0-9]{64}$/.test(v.deviceId)?v:null;}catch{return null;}}
 function trialWrite(value){try{localStorage.setItem(TRIAL_RECEIPT,JSON.stringify(value));return true;}catch{return false;}}
-function trialActive(){return !!(trialSession&&performance.now()<trialSession.until&&cloudAuth?.kind==='trial');}
+function trialActive(){return !!(trialSession&&trialRemaining()>0&&cloudAuth?.kind==='trial');}
 function accountCanUseApp(){return !accountGateLocked&&(accountSignedIn()||trialActive());}
 function trialPaint(){
  const button=$('accountGateTrial'),receipt=trialRead();
@@ -13,7 +14,7 @@ function trialPaint(){
  button.textContent=trialStarting?'Starting your trial…':receipt?.consumed?'Trial used · sign in to continue':'Or try for five minutes';
  $('trialBanner').hidden=!trialActive();
  if(trialActive()){
-  const seconds=Math.max(0,Math.ceil((trialSession.until-performance.now())/1000));
+  const seconds=Math.max(0,Math.ceil(trialRemaining()/1000));
   const text=Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+' left';
   if($('trialCountdown').textContent!==text)$('trialCountdown').textContent=text;
  }
@@ -37,7 +38,7 @@ async function trialStart({resume=false}={}){
   accountGateLocked=true;accountAuthEpoch++;accountClearRunKey();
   cloudConfig={kind:'private-pc',backendUrl:ACCOUNT_PC,publicAccess:true};
   cloudAuth={kind:'trial',backendUrl:ACCOUNT_PC,accessToken:value.token};
-  trialSession={...value,project:{...value.project,backendUrl:ACCOUNT_PC},until:performance.now()+remaining*1000};
+  trialSession={...value,project:{...value.project,backendUrl:ACCOUNT_PC},until:performance.now()+remaining*1000,wallUntil:Date.now()+remaining*1000};
   trialWrite({...receipt,started:true,consumed:false});projectHealthCache=null;
   await projectSwitchAccountScope('trial:'+value.id);
   state.projectCloud={...trialSession.project};accountGateLocked=false;accountError='';

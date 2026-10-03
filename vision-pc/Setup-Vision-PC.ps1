@@ -5,11 +5,12 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
-    [string]$FirebaseProjectId = 'visionboard-api'
+    [string]$FirebaseProjectId = 'visionboard-api',
+    [ValidateSet('Full','Standard')][string]$DocumentProfile = 'Standard'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +25,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -253,7 +254,7 @@ function Stop-ProcessorForChange {
     }
     throw 'The Vision task did not stop. No application files should be changed until it stops.'
 }
-function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false) {
+function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false, [bool]$CheckDocuments = $false) {
     Initialize-ServerConfiguration $Configuration
     $Files = $ProcessorFiles
     $BackupDirectory = Join-Path $DownloadDir ('processor-update-backup-' + [Guid]::NewGuid().ToString('N'))
@@ -276,6 +277,10 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The updated processor did not become healthy.' }
+        if ($CheckDocuments) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.documentProcessing.ready -ne $true) { throw 'The processor did not confirm document processing as ready.' }
+        }
         if ($CheckSoundEvents) {
             $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
             if ($Health.localSoundEvents.available -ne $true) { throw 'The processor did not confirm the tested sound-event worker as available.' }
@@ -648,6 +653,14 @@ try {
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
     if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
+    if ($Action -eq 'InstallDocumentTools') {
+        Assert-InstalledProcessor
+        $DocumentHelper = Join-Path $DownloadDir ('document-tools-'+[Guid]::NewGuid().ToString('N')+'.ps1')
+        Get-Download "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc/Document-Tools.ps1" $DocumentHelper
+        . $DocumentHelper
+        try { Install-DocumentTools $PSCommandPath } finally { Remove-Item -LiteralPath $DocumentHelper -ErrorAction SilentlyContinue }
+        exit 0
+    }
     if ($Action -eq 'InstallSoundEvents') { Install-SoundEvents; exit 0 }
     if ($Action -eq 'CheckSoundEvents') { Check-SoundEvents; exit 0 }
     if ($Action -eq 'DisableSoundEvents') { Disable-SoundEvents; exit 0 }

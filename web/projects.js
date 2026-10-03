@@ -172,6 +172,7 @@ async function projectSwitchAccountScope(scope){
  try{
   if(typeof cancelBoardCapture==='function')cancelBoardCapture();
   if(typeof cancelBoardImports==='function')cancelBoardImports();
+  if(typeof documentWorkers!=='undefined'){for(const r of documentWorkers.values())r.controller.abort();documentWorkers.clear();}
   await projectBackup();projectEpoch++;projectGeneration=0;projectHealthCache=null;
   cancelTranscriptionQueue();projectStorageScope=scope;projectRecentMemory=[];
   state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}};

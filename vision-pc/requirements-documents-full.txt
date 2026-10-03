@@ -1,0 +1,4 @@
+# CPU wheels are installed first from the official PyTorch CPU index.
+torch==2.8.0+cpu
+torchvision==0.23.0+cpu
+docling==2.133.0

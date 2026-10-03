@@ -1,0 +1,23 @@
+name: Verify Windows document OCR installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vision-pc/Document-Tools.ps1'
+      - 'tests/document-installer-windows.ps1'
+      - '.github/workflows/document-installer-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ocr:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and exercise Tesseract with Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/document-installer-windows.ps1
