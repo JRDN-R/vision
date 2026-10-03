@@ -7,7 +7,7 @@ permissions:
   contents: write
 concurrency:
   group: vision-guest-verification
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -26,6 +26,7 @@ jobs:
           {
             python .vision-launch-backend.py
             python .vision-launch-frontend.py
+            python .vision-launch-fixes.py
             python -m compileall -q vision-pc
             python web/build.py
           } 2>&1 | tee test-results/build.log
@@ -65,7 +66,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .vision-launch-backend.py .vision-launch-frontend.py .github/workflows/verify-launch.yml
+          git rm .vision-launch-backend.py .vision-launch-frontend.py .vision-launch-fixes.py .github/workflows/verify-launch.yml
           git add web/auth.js web/auth.css web/build.py web/cloud.js web/document.html web/projects.js web/launch.js web/GUEST-TRIAL.md
           git add vision-pc/server.py vision-pc/sessions.py vision-pc/media.py vision-pc/transcription.py vision-pc/uploaded_media.py vision-pc/Setup-Vision-PC.ps1 vision-pc/trials.py vision-pc/test_trials.py
           git add tests/account-auth.test.cjs tests/launch-trial-smoke.cjs Vision.html index.html
