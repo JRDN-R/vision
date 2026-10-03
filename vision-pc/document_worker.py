@@ -94,11 +94,20 @@ class Extractor:
         import pytesseract
         pytesseract.pytesseract.tesseract_cmd = self.options['tesseractPath']
         data_dir = Path(self.options['tesseractPath']).parent / 'tessdata'
-        config = '--psm 3'
-        if (data_dir / 'eng.traineddata').is_file():
-            config += ' --tessdata-dir "' + str(data_dir) + '"'
         self.tools.add('Tesseract')
-        return pytesseract.image_to_string(picture, lang='eng', config=config, timeout=90)
+        previous_prefix = os.environ.get('TESSDATA_PREFIX')
+        try:
+            # pytesseract 0.3.13 preserves literal quotes in Windows config
+            # arguments. Pass the directory through the child environment so
+            # paths with spaces work and unrelated system settings cannot win.
+            if (data_dir / 'eng.traineddata').is_file():
+                os.environ['TESSDATA_PREFIX'] = str(data_dir)
+            return pytesseract.image_to_string(picture, lang='eng', config='--psm 3', timeout=90)
+        finally:
+            if previous_prefix is None:
+                os.environ.pop('TESSDATA_PREFIX', None)
+            else:
+                os.environ['TESSDATA_PREFIX'] = previous_prefix
 
     def embedded_images(self, path, prefix, location):
         from PIL import Image
@@ -326,9 +335,13 @@ def convert(source, name, options, output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     for flag in ('source', 'name', 'output', 'options'): parser.add_argument('--'+flag, required=True)
+    parser.add_argument('--diagnostics', action='store_true', help='Show details for administrator-run fixture checks.')
     args = parser.parse_args()
     try:
         convert(Path(args.source), args.name, json.loads(Path(args.options).read_text(encoding='utf-8-sig')), Path(args.output))
     except Exception as error:
         print('Document conversion failed: '+type(error).__name__)
+        if args.diagnostics:
+            import traceback
+            traceback.print_exc()
         raise SystemExit(1)

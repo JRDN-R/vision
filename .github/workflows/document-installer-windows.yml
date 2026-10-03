@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'vision-pc/Document-Tools.ps1'
+      - 'vision-pc/Setup-Vision-PC.ps1'
+      - 'vision-pc/document_worker.py'
+      - 'vision-pc/setup_documents.py'
+      - 'vision-pc/requirements-documents.txt'
       - 'tests/document-installer-windows.ps1'
       - '.github/workflows/document-installer-windows.yml'
   workflow_dispatch:
@@ -18,6 +22,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install and exercise Tesseract with Windows PowerShell 5.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check the installer and full Standard extraction through embedded Python
         shell: powershell
         run: ./tests/document-installer-windows.ps1

@@ -108,10 +108,10 @@ function Install-DocumentTools([string]$InstallerPath) {
         if ($Signature.Status -ne 'Valid' -or $Signature.SignerCertificate.Subject -notmatch 'Python Software Foundation') { throw 'Document Python signature could not be verified.' }
         Write-Utf8 (Join-Path $DocumentRuntime 'python311._pth') "python311.zip`r`n.`r`nLib\site-packages`r`n$InstallRoot`r`nimport site`r`n"
         $Pip=@('-m','pip','--isolated','--python',$DocumentPython,'install','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','--no-cache-dir')
-        Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://pypi.org/simple','-r',(Join-Path $StageDirectory 'requirements-documents.txt'))) (Join-Path $InstallRoot 'data\document-packages')
+        Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://pypi.org/simple','-r',(Join-Path $StageDirectory 'requirements-documents.txt'))) (Join-Path $InstallRoot 'data\document-packages') -Label 'Document'
         if ($DocumentProfile -eq 'Full') {
-            Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://download.pytorch.org/whl/cpu','torch==2.8.0+cpu','torchvision==0.23.0+cpu')) (Join-Path $InstallRoot 'data\document-cpu')
-            Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://pypi.org/simple','-r',(Join-Path $StageDirectory 'requirements-documents-full.txt'))) (Join-Path $InstallRoot 'data\document-docling')
+            Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://download.pytorch.org/whl/cpu','torch==2.8.0+cpu','torchvision==0.23.0+cpu')) (Join-Path $InstallRoot 'data\document-cpu') -Label 'Document'
+            Invoke-SoundLogged $PythonExe ($Pip+@('--index-url','https://pypi.org/simple','-r',(Join-Path $StageDirectory 'requirements-documents-full.txt'))) (Join-Path $InstallRoot 'data\document-docling') -Label 'Document'
         }
     }
     Write-Stage '3/6 Installing OCR and legacy-document tools'
@@ -146,12 +146,12 @@ function Install-DocumentTools([string]$InstallerPath) {
     $ExistingRule=Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue
     $CheckArgs=@((Join-Path $StageDirectory 'setup_documents.py'),'--worker',(Join-Path $StageDirectory 'document_worker.py'),'--options',$OptionsPath)
     if (-not $Reuse) { $CheckArgs += '--download' }
-    Invoke-SoundLogged $DocumentPython $CheckArgs (Join-Path $InstallRoot 'data\document-check')
+    Invoke-SoundLogged $DocumentPython $CheckArgs (Join-Path $InstallRoot 'data\document-check') -Label 'Document'
     if (-not $ExistingRule) { New-NetFirewallRule -DisplayName $RuleName -Direction Outbound -Program $DocumentPython -Action Block -Profile Any | Out-Null }
     $JavaRule='Vision Document Java Offline'
     if (-not (Get-NetFirewallRule -DisplayName $JavaRule -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $JavaRule -Direction Outbound -Program $Java -Action Block -Profile Any | Out-Null }
     # Repeat with egress blocked so installation verifies the production path.
-    Invoke-SoundLogged $DocumentPython @((Join-Path $StageDirectory 'setup_documents.py'),'--worker',(Join-Path $StageDirectory 'document_worker.py'),'--options',$OptionsPath) (Join-Path $InstallRoot 'data\document-offline-check')
+    Invoke-SoundLogged $DocumentPython @((Join-Path $StageDirectory 'setup_documents.py'),'--worker',(Join-Path $StageDirectory 'document_worker.py'),'--options',$OptionsPath) (Join-Path $InstallRoot 'data\document-offline-check') -Label 'Document'
     Write-Utf8 $Marker (@{profile=$DocumentProfile;requirementsSha256=$RequirementHash}|ConvertTo-Json)
     Write-Stage '5/6 Activating background document processing'
     $Configuration=Read-Configuration

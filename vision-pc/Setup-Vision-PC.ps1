@@ -419,13 +419,13 @@ function Install-LocalTranscription {
     Write-Host 'No Gemini or OpenAI API calls are needed for this plugin. Keep the FUPCJ Server awake and online.'
     Write-Host 'Choose FUPCJ Server transcription in Vision. Other paid API features remain separate.'
 }
-function Invoke-SoundLogged([string]$Executable, [string[]]$Arguments, [string]$LogBase) {
+function Invoke-SoundLogged([string]$Executable, [string[]]$Arguments, [string]$LogBase, [string]$Label = 'Sound-event') {
     $Quoted = @($Arguments | ForEach-Object { '"' + $_.Replace('"','\"') + '"' })
     $Process = Start-Process -FilePath $Executable -ArgumentList $Quoted -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$LogBase.log" -RedirectStandardError "$LogBase-errors.log"
     if ($Process.ExitCode -ne 0) {
         Get-Content -LiteralPath "$LogBase.log" -Tail 10 | Out-Host
         Get-Content -LiteralPath "$LogBase-errors.log" -Tail 15 | Out-Host
-        throw "Sound-event setup/check failed ($($Process.ExitCode)). See $LogBase.log and $LogBase-errors.log. Existing processor and Whisper settings were retained."
+        throw "$Label setup/check failed ($($Process.ExitCode)). See $LogBase.log and $LogBase-errors.log. Existing processor and Whisper settings were retained."
     }
     Get-Content -LiteralPath "$LogBase.log" -Tail 6 | Out-Host
 }

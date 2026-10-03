@@ -48,7 +48,7 @@ def main():
         (root/'test.html').write_text('<h1>Vision document test 42</h1>',encoding='utf-8')
         for name in ('ocr.png','test.pdf','test.html'):
             result=root/'result.json'
-            subprocess.run([sys.executable,args.worker,'--source',str(root/name),'--name',name,'--output',str(result),'--options',args.options],check=True,timeout=1200)
+            subprocess.run([sys.executable,args.worker,'--source',str(root/name),'--name',name,'--output',str(result),'--options',args.options,'--diagnostics'],check=True,timeout=1200)
             data=json.loads(result.read_text(encoding='utf-8'))
             content=' '.join(a.get('text','') for a in data['artifacts'])
             if '42' not in content: raise RuntimeError('Extraction self-test did not recover expected content: '+name)
