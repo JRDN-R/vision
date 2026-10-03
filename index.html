@@ -34,7 +34,7 @@
  try{
   const response=await fetch('./Vision.html?v=46c18364ef31',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
-  const html=await response.text();
+  const html=(await response.text()).replace('<button id="downloadAppBtn"','<button id="downloadAppBtn" hidden');
   if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
   // Keep the full app in the top-level document, including its mobile gestures,
   // download controls, and pristine source capture for the offline HTML.
