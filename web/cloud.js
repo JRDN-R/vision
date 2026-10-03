@@ -124,6 +124,7 @@ function resumeYouTubeImports(){
 function openYouTubeDialog(){
  syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Include sound effects sends the full audio to FUPCJ Server Whisper and sound detection. Save your project to keep pending imports; reopen it to resume.';
  $('youtubeImport').disabled=youtubeImportRunning;$('youtubeDialog').showModal();$('youtubeURL').focus();
+ if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();
 }
 async function importYouTube(){
  if(youtubeImportRunning||busy||ioBusy)return;let url;
@@ -137,7 +138,7 @@ async function importYouTube(){
   const job={url,provider,includeSoundEvents,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
   state.youtubeImports=state.youtubeImports||[];state.youtubeImports.push(job);youtubeTask(job);markDirty();updateVideoAttachments(n);renderActivity();$('youtubeDialog').close();
   toast('YouTube import queued. Save your project to keep pending work.');scheduleYouTubeImports();
- }catch(error){$('youtubeNotice').textContent=error.message;toast(error.message,true);}finally{$('youtubeImport').disabled=youtubeImportRunning;}
+ }catch(error){$('youtubeNotice').textContent=error.message;toast(error.message,true);}finally{if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();else $('youtubeImport').disabled=youtubeImportRunning;}
 }
 async function pumpYouTubeImports(){
  if(youtubeImportRuntime)return;
@@ -193,11 +194,11 @@ async function pumpYouTubeImports(){
  }finally{
   decoder?.stop();if(ownsIO)ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
   if(completed&&job.remoteId&&job.backendUrl===cloudConfig?.backendUrl)void youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{method:'DELETE'}).catch(()=>{});
-  if(youtubeImportRuntime===runtime)youtubeImportRuntime=null;youtubeImportRunning=false;$('youtubeImport').disabled=false;renderActivity();scheduleTranscriptionQueue();scheduleYouTubeImports(completed?100:20000);
+  if(youtubeImportRuntime===runtime)youtubeImportRuntime=null;youtubeImportRunning=false;if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();else $('youtubeImport').disabled=false;renderActivity();scheduleTranscriptionQueue();scheduleYouTubeImports(completed?100:20000);
  }
 }
 $('youtubeButton').onclick=openYouTubeDialog;
 $('closeYouTube').onclick=()=>$('youtubeDialog').close();
 $('youtubeImport').onclick=importYouTube;
-$('youtubeURL').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void importYouTube();}});
+$('youtubeURL').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(typeof youtubeInputIsURL==='function'&&!youtubeInputIsURL($('youtubeURL').value))void searchYouTubeVideos();else void importYouTube();}});
 window.addEventListener('online',()=>scheduleYouTubeImports());

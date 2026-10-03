@@ -43,6 +43,7 @@ function accountClearRunKey(){
 async function accountSetUser(user){
  const uid=user?.uid||'';
  if(accountLastUID===uid)return;accountLastUID=uid;accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
+ if(typeof cancelGoogleSources==='function')cancelGoogleSources();
  accountClearRunKey();
  if(user){accountMode('google');cloudConfig={kind:'private-pc',backendUrl:ACCOUNT_PC,publicAccess:true};cloudAuth={kind:'firebase-google',uid,email:user.email||'',backendUrl:ACCOUNT_PC,remember:true};try{localStorage.setItem('vision-cloud-config',JSON.stringify(cloudConfig));}catch{}}
  else cloudAuth=null;

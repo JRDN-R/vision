@@ -5,7 +5,7 @@ const boardImportControllers=new Set();
 function boardImportContext(){if(typeof projectAccountSwitching!=='undefined'&&projectAccountSwitching)return null;return{context:boardAsyncContext(),generation:boardImportGeneration};}
 function boardImportCurrent(value){return !!value&&value.generation===boardImportGeneration&&boardAsyncCurrent(value.context);}
 function assertBoardImportContext(value){if(!boardImportCurrent(value))throw new DOMException('The project or signed-in account changed. Import canceled.','AbortError');}
-function cancelBoardImports(){boardImportGeneration++;for(const controller of boardImportControllers)controller.abort();boardImportControllers.clear();boardImportRunning=false;document.getElementById('boardAddDialog')?.close();const paste=document.getElementById('boardPasteText');if(paste)paste.value='';}
+function cancelBoardImports(){boardImportGeneration++;for(const controller of boardImportControllers)controller.abort();boardImportControllers.clear();boardImportRunning=false;if(typeof cancelGoogleSourceImports==='function')cancelGoogleSourceImports();if(typeof cancelYouTubeSearch==='function')cancelYouTubeSearch();document.getElementById('boardAddDialog')?.close();const paste=document.getElementById('boardPasteText');if(paste)paste.value='';}
 function isBoardTextEditing(target){return !!target?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"]');}
 function boardFileInfo(file){
  const name=String(file.name||'File'),ext=name.includes('.')?name.split('.').pop().toLowerCase():'',mime=(file.type||file.mime||mimeFromName(name)).split(';')[0].trim().toLowerCase();

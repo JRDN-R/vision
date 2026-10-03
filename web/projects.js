@@ -121,7 +121,7 @@ async function projectApply(raw,{pendingSave=false,keepHistory=false}={}){
  if(startEpoch!==projectEpoch||startGeneration!==projectGeneration)throw new Error('The project changed while loading. Your current work was kept.');
  if(!projectAccountCanAccess(loaded.projectCloud))throw new Error('This project belongs to another account. Sign in to that account to open it.');
  projectLoading=true;clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);projectEpoch++;projectGeneration=0;
- try{cancelTranscriptionQueue();state=loaded;selected=null;selectedMark=null;selectedEdge=null;pending=null;action=null;if(!keepHistory){history=[];future=[];}projectPending=pendingSave;projectConflict=false;projectLocalOK=false;dirty=pendingSave;consoleRefreshProject();resumeYouTubeImports();scheduleTranscriptionQueue();R.clearImageCache();renderAll();updateRefreshNotice();ensureProjectIdentity();projectRemember(state.projectCloud,state.title);}
+ try{cancelTranscriptionQueue();if(typeof cancelBoardImports==='function')cancelBoardImports();state=loaded;selected=null;selectedMark=null;selectedEdge=null;pending=null;action=null;if(!keepHistory){history=[];future=[];}projectPending=pendingSave;projectConflict=false;projectLocalOK=false;dirty=pendingSave;consoleRefreshProject();resumeYouTubeImports();scheduleTranscriptionQueue();R.clearImageCache();renderAll();updateRefreshNotice();ensureProjectIdentity();projectRemember(state.projectCloud,state.title);}
  finally{projectLoading=false;}
  await projectBackup();projectStatus(pendingSave?'Restored this device’s changes · waiting for FUPCJ Server':'Project restored','local');
 }
@@ -250,9 +250,9 @@ const projectOriginalSave=saveProject;
 saveProject=function(){if(!busy&&!ioBusy)ensureProjectIdentity();projectOriginalSave();if(state.projectCloud){void projectBackup();if(projectPending)void flushProjectSave().catch(()=>{});}};
 $('saveBtn').onclick=saveProject;
 const projectOriginalOpen=openProject;
-openProject=async function(file){const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
+openProject=async function(file){const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
 const projectOriginalNew=$('newBtn').onclick;
-$('newBtn').onclick=async function(event){await projectBackup();const oldState=state;projectOriginalNew(event);if(state!==oldState){clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);projectEpoch++;projectGeneration=0;projectPending=false;projectConflict=false;projectLocalOK=false;projectLocalSet(PROJECT_ACTIVE,'');void projectStorePut({id:'__active__',activeId:'',recents:projectRecentList()}).catch(()=>{});projectStatus('New project · autosaves after your first change');}};
+$('newBtn').onclick=async function(event){await projectBackup();const oldState=state;projectOriginalNew(event);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);projectEpoch++;projectGeneration=0;projectPending=false;projectConflict=false;projectLocalOK=false;projectLocalSet(PROJECT_ACTIVE,'');void projectStorePut({id:'__active__',activeId:'',recents:projectRecentList()}).catch(()=>{});projectStatus('New project · autosaves after your first change');}};
 async function projectRecoverStartup(){
  if(typeof accountReady!=='undefined')await accountReady;
  const epoch=projectEpoch,generation=projectGeneration;
