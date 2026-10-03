@@ -4,6 +4,70 @@ function Get-DocumentDownload([string]$Url,[string]$Path,[string]$Hash,[string]$
     Get-Download $Url $Path
     if ((Get-FileHash -LiteralPath $Path -Algorithm $Algorithm).Hash -ne $Hash) { Remove-Item -LiteralPath $Path -Force; throw 'Document tool download failed its checksum.' }
 }
+function Install-DocumentTesseract([string]$TesseractRoot) {
+    New-Item -ItemType Directory -Path $TesseractRoot -Force | Out-Null
+    Assert-PrivateSoundPath $TesseractRoot
+    $Tesseract=Join-Path $TesseractRoot 'tesseract.exe'
+    # The NSIS MultiUser initializer can replace /D with its registered/default
+    # directory. Recover an existing machine installation without uninstalling it.
+    $MachineRoots=@(@($env:ProgramW6432,$env:ProgramFiles) | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Tesseract-OCR' } | Select-Object -Unique)
+    $Source=$MachineRoots | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'tesseract.exe') } | Select-Object -First 1
+    $ExitCode=$null
+    $Launched=$false
+    if (-not (Test-Path -LiteralPath $Tesseract) -and -not $Source) {
+        $OcrInstaller=Join-Path $DownloadDir 'tesseract-5.5.0.exe'
+        Get-DocumentDownload 'https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe' $OcrInstaller 'F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC'
+        # NSIS requires /D last and unquoted, even when the path contains spaces.
+        $Ocr=Start-Process -FilePath $OcrInstaller -ArgumentList ('/S /AllUsers /D='+$TesseractRoot) -PassThru
+        $Launched=$true
+        # Retain the process handle before waiting: Windows PowerShell 5.1 can
+        # otherwise return a null ExitCode for a short-lived installer.
+        $Handle=$Ocr.Handle
+        $Ocr.WaitForExit()
+        $Ocr.Refresh()
+        $ExitCode=$Ocr.ExitCode
+        $Source=$MachineRoots | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'tesseract.exe') } | Select-Object -First 1
+    }
+    if (-not (Test-Path -LiteralPath $Tesseract) -and $Source) {
+        Write-Host 'Found Tesseract in its Windows installation folder; preparing a private Vision copy.'
+        if ((Get-Item -LiteralPath $Source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The Tesseract source folder is a link.' }
+        # Keep notices/configuration, but do not copy unrelated installed models.
+        $Files=@(Get-ChildItem -LiteralPath $Source -File | Where-Object { $_.Name -eq 'tesseract.exe' -or $_.Extension -eq '.dll' -or $_.Name -match '^(LICENSE|COPYING|AUTHORS|README)' })
+        foreach ($File in $Files) {
+            if ($File.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The Tesseract source contains a linked file.' }
+            Copy-Item -LiteralPath $File.FullName -Destination $TesseractRoot -Force
+        }
+        foreach ($Name in @('doc','tessdata')) {
+            $Folder=Join-Path $Source $Name
+            if (-not (Test-Path -LiteralPath $Folder)) { continue }
+            $Entries=@(Get-Item -LiteralPath $Folder -Force)+@(Get-ChildItem -LiteralPath $Folder -Recurse -Force)
+            if (@($Entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'The Tesseract source contains a linked folder or file.' }
+            foreach ($File in @($Entries | Where-Object { -not $_.PSIsContainer -and $_.Extension -ne '.traineddata' })) {
+                $Relative=$File.FullName.Substring($Source.Length).TrimStart('\')
+                $Target=Join-Path $TesseractRoot $Relative
+                New-Item -ItemType Directory -Path (Split-Path -Parent $Target) -Force | Out-Null
+                Copy-Item -LiteralPath $File.FullName -Destination $Target -Force
+            }
+        }
+    }
+    $LogBase=Join-Path $InstallRoot 'data\document-ocr'
+    Write-Utf8 ($LogBase+'-install.json') (@{installerLaunched=$Launched;exitCode=$ExitCode;machineSource=$Source;expectedExecutable=$Tesseract;executableFound=(Test-Path -LiteralPath $Tesseract)} | ConvertTo-Json)
+    if (-not (Test-Path -LiteralPath $Tesseract)) {
+        throw "Tesseract executable was not found after setup (exit code: $ExitCode). Checked $TesseractRoot and $($MachineRoots -join ', '). Details: $LogBase-install.json."
+    }
+    # The upstream installer downloads language data separately and may silently
+    # omit it. Fetch a small, checksum-pinned English model directly over HTTPS.
+    $Data=Join-Path $TesseractRoot 'tessdata'
+    New-Item -ItemType Directory -Path $Data -Force | Out-Null
+    Assert-PrivateSoundPath $Data
+    Get-DocumentDownload 'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata' (Join-Path $Data 'eng.traineddata') '7D4322BD2A7749724879683FC3912CB542F19906C83BCC1A52132556427170B2'
+    $Probe=Start-Process -FilePath $Tesseract -ArgumentList '--version' -Wait -PassThru -NoNewWindow -RedirectStandardOutput ($LogBase+'-version.log') -RedirectStandardError ($LogBase+'-errors.log')
+    $Version=(Get-Content -LiteralPath ($LogBase+'-version.log') -Raw)+(Get-Content -LiteralPath ($LogBase+'-errors.log') -Raw)
+    if (($null -ne $Probe.ExitCode -and $Probe.ExitCode -ne 0) -or $Version -notmatch '(?m)^tesseract\s+v?5\.') {
+        throw "Tesseract did not pass its executable check. See $LogBase-version.log and $LogBase-errors.log."
+    }
+    return $Tesseract
+}
 function Install-DocumentTools([string]$InstallerPath) {
     Assert-InstalledProcessor
     $Configuration=Read-Configuration
@@ -48,14 +112,7 @@ function Install-DocumentTools([string]$InstallerPath) {
     }
     Write-Stage '3/6 Installing OCR and legacy-document tools'
     $TesseractRoot=Join-Path $ToolsDir 'tesseract'
-    $Tesseract=Join-Path $TesseractRoot 'tesseract.exe'
-    if (-not (Test-Path -LiteralPath $Tesseract)) {
-        $OcrInstaller=Join-Path $DownloadDir 'tesseract-5.5.0.exe'
-        Get-DocumentDownload 'https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe' $OcrInstaller 'F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC'
-        $Ocr=Start-Process -FilePath $OcrInstaller -ArgumentList ('/S /D='+$TesseractRoot) -Wait -PassThru
-        if ($Ocr.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Tesseract)) { throw 'Tesseract installation did not finish.' }
-    }
-    Assert-PrivateSoundPath $TesseractRoot
+    $Tesseract=Install-DocumentTesseract $TesseractRoot
     $JavaRoot=Join-Path $ToolsDir 'document-java-17.0.20.1'
     $Java=Get-ChildItem -LiteralPath $JavaRoot -Filter java.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
     if (-not $Java) {

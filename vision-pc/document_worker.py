@@ -93,8 +93,12 @@ class Extractor:
             return ''
         import pytesseract
         pytesseract.pytesseract.tesseract_cmd = self.options['tesseractPath']
+        data_dir = Path(self.options['tesseractPath']).parent / 'tessdata'
+        config = '--psm 3'
+        if (data_dir / 'eng.traineddata').is_file():
+            config += ' --tessdata-dir "' + str(data_dir) + '"'
         self.tools.add('Tesseract')
-        return pytesseract.image_to_string(picture, lang='eng', config='--psm 3', timeout=90)
+        return pytesseract.image_to_string(picture, lang='eng', config=config, timeout=90)
 
     def embedded_images(self, path, prefix, location):
         from PIL import Image

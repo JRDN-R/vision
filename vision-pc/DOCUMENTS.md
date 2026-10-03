@@ -23,6 +23,13 @@ processor/configuration back if activation fails. It reuses compatible installed
 document packages. The existing scheduled task handles future startups; the
 PowerShell window can close after success. Keep the PC awake and online.
 
+If setup previously stopped at **Tesseract installation did not finish**, run
+the same three installation commands again to fetch the corrected installer.
+Installed Python packages are reused. Setup recovers Tesseract from the normal
+Windows installation folder when the upstream installer ignores its requested
+destination, then downloads and verifies the small English OCR model directly.
+Diagnostic files are saved under `C:\ProgramData\VisionPC\data\document-ocr*`.
+
 After success, refresh Vision. Supported originals are uploaded automatically
 as they are added to modules. Each module shows its document status. Uploading
 requires the browser to stay open; accepted jobs continue on the PC after it
