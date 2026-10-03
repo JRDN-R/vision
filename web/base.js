@@ -3,7 +3,6 @@
 'use strict';
 const APP_SOURCE='<!doctype html>\n'+document.documentElement.outerHTML;
 const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'), world=$('world');
-document.querySelector('.vision-header-banner').src=document.querySelector('.vision-hero-logo img').src;
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
 const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local',includeSoundEvents:false});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
@@ -921,7 +920,7 @@ function canDownloadDesktopApp(){
 }
 function syncDownloadAppButton(){
   const desktop=canDownloadDesktopApp();
-  $('downloadAppBtn').hidden=!desktop;
+  $('downloadAppBtn').hidden=true;
   if(!desktop&&$('downloadAppDialog').open)$('downloadAppDialog').close();
 }
 function downloadDesktopApp(){

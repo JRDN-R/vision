@@ -5,6 +5,7 @@ application code, and styles live under web/ and can be published independently.
 No credential or embedded runtime is printed by this command.
 """
 from pathlib import Path
+import base64
 import hashlib
 import re
 
@@ -44,6 +45,20 @@ def build():
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')
     source = source.replace('{{VISION_STYLES}}', css)
+    # Reuse the original transparent head without changing its image pixels.
+    # An SVG viewport trims its transparent margins only for header layout.
+    logo = base64.b64encode((ROOT / 'logo or node.PNG').read_bytes()).decode('ascii')
+    source = source.replace('{{VISION_HEADER_LOGO}}', 'data:image/png;base64,' + logo)
+    version = (WEB / 'version.txt').read_text(encoding='utf-8').strip()
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+        raise ValueError('Expected a major.minor.patch app version')
+    # Hash the assembled inputs before inserting the version, so identical
+    # builds keep their ID and every shipped source/asset change gets a new ID.
+    build_id = hashlib.sha256((version + '\0' + source).encode('utf-8')).hexdigest()[:7]
+    release = version + '+' + build_id
+    if source.count('{{VISION_VERSION}}') != 2:
+        raise ValueError('Expected the release ID in the header and info dialog')
+    source = source.replace('{{VISION_VERSION}}', release)
     (ROOT / 'Vision.html').write_text(source, encoding='utf-8')
     digest = hashlib.sha256(source.encode('utf-8')).hexdigest()
     index = ROOT / 'index.html'
@@ -56,7 +71,7 @@ def build():
         raise ValueError('Expected one app and loader Content Security Policy')
     loader = re.sub(policy_pattern, lambda _: policy.group(0), loader)
     index.write_text(loader, encoding='utf-8')
-    print('Built Vision.html:', len(source.encode('utf-8')), 'bytes; SHA256', digest)
+    print('Built Vision', release + ':', len(source.encode('utf-8')), 'bytes; SHA256', digest)
 
 
 if __name__ == '__main__':
