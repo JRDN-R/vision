@@ -15,6 +15,10 @@ function Install-DocumentTesseract([string]$TesseractRoot) {
     $ExitCode=$null
     $Launched=$false
     if (-not (Test-Path -LiteralPath $Tesseract) -and -not $Source) {
+        # NSIS silently offers to uninstall registered copies. Do not run it
+        # over an unrelated/custom installation that was not found above.
+        $Registered=@('HKLM:\SOFTWARE\Tesseract-OCR','HKLM:\SOFTWARE\WOW6432Node\Tesseract-OCR','HKCU:\SOFTWARE\Tesseract-OCR','HKCU:\SOFTWARE\WOW6432Node\Tesseract-OCR' | ForEach-Object { Get-ItemProperty -LiteralPath $_ -ErrorAction SilentlyContinue } | Where-Object { $_.CurrentVersion })
+        if ($Registered.Count) { throw 'Tesseract has an existing custom or incomplete Windows installation. Its files were not changed. Review its registered installation folder before retrying.' }
         $OcrInstaller=Join-Path $DownloadDir 'tesseract-5.5.0.exe'
         Get-DocumentDownload 'https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe' $OcrInstaller 'F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC'
         # NSIS requires /D last and unquoted, even when the path contains spaces.
