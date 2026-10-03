@@ -17,6 +17,8 @@ STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 
 
 def build():
     source = (ROOT / 'Vision.html').read_text(encoding='utf-8')
+    previous_version = re.search(r'<meta name="vision-version" content="(\d+\.\d+\.\d+\.\d+)">', source)
+    previous_source = re.search(r'<meta name="vision-source-id" content="([a-f0-9]{64})">', source)
     # Keep large, unchanged offline runtimes out of routine source uploads.
     # SHA-addressed placeholders also prevent a missing or changed asset from
     # silently producing a broken portable download.
@@ -50,15 +52,22 @@ def build():
     logo = base64.b64encode((ROOT / 'logo or node.PNG').read_bytes()).decode('ascii')
     source = source.replace('{{VISION_HEADER_LOGO}}', 'data:image/png;base64,' + logo)
     version = (WEB / 'version.txt').read_text(encoding='utf-8').strip()
-    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ValueError('Expected a major.minor.patch app version')
-    # Hash the assembled inputs before inserting the version, so identical
-    # builds keep their ID and every shipped source/asset change gets a new ID.
-    build_id = hashlib.sha256((version + '\0' + source).encode('utf-8')).hexdigest()[:7]
-    release = version + '+' + build_id
+    if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', version):
+        raise ValueError('Expected a four-part numeric app version')
+    # Keep the source fingerprint internal. Advance only the final number when
+    # the shipped app changes; rebuilding identical inputs keeps the version.
+    source_id = hashlib.sha256((version + '\0' + source).encode('utf-8')).hexdigest()
+    parts = [int(part) for part in version.split('.')]
+    if previous_version and previous_source:
+        previous = [int(part) for part in previous_version[1].split('.')]
+        if previous[:3] == parts[:3]:
+            parts[3] = max(parts[3], previous[3] + int(previous_source[1] != source_id))
+    release = '.'.join(str(part) for part in parts)
     if source.count('{{VISION_VERSION}}') != 2:
         raise ValueError('Expected the release ID in the header and info dialog')
     source = source.replace('{{VISION_VERSION}}', release)
+    source = source.replace('</head>', f'<meta name="vision-version" content="{release}">\n'
+                            f'<meta name="vision-source-id" content="{source_id}">\n</head>', 1)
     (ROOT / 'Vision.html').write_text(source, encoding='utf-8')
     digest = hashlib.sha256(source.encode('utf-8')).hexdigest()
     index = ROOT / 'index.html'
