@@ -21,12 +21,18 @@ jobs:
           ref: launch-guest-five-minutes
           fetch-depth: 0
       - name: Preserve the newer main branch and resolve only reviewed conflicts
+        id: build
         run: |
           set -euo pipefail
+          mkdir -p test-results
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
-          test "$(git rev-parse origin/main)" = d6d7ab6e47a23a22dea7f1899b4d65e88ae03d86
+          python - <<'PY'
+          import subprocess
+          newer=set(subprocess.check_output(['git','diff','--name-only','d6d7ab6e47a23a22dea7f1899b4d65e88ae03d86','origin/main'],text=True).splitlines())
+          assert newer <= {'vision-pc/Document-Tools.ps1','vision-pc/document_worker.py','vision-pc/DOCUMENTS.md','tests/document-installer-windows.ps1','.github/workflows/document-installer-windows.yml'}, newer
+          PY
           git merge --no-commit --no-ff origin/main || test -n "$(git ls-files -u)"
           python - <<'PY'
           import subprocess
@@ -36,11 +42,11 @@ jobs:
           git checkout origin/main -- Vision.html index.html
           python .vision-integrate-launch.py
           python -m compileall -q vision-pc
-          mkdir -p test-results
           python web/build.py | tee test-results/build.log
           git add web vision-pc tests Vision.html index.html
           test -z "$(git ls-files -u)"
       - name: Install test dependencies
+        id: dependencies
         run: |
           python -m pip install -r vision-pc/requirements.txt
           python -m pip install 'python-docx==1.2.0' 'python-pptx==1.0.2' 'openpyxl==3.1.5' 'pdfplumber>=0.11,<1' 'pypdfium2>=5,<6' 'pytesseract==0.3.13' 'defusedxml==0.7.1'
@@ -54,12 +60,12 @@ jobs:
           set -o pipefail
           python -m unittest discover -s vision-pc -p 'test_*.py' -v 2>&1 | tee test-results/backend.log
       - name: JavaScript regressions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -o pipefail
           { for test in tests/*.test.cjs tests/base-account-races.cjs; do node "$test" || exit $?; done; } 2>&1 | tee test-results/javascript.log
       - name: Google, guest trial and document mobile browser checks
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: |
           set -o pipefail
           { node tests/account-gate-smoke.cjs && node tests/launch-trial-smoke.cjs && node tests/documents-smoke.cjs; } 2>&1 | tee test-results/browser.log
