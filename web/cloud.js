@@ -11,7 +11,7 @@ function validPrivateConnection(value){const config=validCloudConfig(value),acce
 const bundledCloudConnection=(()=>{try{return JSON.parse($('visionCloudConfig').textContent);}catch{return null;}})();
 let cloudConfig=(()=>{const built=validCloudConfig(bundledCloudConnection);if(validPrivateConnection(bundledCloudConnection))return built;try{return validCloudConfig(JSON.parse(localStorage.getItem('vision-cloud-config')||'null'))||built;}catch{return built;}})();
 let cloudAuth=(()=>{const built=validPrivateConnection(bundledCloudConnection);if(built&&built.backendUrl===cloudConfig?.backendUrl)return built;try{const saved=JSON.parse(sessionStorage.getItem('vision-cloud-session')||localStorage.getItem('vision-cloud-session')||'null');if(!saved||!cloudConfig||saved.backendUrl!==cloudConfig.backendUrl)return null;return cloudConfig.kind==='private-pc'?validPrivateConnection({...saved,kind:'private-pc'}):saved;}catch{return null;}})();
-function saveCloudSession(){try{sessionStorage.removeItem('vision-cloud-session');localStorage.removeItem('vision-cloud-session');if(cloudAuth&&cloudAuth.kind!=='firebase-google')(cloudAuth.remember?localStorage:sessionStorage).setItem('vision-cloud-session',JSON.stringify(cloudAuth));}catch{}}
+function saveCloudSession(){try{sessionStorage.removeItem('vision-cloud-session');localStorage.removeItem('vision-cloud-session');if(cloudAuth&&!['firebase-google','trial'].includes(cloudAuth.kind))(cloudAuth.remember?localStorage:sessionStorage).setItem('vision-cloud-session',JSON.stringify(cloudAuth));}catch{}}
 function pcConnectionHelp(config=cloudConfig){return config?.publicAccess===true?'Keep FUPCJ Server awake and connected to the internet.':'Keep FUPCJ Server awake, with Tailscale connected on this device and FUPCJ Server.';}
 function pcConnectionFailure(){return 'This device cannot reach FUPCJ Server. It may be offline, or this browser or network may be blocking the connection. '+(cloudConfig?.publicAccess===true?'Use Processor connection to check this device.':pcConnectionHelp());}
 function updatePCConnectionCheck(value){const config=validCloudConfig(value),box=$('cloudReachabilityCheck');if(!box)return;box.hidden=config?.kind!=='private-pc';const link=$('cloudReachabilityLink');if(config?.kind==='private-pc')link.href=config.backendUrl+'/api/status';else link.removeAttribute('href');}
@@ -44,6 +44,7 @@ async function cloudSignIn(){
 async function ensureCloudSession(){
  if(typeof accountReady!=='undefined')await accountReady;
  if(typeof accountTransition!=='undefined')await accountTransition;
+ if(cloudAuth?.kind==='trial'){if(!trialActive())throw new Error('Your trial has ended. Sign in with Google.');return cloudAuth.accessToken;}
  if(typeof accountSignedIn==='function'&&!accountSignedIn()){openAccountDialog('Sign in with Google to use Vision.');throw new Error('Google sign-in is required.');}
  if(cloudAuth?.kind==='firebase-google')return accountIdToken();
  if(typeof accountUsesGoogle==='function'&&accountUsesGoogle()){openAccountDialog('Sign in with Google to reconnect your projects.');throw new Error('Sign in with Google to reconnect.');}
@@ -55,6 +56,7 @@ async function ensureCloudSession(){
  Object.assign(cloudAuth,{idToken:data.id_token,refreshToken:data.refresh_token,expiresAt:Date.now()+Number(data.expires_in)*1000});saveCloudSession();return cloudAuth.idToken;
 }
 async function cloudFetch(path,options={}){
+ if(cloudAuth?.kind==='trial'){if(!/^\/[a-z]/i.test(path)||path.includes('..'))throw new Error('Invalid service request.');return trialFetch(path,options);}
  if(!/^\/[a-z]/i.test(path)||path.includes('..'))throw new Error('Invalid service request.');const authAtStart=typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch;const token=await ensureCloudSession();
  if(typeof accountAuthEpoch!=='undefined'&&authAtStart!==accountAuthEpoch)throw new Error('The signed-in account changed. Try again.');
  const backendUrl=cloudConfig.backendUrl;
@@ -62,7 +64,7 @@ async function cloudFetch(path,options={}){
  try{const response=await fetch(backendUrl+'/api'+path,{...options,headers,credentials:'omit'});if(typeof accountAuthEpoch!=='undefined'&&authAtStart!==accountAuthEpoch)throw new Error('The signed-in account changed. Try again.');return response;}catch(error){if(error.name==='AbortError'||/account changed/.test(error.message))throw error;const failure=new Error(cloudConfig.kind==='private-pc'?pcConnectionFailure():'Processing server unavailable. Check your internet connection.');failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
 }
 function downloadedAppSource(){
- const privateConnection=cloudConfig?.kind==='private-pc'&&cloudAuth?.backendUrl===cloudConfig.backendUrl?validPrivateConnection({...cloudConfig,accessToken:cloudAuth.accessToken}):null;
+ const privateConnection=cloudAuth?.kind!=='trial'&&cloudConfig?.kind==='private-pc'&&cloudAuth?.backendUrl===cloudConfig.backendUrl?validPrivateConnection({...cloudConfig,accessToken:cloudAuth.accessToken}):null;
  const portable=privateConnection?{kind:privateConnection.kind,backendUrl:privateConnection.backendUrl,accessToken:privateConnection.accessToken,...(privateConnection.publicAccess===true?{publicAccess:true}:{})}:cloudConfig||{};
  const safe=JSON.stringify(portable).replace(/</g,'\\u003c');
  return APP_SOURCE.replace(/(<script id="visionCloudConfig" type="application\/json">)[\s\S]*?(<\/script>)/,(_match,start,end)=>start+safe+end);
@@ -110,7 +112,7 @@ function youtubeTask(job){
  let task=youtubeImportTasks.get(job.clientRequestId);if(!task){const n=nodeById(job.targetId);task={title:n?.title||'YouTube video',detail:'Queued',progress:0};youtubeImportTasks.set(job.clientRequestId,task);mediaActivity.push(task);}return task;
 }
 function removeYouTubeTask(job){const task=youtubeImportTasks.get(job.clientRequestId);if(task){task.finished=true;const index=mediaActivity.indexOf(task);if(index>=0)mediaActivity.splice(index,1);youtubeImportTasks.delete(job.clientRequestId);}}
-function youtubeConnected(){if(typeof accountSignedIn==='function'&&!accountSignedIn())return false;return !!(cloudConfig&&cloudAuth&&cloudAuth.backendUrl===cloudConfig.backendUrl&&(cloudAuth.kind==='firebase-google'?cloudAuth.uid:cloudAuth.kind==='private-pc'?cloudAuth.accessToken:cloudAuth.refreshToken||cloudAuth.idToken));}
+function youtubeConnected(){if(typeof accountCanUseApp==='function'&&!accountCanUseApp())return false;return !!(cloudConfig&&cloudAuth&&cloudAuth.backendUrl===cloudConfig.backendUrl&&(cloudAuth.kind==='firebase-google'?cloudAuth.uid:['private-pc','trial'].includes(cloudAuth.kind)?cloudAuth.accessToken:cloudAuth.refreshToken||cloudAuth.idToken));}
 function scheduleYouTubeImports(delay=0){
  clearTimeout(youtubeImportTimer);youtubeImportTimer=setTimeout(()=>void pumpYouTubeImports(),Math.max(0,delay));
 }

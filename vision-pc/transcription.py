@@ -457,6 +457,10 @@ class LocalTranscription:
                 if row is None:
                     return False
                 value = dict(row)
+                trials = self.app.config.get('TRIALS')
+                if trials and trials.expired(value['project_id']):
+                    db.execute("UPDATE local_transcriptions SET status='cancelled',cancel_requested=1,phase='Trial ended' WHERE id=?", (value['id'],))
+                    return True
                 db.execute("UPDATE local_transcriptions SET status='processing',phase='Loading Whisper model',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
             processing_started = time.monotonic()
             job_type, partial = 'whisper', False

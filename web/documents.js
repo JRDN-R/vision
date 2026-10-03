@@ -32,7 +32,7 @@ async function documentRequest(r,suffix='',options={}){
  return projectResponse(response);
 }
 function collectDocumentSources(){
- if(projectAccountSwitching||projectLoading||typeof accountReady==='undefined'||!projectAccountUID())return;
+ if(projectAccountSwitching||projectLoading||typeof accountReady==='undefined'||(!projectAccountUID()&&!(typeof trialActive==='function'&&trialActive())))return;
  let changed=false;const meta=ensureProjectIdentity();
  for(const n of state.nodes){
   // Image-only modules also get OCR; the original board image stays intact.

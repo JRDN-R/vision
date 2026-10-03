@@ -282,6 +282,10 @@ class DocumentJobs:
                 if row is None:
                     return False
                 value = dict(row)
+                trials = self.app.config.get('TRIALS')
+                if trials and trials.expired(value['project_id']):
+                    db.execute("UPDATE document_jobs SET status='cancelled',cancel_requested=1,phase='Trial ended' WHERE id=?", (value['id'],))
+                    return True
                 db.execute("UPDATE document_jobs SET status='processing',attempts=attempts+1 WHERE id=?", (value['id'],))
             directory, started = self.root / value['id'], time.monotonic()
             try:

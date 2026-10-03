@@ -4,15 +4,15 @@ const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='visio
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
 function accountSignedIn(){return !!(!accountGateLocked&&accountFirebase?.currentUser?.uid&&cloudAuth?.kind==='firebase-google'&&cloudAuth.uid===accountFirebase.currentUser.uid);}
 function accountUpdateGate(){
- const gate=$('accountGate');if(!gate)return;const locked=!accountSignedIn();
+ const gate=$('accountGate');if(!gate)return;const locked=!accountCanUseApp();
  document.documentElement.classList.toggle('account-locked',locked);gate.hidden=!locked;
  for(const el of document.querySelectorAll('body > :not(script):not(#accountGate)')){
   if(locked){if(!el.hasAttribute('data-account-inert'))el.setAttribute('data-account-inert',el.inert?'true':'false');el.inert=true;}
   else if(el.hasAttribute('data-account-inert')){el.inert=el.getAttribute('data-account-inert')==='true';el.removeAttribute('data-account-inert');}
  }
- if(locked)for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
- $('accountGateStatus').textContent=accountError||(accountBusy?'Connecting to Google…':'Sign in with your Google account to continue.');
- $('accountGateSignIn').disabled=accountBusy;$('accountGateSignIn').hidden=location.protocol==='file:';
+ if(locked)for(const dialog of document.querySelectorAll('dialog[open]:not(#whyVisionDialog)'))dialog.close();
+ $('accountGateStatus').textContent=accountError||(trialStarting?'Starting your five-minute trial…':accountBusy?'Connecting to Google…':'Sign in to save your work, or explore without an account.');
+ $('accountGateSignIn').disabled=accountBusy||trialStarting;trialPaint();$('accountGateSignIn').hidden=location.protocol==='file:';
  $('accountGateOnline').hidden=location.protocol!=='file:';
  $('accountGateDetail').textContent=location.protocol==='file:'?'Open the online Vision page to sign in. Your projects and files are stored on FUPCJ Server.':'Your projects, files, and saved settings are stored on FUPCJ Server. Google is used for sign-in.';
  if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=location.protocol==='file:'?$('accountGateOnline'):accountBusy?gate:$('accountGateSignIn');target.focus({preventScroll:true});}
@@ -33,7 +33,7 @@ function accountPaint(){
  accountUpdateGate();
  renderAccountProjectList();
 }
-function openAccountDialog(message=''){accountError=message;accountPaint();if(accountSignedIn()&&!$('accountDialog').open)$('accountDialog').showModal();}
+function openAccountDialog(message=''){accountError=message;accountPaint();if(accountCanUseApp()&&!$('accountDialog').open)$('accountDialog').showModal();}
 function accountClearRunKey(){
  clearTimeout(accountKeyTimer);accountKeyEpoch++;$('consoleKey').value='';$('consoleKey').type='password';$('consoleRememberKey').checked=false;
  if(typeof setKeyVisibility==='function')setKeyVisibility($('consoleKey'),false);
@@ -42,7 +42,9 @@ function accountClearRunKey(){
 }
 async function accountSetUser(user){
  const uid=user?.uid||'';
- if(accountLastUID===uid)return;accountLastUID=uid;accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
+ if(accountLastUID===uid)return;
+ if(user&&(trialSession||cloudAuth?.kind==='trial'))await trialFinish({message:''});
+ accountLastUID=uid;accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
  if(typeof cancelGoogleSources==='function')cancelGoogleSources();
  accountClearRunKey();
  if(user){accountMode('google');cloudConfig={kind:'private-pc',backendUrl:ACCOUNT_PC,publicAccess:true};cloudAuth={kind:'firebase-google',uid,email:user.email||'',backendUrl:ACCOUNT_PC,remember:true};try{localStorage.setItem('vision-cloud-config',JSON.stringify(cloudConfig));}catch{}}
@@ -80,7 +82,7 @@ async function accountIdToken(){
 }
 async function accountGoogleSignIn(){
  if(location.protocol==='file:'){openAccountDialog('Open Vision online to sign in with Google.');return;}
- if(accountBusy)return;accountBusy=true;accountError='';accountPaint();
+ if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
  try{const auth=await accountLoad(),provider=new accountSDK.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});
   await accountSDK.setPersistence(auth,accountSDK.browserLocalPersistence);
   const result=await accountSDK.signInWithPopup(auth,provider);
@@ -140,14 +142,14 @@ $('cloudSignIn').onclick=()=>openAccountDialog('Vision requires Google sign-in.'
 $('cloudSignOut').onclick=()=>void accountGoogleSignOut();
 $('accountGateSignIn').onclick=()=>void accountGoogleSignIn();
 function accountGateEvent(event){
- if(accountSignedIn())return;
+ if(accountCanUseApp())return;
  const inGate=!!event.target?.nodeType&&$('accountGate').contains(event.target);
  if(inGate&&['click','pointerdown','pointerup','touchstart','touchend'].includes(event.type))return;
  if(inGate&&event.type==='keydown'&&!event.ctrlKey&&!event.metaKey){event.stopImmediatePropagation();return;}
  event.preventDefault();event.stopImmediatePropagation();
 }
 for(const type of ['keydown','paste','drop','dragover','click','pointerdown','pointerup','touchstart','touchend'])window.addEventListener(type,accountGateEvent,{capture:true,passive:false});
-new MutationObserver(()=>{if(!accountSignedIn())accountUpdateGate();}).observe(document.body,{childList:true});
+new MutationObserver(()=>{if(!accountCanUseApp())accountUpdateGate();}).observe(document.body,{childList:true});
 accountUpdateGate();
 // Restore Firebase identity before opening any application controls or project recovery.
 const accountReady=Promise.resolve().then(async()=>{
