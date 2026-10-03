@@ -1,0 +1,73 @@
+name: Verify launch and guest trial
+on:
+  push:
+    branches: [launch-guest-five-minutes]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vision-guest-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: launch-guest-five-minutes
+      - name: Apply the scoped update and build
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          {
+            python .vision-launch-backend.py
+            python .vision-launch-frontend.py
+            python -m compileall -q vision-pc
+            python web/build.py
+          } 2>&1 | tee test-results/build.log
+      - name: Install test dependencies
+        run: |
+          python -m pip install -r vision-pc/requirements.txt
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          echo "CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Backend regressions
+        run: |
+          set -o pipefail
+          python -m unittest discover -s vision-pc -p 'test_*.py' -v 2>&1 | tee test-results/backend.log
+      - name: JavaScript regressions
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          { for test in tests/*.test.cjs tests/base-account-races.cjs; do node "$test" || exit $?; done; } 2>&1 | tee test-results/javascript.log
+      - name: Mobile browser checks
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          { node tests/account-gate-smoke.cjs && node tests/launch-trial-smoke.cjs; } 2>&1 | tee test-results/browser.log
+      - name: Capture generated sources for review
+        if: always()
+        run: |
+          tar --exclude='__pycache__' -czf test-results/verified-sources.tar.gz web vision-pc tests Vision.html index.html
+      - name: Save test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-verification
+          path: test-results/
+          retention-days: 3
+      - name: Commit only the verified update
+        if: success()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .vision-launch-backend.py .vision-launch-frontend.py .github/workflows/verify-launch.yml
+          git add web/auth.js web/auth.css web/build.py web/cloud.js web/document.html web/projects.js web/launch.js web/GUEST-TRIAL.md
+          git add vision-pc/server.py vision-pc/sessions.py vision-pc/media.py vision-pc/transcription.py vision-pc/uploaded_media.py vision-pc/Setup-Vision-PC.ps1 vision-pc/trials.py vision-pc/test_trials.py
+          git add tests/account-auth.test.cjs tests/launch-trial-smoke.cjs Vision.html index.html
+          git commit -m 'Build verified launch page and server-enforced five-minute guest trial'
+          git push origin HEAD:launch-guest-five-minutes
