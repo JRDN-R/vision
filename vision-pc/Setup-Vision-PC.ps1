@@ -24,7 +24,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }

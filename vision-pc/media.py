@@ -1,6 +1,6 @@
 """Temporary PC video processing; no source media is retained."""
 from __future__ import annotations
-import base64, html, io, json, math, os, re, subprocess, tempfile, threading
+import base64, html, io, json, math, os, re, subprocess, tempfile, threading, time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 MAX_DURATION = 7200
@@ -127,7 +127,14 @@ def friendly_error(error):
     return "The video could not be processed. Try again later, or upload a video file directly."
 
 
-def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False):
+def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False, deadline=None):
+    def budget(normal):
+        if deadline is None:
+            return normal
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise TimeoutError("The trial has ended")
+        return min(normal, remaining)
     import yt_dlp
     from PIL import Image, ImageDraw, ImageFont
 
@@ -194,7 +201,7 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                 update(job_id, phase=f"Screenshot {index + 1} of {count}", progress=50 + 38 * index / count)
                 command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", str(when), "-i", str(source),
                            "-frames:v", "1", "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", "-f", "image2pipe", "-vcodec", "mjpeg", "-"]
-                raw = subprocess.run(command, check=True, capture_output=True, timeout=90, **SUBPROCESS_FLAGS).stdout
+                raw = subprocess.run(command, check=True, capture_output=True, timeout=budget(90), **SUBPROCESS_FLAGS).stdout
                 with Image.open(io.BytesIO(raw)) as picture:
                     picture = picture.convert("RGB")
                     width, height = picture.size
@@ -213,7 +220,7 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                 audio_path = directory / "speech.m4a"
                 command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source), "-vn",
                            "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "32k", str(audio_path)]
-                converted = subprocess.run(command, capture_output=True, timeout=600, **SUBPROCESS_FLAGS)
+                converted = subprocess.run(command, capture_output=True, timeout=budget(600), **SUBPROCESS_FLAGS)
                 if converted.returncode == 0 and audio_path.exists():
                     audio = {"name": "YouTube-speech.m4a", "mime": "audio/mp4", "data": data_url(audio_path.read_bytes(), "audio/mp4")}
                 elif b"does not contain any stream" not in converted.stderr and b"matches no streams" not in converted.stderr:

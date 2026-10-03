@@ -25,12 +25,14 @@ from transcription import LocalTranscription
 from uploaded_media import UploadedMedia
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
+from trials import Trials
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
 OPENAI = 'https://api.openai.com/v1'
 WAKE = threading.Event()
 STOP = threading.Event()
+YOUTUBE_WORKER_LOCK = threading.Lock()
 ORIGINS = {'https://jrdn-r.github.io', 'null'}
 BASE_INSTRUCTIONS = '''Use the code_interpreter tool directly to open the supplied archive and read MAIN_PROMPT.txt, the module instructions, and the relevant evidence. Follow the module order and conditional paths. Treat the supplied content as the exclusive factual source for the requested task; do not browse or invent unavailable facts. The user's additional message can specify the requested task or output. Apply the package's content and module instructions while respecting higher-priority instructions. Answer naturally about the subject. Do not discuss archives, file layouts, extraction, delivery format, processing, or missing-material inventories unless the user explicitly asks about them. Briefly qualify uncertainty only when it materially affects the answer. Do not add unsolicited diagnoses, advice, risks, or next steps unless asked or necessary for an immediate serious risk. Use readable Markdown. When creating a deliverable, save it in the code interpreter container and provide its downloadable file citation. Do not expose hidden reasoning; concise progress or reasoning summaries are sufficient.'''
 
@@ -86,6 +88,9 @@ def configure(config_path):
     app.config['AUDIT_LOGS'].initialize()
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
+    app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
+    app.config['TRIALS'] = trials
+    trials.initialize()
     return config
 
 
@@ -161,6 +166,11 @@ def authorize():
         return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
+    if request.path == '/api/trial/start' and request.method == 'POST':
+        return
+    if token.startswith('trial_'):
+        trials.authorize(token)
+        return
     expected = app.config.get('CONNECTION_TOKEN', '')
     identity = app.config.get('FIREBASE_IDENTITY')
     if expected and hmac.compare_digest(token.encode('utf-8'), expected.encode('utf-8')):
@@ -193,6 +203,36 @@ def authorize():
 
 @app.after_request
 def cors(response):
+    if getattr(g, 'auth_kind', None) == 'trial':
+        ident, deadline = g.trial['id'], g.trial['expires_at']
+        released = [False]
+        def release_trial():
+            if not released[0]:
+                released[0] = True
+                with trials.lock:
+                    count = trials.inflight.get(ident, 1) - 1
+                    if count > 0:
+                        trials.inflight[ident] = count
+                    else:
+                        trials.inflight.pop(ident, None)
+        if time.time() >= deadline:
+            response.close()
+            response = jsonify(error='Your five-minute trial has ended. Sign in with Google.', code='trial-expired')
+            response.status_code = 403
+        elif response.is_streamed:
+            original = response.response
+            def trial_chunks():
+                try:
+                    for chunk in original:
+                        if time.time() >= deadline or trials.expired('trial-' + ident):
+                            break
+                        yield chunk
+                finally:
+                    if hasattr(original, 'close'):
+                        original.close()
+                    release_trial()
+            response.response = trial_chunks()
+        response.call_on_close(release_trial)
     if getattr(g, 'auth_kind', None) == 'firebase-google' and request.method in ('POST', 'PUT', 'DELETE'):
         app.config['AUDIT_LOGS'].request_event(g.uid, request, response.status_code,
                                               time.monotonic() - g.request_started)
@@ -230,7 +270,7 @@ def health():
                                  'projectId': app.config['FIREBASE_IDENTITY'].project_id if app.config.get('FIREBASE_IDENTITY') else None},
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready']})
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -263,7 +303,7 @@ def youtube():
         raise APIError('Choose whether to include sound effects.')
     # Existing installation receipts retain their IDs. New accounts cannot collide
     # with those receipts or infer another account's video URL/status.
-    if client_id and g.auth_kind == 'firebase-google':
+    if client_id and g.auth_kind in ('firebase-google', 'trial'):
         import hashlib
         client_id = 'account:' + hashlib.sha256((g.uid + '\0' + client_id).encode()).hexdigest()
     with connect_db() as db:
@@ -297,6 +337,11 @@ def prune_expired():
 
 
 def process_next_job():
+    with YOUTUBE_WORKER_LOCK:
+        return _process_next_job()
+
+
+def _process_next_job():
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
         row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
@@ -304,8 +349,16 @@ def process_next_job():
             return False
         value = dict(row)
         db.execute("UPDATE jobs SET status='processing',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+    trial_id = 'trial-' + value['uid'][6:] if value['uid'].startswith('trial:') else ''
+    deadline = None
+    if trial_id:
+        with connect_db() as db:
+            lease = db.execute('SELECT expires_at FROM trial_visits WHERE id=?', (value['uid'][6:],)).fetchone()
+        deadline = lease['expires_at'] if lease else 0
     last_write = [0.0]
     def update(job_id, **fields):
+        if trial_id and trials.expired(trial_id):
+            raise RuntimeError('trial-expired')
         result = fields.pop('result', None)
         if result is not None:
             path = app.config['DATA_DIR'] / 'results' / (job_id + '.json')
@@ -327,11 +380,20 @@ def process_next_job():
     processing_started = time.monotonic()
     try:
         with MEDIA_LOCK:
+            if trial_id and trials.expired(trial_id):
+                with connect_db() as db:
+                    db.execute("UPDATE jobs SET status='error',phase='Trial ended' WHERE id=?", (value['id'],))
+                return True
             process_job(value['id'], value['url'], app.config['FFMPEG'], update,
                         deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'),
-                        include_sound_events=bool(value['include_sound_events']))
+                        include_sound_events=bool(value['include_sound_events']),
+                        **({'deadline': deadline} if deadline is not None else {}))
     except Exception:
-        update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
+        if trial_id and trials.expired(trial_id):
+            with connect_db() as db:
+                db.execute("UPDATE jobs SET status='error',phase='Trial ended' WHERE id=?", (value['id'],))
+        else:
+            update(value['id'], status='error', phase='Stopped', error='The import stopped unexpectedly. Start it again.')
     finally:
         with connect_db() as db:
             final = db.execute('SELECT status,result_path FROM jobs WHERE id=?', (value['id'],)).fetchone()
@@ -556,6 +618,7 @@ def openai_artifact(container_id, file_id):
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
+trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')
@@ -589,7 +652,9 @@ def main():
         app.logger.addHandler(handler)
         app.logger.setLevel(logging.INFO)
         from waitress import serve
+        trials.sweep()
         recover_jobs()
+        trials.start()
         worker = threading.Thread(target=worker_loop, name='vision-media', daemon=True)
         worker.start()
         sessions.start()
@@ -599,8 +664,11 @@ def main():
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
                   max_request_body_size=PROJECT_LIMIT, channel_timeout=300,
-                  expose_tracebacks=False)
+                  expose_tracebacks=False, trusted_proxy='127.0.0.1',
+                  trusted_proxy_count=1, trusted_proxy_headers={'x-forwarded-for', 'x-forwarded-proto'},
+                  clear_untrusted_proxy_headers=True)
         finally:
+            trials.stop.set()
             STOP.set()
             WAKE.set()
             sessions.stop.set()

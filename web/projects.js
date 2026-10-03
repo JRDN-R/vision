@@ -2,6 +2,7 @@
 const PROJECT_STORE='vision-projects-v1',PROJECT_RECENT='vision-project-recents-v1',PROJECT_ACTIVE='vision-project-active-v1';
 const PROJECT_MAX_BYTES=150*1024*1024;
 let projectStorageScope='',projectAccountSwitching=false,projectAccountList=[],projectAccountListMessage='',projectAccountListEpoch=0;
+function projectIsTemporary(scope=projectStorageScope){return scope.startsWith('trial:')||cloudAuth?.kind==='trial';}
 function projectAccountUID(){return cloudAuth?.kind==='firebase-google'?cloudAuth.uid:'';}
 function projectScopedKey(key,scope=projectStorageScope){return scope?key+':account:'+scope:key;}
 function projectAccountCanAccess(meta){return !meta?.ownerUid||meta.ownerUid===projectAccountUID();}
@@ -15,16 +16,18 @@ function validProjectIdentity(raw){
 }
 function projectRandom(bytes){const a=new Uint8Array(bytes);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');}
 function ensureProjectIdentity(){
+ if(projectIsTemporary()&&typeof trialSession!=='undefined'&&trialSession){state.projectCloud={...trialSession.project};return state.projectCloud;}
  let meta=validProjectIdentity(state.projectCloud);
  if(!meta)meta={id:'project-'+projectRandom(16),key:projectRandom(32),backendUrl:cloudConfig?.kind==='private-pc'?cloudConfig.backendUrl:'',revision:0,...(projectAccountUID()?{ownerUid:projectAccountUID()}:{})};
  if(!meta.backendUrl&&cloudConfig?.kind==='private-pc')meta.backendUrl=cloudConfig.backendUrl;
  state.projectCloud=meta;return meta;
 }
 function projectSnapshot(){return{format:'Vision',version:4,savedAt:new Date().toISOString(),...withoutVideoPayloads(snapshot()),projectCloud:{...ensureProjectIdentity()}};}
-function projectLocalGet(key,scope=projectStorageScope){try{return localStorage.getItem(projectScopedKey(key,scope));}catch{return null;}}
-function projectLocalSet(key,value,scope=projectStorageScope){try{localStorage.setItem(projectScopedKey(key,scope),value);return true;}catch{return false;}}
+function projectLocalGet(key,scope=projectStorageScope){if(projectIsTemporary(scope))return null;try{return localStorage.getItem(projectScopedKey(key,scope));}catch{return null;}}
+function projectLocalSet(key,value,scope=projectStorageScope){if(projectIsTemporary(scope))return false;try{localStorage.setItem(projectScopedKey(key,scope),value);return true;}catch{return false;}}
 function projectRecentList(){try{const text=projectLocalGet(PROJECT_RECENT);return (text?JSON.parse(text):projectRecentMemory).filter(r=>validProjectIdentity(r)&&typeof r.title==='string').slice(0,30);}catch{return projectRecentMemory;}}
 function projectRemember(meta,title,updatedAt=new Date().toISOString()){
+ if(projectIsTemporary())return;
  const entries=projectRecentList().filter(r=>r.id!==meta.id);entries.unshift({...meta,title:String(title||'Untitled project').slice(0,100),updatedAt});projectRecentMemory=entries.slice(0,30);projectLocalSet(PROJECT_RECENT,JSON.stringify(entries.slice(0,30)));projectLocalSet(PROJECT_ACTIVE,meta.id);
 }
 function projectDatabase(){
@@ -32,11 +35,13 @@ function projectDatabase(){
  return projectDBPromise;
 }
 async function projectStorePut(record,{activate=true,scope=projectStorageScope}={}){
+ if(projectIsTemporary(scope))return false;
  const recents=projectRecentList();
  try{const db=await projectDatabase();await new Promise((resolve,reject)=>{const tx=db.transaction('projects','readwrite');const store=tx.objectStore('projects');store.put({...record,id:projectScopedKey(record.id,scope)});if(record.project&&activate)store.put({id:projectScopedKey('__active__',scope),activeId:record.id,recents});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Browser backup was canceled.'));});return true;}
  catch(error){const text=JSON.stringify(record);if(text.length<1500000&&projectLocalSet(PROJECT_STORE+':'+record.id,text,scope))return true;throw new Error('Browser backup is unavailable or full. Download a project copy; FUPCJ Server saving can still work.');}
 }
 async function projectStoreGet(id,scope=projectStorageScope){
+ if(projectIsTemporary(scope))return null;
  try{const db=await projectDatabase();const record=await new Promise((resolve,reject)=>{const request=db.transaction('projects').objectStore('projects').get(projectScopedKey(id,scope));request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);});if(record)return{...record,id};}catch{}
  try{return JSON.parse(projectLocalGet(PROJECT_STORE+':'+id,scope)||'null');}catch{return null;}
 }
@@ -48,6 +53,7 @@ function projectStatus(message,kind='local'){
  const updateCommand=$('projectUpdateCommand');if(updateCommand&&kind==='update')updateCommand.textContent=updateCommand.textContent.replace(/-Action (?:Update|EnableGoogleSignIn)/g,'-Action '+(projectAccountUID()?'EnableGoogleSignIn':'Update'));
 }
 async function projectBackup(){
+ if(projectIsTemporary())return;
  projectFirstBackupAt=0;if(projectLoading||!validProjectIdentity(state.projectCloud))return;
  const epoch=projectEpoch,generation=projectGeneration,data=projectSnapshot(),record={id:data.projectCloud.id,project:data,pending:projectPending,updatedAt:data.savedAt,generation,epoch};
  projectRemember(data.projectCloud,data.title,data.savedAt);
@@ -55,6 +61,7 @@ async function projectBackup(){
  catch(error){if(epoch===projectEpoch){projectLocalOK=false;projectStatus(error.message,'error');}}
 }
 function projectQueueSave(){
+ if(projectIsTemporary()){projectGeneration++;projectPending=false;projectStatus('Temporary trial · projects are not saved');return;}
  if(projectLoading||projectAccountSwitching)return;ensureProjectIdentity();if(!projectPending||!projectFirstPendingAt)projectFirstPendingAt=Date.now();if(!projectFirstBackupAt)projectFirstBackupAt=Date.now();projectPending=true;projectGeneration++;projectRemember(state.projectCloud,state.title);clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);
  projectStatus(projectConflict?'FUPCJ Server copy changed · choose which copy to keep':'Saving project…',projectConflict?'conflict':'saving');
  projectBackupTimer=setTimeout(()=>void projectBackup(),Math.max(0,Math.min(200,2000-(Date.now()-projectFirstBackupAt))));
@@ -80,7 +87,7 @@ async function projectCapabilities(force=false){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);let data;
  try{data=await projectResponse(await cloudFetch('/health',{signal:controller.signal}));}finally{clearTimeout(timer);}
  const caps=data.capabilities,has=name=>Array.isArray(caps)?caps.includes(name):caps?.[name]===true;
- if(!has('persistentProjects')||!has('projectRevision')){const error=new Error('Update FUPCJ Server to enable project autosave and background chats.');error.code='VISION_PC_UPDATE_REQUIRED';throw error;}
+ if(!(projectIsTemporary()&&has('temporarySessions'))&&(!has('persistentProjects')||!has('projectRevision'))){const error=new Error('Update FUPCJ Server to enable project autosave and background chats.');error.code='VISION_PC_UPDATE_REQUIRED';throw error;}
  projectHealthCache={url:cloudConfig.backendUrl,time:Date.now(),data};return data;
 }
 function projectReportFailure(error){
@@ -91,6 +98,7 @@ function projectReportFailure(error){
  else projectStatus(error.message,'error');
 }
 async function projectPerformSave(){
+ if(projectIsTemporary())return ensureProjectIdentity();
  if(projectAccountSwitching)throw new Error('Wait for the account change to finish.');
  if(projectLoading)return ensureProjectIdentity();if(projectConflict){const e=new Error('FUPCJ Server has a newer copy. Use Projects to load it or save this board as a new project.');e.status=409;throw e;}
  const meta=ensureProjectIdentity(),epoch=projectEpoch,scope=projectStorageScope;if(meta.revision===0)projectPending=true;projectFirstPendingAt=Date.now();await projectBackup();await projectCapabilities();if(epoch!==projectEpoch)throw new Error('The active project changed.');
@@ -107,6 +115,7 @@ async function projectPerformSave(){
  return state.projectCloud;
 }
 async function flushProjectSave(){
+ if(projectIsTemporary())return ensureProjectIdentity();
  clearTimeout(projectSyncTimer);const callerEpoch=projectEpoch;if(projectSyncPromise){const previousEpoch=projectSyncEpoch;try{await projectSyncPromise;}catch(error){if(previousEpoch===projectEpoch)throw error;}if(callerEpoch!==projectEpoch)throw new Error('The active project changed.');if(projectPending&&!projectConflict||!state.projectCloud?.revision)return flushProjectSave();return ensureProjectIdentity();}
  if(!projectPending&&state.projectCloud?.revision>0)return ensureProjectIdentity();const epoch=projectEpoch;
  projectSyncEpoch=epoch;projectSyncPromise=projectPerformSave().catch(error=>{if(epoch===projectEpoch)projectReportFailure(error);throw error;}).finally(()=>{projectSyncPromise=null;});return projectSyncPromise;
@@ -126,6 +135,7 @@ async function projectApply(raw,{pendingSave=false,keepHistory=false}={}){
  await projectBackup();projectStatus(pendingSave?'Restored this device’s changes · waiting for FUPCJ Server':'Project restored','local');
 }
 async function projectReconcile({force=false}={}){
+ if(projectIsTemporary())return;
  const meta=validProjectIdentity(state.projectCloud);if(!meta||!meta.backendUrl)return;const epoch=projectEpoch,generation=projectGeneration;
  try{await projectCapabilities();const remote=await projectReadRemote(meta);if(epoch!==projectEpoch||generation!==projectGeneration)return;
   if(!Number.isSafeInteger(remote.revision)||remote.revision<1||!remote.project)throw new Error('The saved FUPCJ Server project is incomplete.');
@@ -154,7 +164,7 @@ function renderProjectMenu(){
  for(const entry of projectRecentList()){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title;detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+new Date(entry.updatedAt).toLocaleString();button.append(name,detail);button.onclick=()=>void projectOpenRecent(entry);list.appendChild(button);}
  if(!list.children.length){const empty=document.createElement('p');empty.className='mini-note';empty.textContent='Your recent projects will appear here after you start editing. Each editable project file also carries its connection to FUPCJ Server copy.';list.appendChild(empty);}
 }
-function openProjectsMenu(){renderProjectMenu();if(!$('projectsDialog').open)$('projectsDialog').showModal();void projectRefreshAccountList();}
+function openProjectsMenu(){if(projectIsTemporary()){openAccountDialog('Sign in with Google to save projects. Temporary trial work will be cleared when you sign in.');return;}renderProjectMenu();if(!$('projectsDialog').open)$('projectsDialog').showModal();void projectRefreshAccountList();}
 async function projectSwitchAccountScope(scope){
  if(scope===projectStorageScope)return;
  projectAccountSwitching=true;projectAccountList=[];projectAccountListMessage='';projectAccountListEpoch++;
@@ -247,10 +257,10 @@ $('accountProjectRefresh').onclick=()=>void projectRefreshAccountList();$('proje
 $('closeProjects').onclick=()=>projectDialog.close();$('projectOpenFile').onclick=()=>{projectDialog.close();$('projectInput').click();};$('projectDownload').onclick=()=>saveProject();$('projectSyncNow').onclick=async()=>{projectHealthCache=null;try{await ensureRemoteProject();}catch{}renderProjectMenu();};$('projectSaveNew').onclick=$('projectKeepLocal').onclick=()=>void projectFork();$('projectLoadPC').onclick=async()=>{if(!confirm('Load the latest FUPCJ Server copy and replace this board? Download this local copy first if you want to keep both.'))return;await projectReconcile({force:true});renderProjectMenu();};
 $('openBtn').textContent='Projects';$('openBtn').onclick=openProjectsMenu;$('saveState').setAttribute('role','button');$('saveState').setAttribute('tabindex','0');$('saveState').onclick=openProjectsMenu;$('saveState').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openProjectsMenu();}};
 const projectOriginalSave=saveProject;
-saveProject=function(){if(!busy&&!ioBusy)ensureProjectIdentity();projectOriginalSave();if(state.projectCloud){void projectBackup();if(projectPending)void flushProjectSave().catch(()=>{});}};
+saveProject=function(){if(projectIsTemporary()){openProjectsMenu();return;}if(!busy&&!ioBusy)ensureProjectIdentity();projectOriginalSave();if(state.projectCloud){void projectBackup();if(projectPending)void flushProjectSave().catch(()=>{});}};
 $('saveBtn').onclick=saveProject;
 const projectOriginalOpen=openProject;
-openProject=async function(file){const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
+openProject=async function(file){if(projectIsTemporary()){openAccountDialog('Sign in with Google to open saved projects. You can still add files and videos to the trial board.');return;}const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
 const projectOriginalNew=$('newBtn').onclick;
 $('newBtn').onclick=async function(event){await projectBackup();const oldState=state;projectOriginalNew(event);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);projectEpoch++;projectGeneration=0;projectPending=false;projectConflict=false;projectLocalOK=false;projectLocalSet(PROJECT_ACTIVE,'');void projectStorePut({id:'__active__',activeId:'',recents:projectRecentList()}).catch(()=>{});projectStatus('New project · autosaves after your first change');}};
 async function projectRecoverStartup(){

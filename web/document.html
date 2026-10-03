@@ -5,7 +5,31 @@
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Vision — advance AI prompt generator"><meta name="twitter:description" content="by Jordan R."><meta name="twitter:image" content="https://jrdn-r.github.io/vision/Vision-preview.jpg"><meta name="twitter:image:alt" content="Vision logo banner">
 <!-- Link previews require hosting. Set og:image and twitter:image to the public absolute URL of Vision-banner.png after choosing a host. -->
 <link rel="icon" type="image/png" sizes="192x192" href="{{VISION_ASSET_e54ba9abfb4f76577398691e7bcccd6f688820559b38075c25f4c48d7f0ab7e6}}"><link rel="apple-touch-icon" sizes="180x180" href="{{VISION_ASSET_51b99f430d7b4d09e5036b3969328c31066ad3bd43fe7aa13216128482fe0dd2}}">
-<style>{{VISION_STYLES}}</style></head><body><section id="accountGate" class="account-gate" aria-labelledby="accountGateTitle"><div class="account-gate-card"><span class="account-gate-wordmark">VISION</span><h1 id="accountGateTitle">Your workspace, connected.</h1><p id="accountGateDetail">Your projects, files, and saved settings are stored on FUPCJ Server. Google is used for sign-in.</p><button id="accountGateSignIn" type="button" class="primary">Sign in with Google</button><a id="accountGateOnline" class="account-gate-online" href="https://jrdn-r.github.io/vision/" hidden>Open Vision online to sign in ↗</a><p id="accountGateStatus" role="status" aria-live="polite">Checking sign-in…</p></div></section>
+<style>{{VISION_STYLES}}</style></head><body><section id="accountGate" class="account-gate" aria-labelledby="accountGateTitle">
+ <div class="account-gate-card">
+  <img class="account-gate-logo" src="{{VISION_ASSET_77187dc76a61545b317d80ad11f628d36f69d191e16fd2ca9c55263aad5b7b66}}" alt="Vision" width="96" height="30">
+  <button id="whyVisionButton" class="why-vision-button" type="button" aria-haspopup="dialog" aria-controls="whyVisionDialog">Why use Vision? <span aria-hidden="true">↗</span></button>
+  <h1 id="accountGateTitle">Your workspace, connected.</h1>
+  <p id="accountGateDetail">Your projects, files, and saved settings are stored on FUPCJ Server. Google is used for sign-in.</p>
+  <button id="accountGateSignIn" type="button" class="primary">Sign in with Google</button>
+  <button id="accountGateTrial" type="button" aria-describedby="accountTrialWarning">Or try for five minutes</button>
+  <p id="accountTrialWarning" class="account-trial-warning">No projects are saved on temporary accounts. The one-time timer starts when you enter, including processing time. Trial work is cleared when time runs out or you sign in.</p>
+  <a id="accountGateOnline" class="account-gate-online" href="https://jrdn-r.github.io/vision/" hidden>Open Vision online to sign in ↗</a>
+  <p id="accountGateStatus" role="status" aria-live="polite">Checking sign-in…</p>
+  <details class="trial-details"><summary>About the one-time trial</summary><p>A browser receipt and a protected network identifier help prevent repeat trials. Shared Wi-Fi can share one trial. Google sign-in is not affected. Processing requires FUPCJ Server to be online.</p></details>
+ </div>
+ <dialog id="whyVisionDialog" aria-labelledby="whyVisionTitle">
+  <div class="why-vision-heading"><span class="why-vision-eyebrow">BETTER CONTEXT. CLEARER ANSWERS.</span><button id="whyVisionClose" class="dialog-close" type="button" aria-label="Close Why use Vision">×</button></div>
+  <h2 id="whyVisionTitle">Why use Vision?</h2>
+  <p class="why-vision-lead">Give AI the whole picture.<br>Not one overwhelming prompt.</p>
+  <p>Map your files, videos, links, and notes, then show how they connect. Vision turns your project into organized, AI-ready context for ChatGPT, Claude, Gemini, or your model of choice.</p>
+  <p>Process videos and YouTube links into transcripts and timestamped screenshots, with optional sound descriptions. Give your AI clearer evidence so it can focus on the actual task.</p>
+  <p>Run AI inside your project with your own API key. Sign in with Google to save projects to FUPCJ Server for free, pick up on another computer, browse your Google Drive, and search YouTube without leaving Vision.</p>
+  <p class="why-vision-note">Google handles sign-in. FUPCJ Server stores and processes your project data; connected AI providers receive what you submit to them. API usage may have provider charges.</p>
+  <button id="whyVisionDone" type="button" class="primary">Explore Vision</button>
+ </dialog>
+</section>
+<div id="trialBanner" class="trial-banner" hidden><div><strong>Temporary trial</strong> <span id="trialCountdown" role="timer" aria-live="off">5:00 left</span><small>Projects are not saved.</small></div><button id="trialSignIn" type="button">Sign in with Google</button></div>
 <svg style="display:none" aria-hidden="true"><defs>
 <symbol id="i-add" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-move" viewBox="0 0 24 24"><path d="m5 3 14 9-7 1-3 7z"/></symbol><symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 12V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-5a2 2 0 0 1 4 0v9c0 5-3 7-7 7-3 0-5-2-7-5l-3-5a2 2 0 0 1 3-2l2 2"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 20 20 4M7 4h13v13"/></symbol><symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol><symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1"/></symbol><symbol id="i-pen" viewBox="0 0 24 24"><path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4"/></symbol><symbol id="i-eraser" viewBox="0 0 24 24"><path d="m4 12 9-9 8 8-9 9H8L3 15zM7 9l8 8M12 20h9"/></symbol><symbol id="i-undo" viewBox="0 0 24 24"><path d="m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14" transform="translate(0 -2)"/></symbol><symbol id="i-redo" viewBox="0 0 24 24"><path d="m16 4 5 5-5 5m5-5H11a7 7 0 0 0 0 14" transform="translate(0 -2)"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol><symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.4"/><path d="m3 17 6-5 4 3 3-4 5 6"/></symbol><symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3v.1"/></symbol>
 </defs></svg>

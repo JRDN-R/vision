@@ -77,6 +77,7 @@ class Sessions:
     def __init__(self, app, connect_db, api_error, instructions):
         self.app, self.db, self.Error, self.instructions = app, connect_db, api_error, instructions
         self.wake, self.stop = threading.Event(), threading.Event()
+        self.worker_lock = threading.Lock()
         self.register_routes()
 
     def initialize(self):
@@ -120,6 +121,10 @@ class Sessions:
             db.execute('CREATE INDEX IF NOT EXISTS projects_owner_updated ON projects(owner_uid,updated_at)')
 
     def project(self, project_id, create=False, db=None):
+        if getattr(g, 'auth_kind', '') == 'trial':
+            return self.app.config['TRIALS'].project(project_id)
+        if project_id.startswith('trial-'):
+            raise self.Error('Temporary projects cannot be opened or saved as account projects.', 403)
         if not re.fullmatch(r'[A-Za-z0-9_-]{16,120}', project_id):
             raise self.Error('Invalid project identifier.')
         key = request.headers.get('X-Vision-Project-Key', '')
@@ -672,12 +677,23 @@ class Sessions:
             self.update(row['id'])
 
     def work_once(self):
+        with self.worker_lock:
+            return self._work_once()
+
+    def _work_once(self):
         with self.db() as db:
             record = db.execute("SELECT * FROM project_runs WHERE status IN ('queued','preparing','submitting','in_progress','saving') AND next_attempt<=? ORDER BY created_at LIMIT 1", (time.time(),)).fetchone()
         if record is None:
             return False
         row = dict(record)
         run_id, key = row['id'], ''
+        trial = self.app.config.get('TRIALS')
+        if trial and trial.expired(row['project_id']):
+            row['cancel_requested'] = 1
+            self.update(run_id, cancel_requested=1)
+            if not row['response_id'] or row['status'] == 'saving':
+                self.update(run_id, status='cancelled', phase='Trial ended', key_cipher=None)
+                return True
         try:
             key = unprotect_secret(row['key_cipher'])
             if row['cancel_requested'] and row['status'] != 'saving':
@@ -686,6 +702,9 @@ class Sessions:
                     if result.get('status') in ('queued', 'in_progress'):
                         result = self.call_json(key, 'POST', '/responses/'+row['response_id']+'/cancel')
                     self.absorb_response(run_id, result)
+                    if trial and trial.expired(row['project_id']):
+                        self.update(run_id, status='cancelled', phase='Trial ended', key_cipher=None)
+                        return True
                 else:
                     self.update(run_id, status='cancelled', phase='Cancelled', key_cipher=None)
                     return True
@@ -731,7 +750,9 @@ class Sessions:
         except UpstreamFailure as error:
             row = self.row(run_id)
             message = str(error).replace(key, '[redacted]') if key else str(error)
-            if row['response_id'] and (error.status >= 500 or error.status == 429):
+            if trial and trial.expired(row['project_id']):
+                self.update(run_id, status='cancelled', phase='Trial ended; upstream cancellation could not be confirmed', key_cipher=None)
+            elif row['response_id'] and (error.status >= 500 or error.status == 429):
                 self.update(run_id, phase='Reconnecting to OpenAI', next_attempt=time.time()+10)
             elif row['status'] == 'preparing' and (error.status >= 500 or error.status == 429):
                 self.update(run_id, status='queued', phase='Waiting for connection', next_attempt=time.time()+10)

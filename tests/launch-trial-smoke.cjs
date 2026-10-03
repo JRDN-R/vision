@@ -7,7 +7,7 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
  const browser=await chromium.launch({headless:true,...(process.env.CHROME?{executablePath:process.env.CHROME}:{}),args:['--no-sandbox']});
  try{
   let html=fs.readFileSync('Vision.html','utf8');const end=html.lastIndexOf('})();');
-  html=html.slice(0,end)+`window.__trialTest={state:()=>state,ready:()=>accountReady,active:()=>trialActive(),signed:()=>accountSignedIn(),expire:()=>{trialSession.until=performance.now()-1;return trialFinish()},session:()=>trialSession,cloud:(p,o)=>cloudFetch(p,o),remote:()=>ensureRemoteProject(),dirty:()=>markDirty(),backup:()=>projectBackup()};\n`+html.slice(end);
+  html=html.slice(0,end)+`window.__trialTest={state:()=>state,ready:()=>accountReady,active:()=>trialActive(),signed:()=>accountSignedIn(),expire:()=>{trialSession.until=performance.now()-1;return trialFinish()},session:()=>trialSession,cloud:(p,o)=>cloudFetch(p,o),remote:()=>ensureRemoteProject(),dirty:()=>markDirty(),backup:()=>projectBackup(),signOut:()=>accountGoogleSignOut()};\n`+html.slice(end);
   const errors=[],requests=[],receipts=new Map();let serverOffset=0;
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true});
   const json=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(data)});
@@ -46,7 +46,7 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   assert.equal(await page.locator('#addNodeButton').isVisible(),false);
   await page.locator('#accountGateTrial').click();await page.waitForFunction(()=>window.__trialTest.active());
   assert.equal(await page.locator('#accountGate').isVisible(),false);assert.equal(await page.locator('#trialBanner').isVisible(),true);
-  await page.locator('#addNodeButton').click();assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),1);
+  await page.locator('#addNodeButton').click();await page.waitForFunction(()=>window.__trialTest.state().nodes.length===1);assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),1);
   await page.evaluate(()=>{window.__trialTest.state().title='GUEST CONTENT MUST NOT PERSIST';window.__trialTest.dirty();document.getElementById('consoleKey').value='guest-api-key';});
   await page.evaluate(()=>window.__trialTest.backup());
   const meta=await page.evaluate(()=>window.__trialTest.remote());assert.equal(meta.id,'trial-'+'a'.repeat(24));
@@ -60,7 +60,7 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   assert.equal(await page.evaluate(()=>window.__trialTest.session().expiresAt),expiry);
   assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),0,'refresh cannot restore guest projects');
   assert.ok((await page.locator('#trialCountdown').textContent()).startsWith('4:'));
-  await page.locator('#addNodeButton').click();await page.evaluate(()=>window.__trialTest.expire());
+  await page.locator('#addNodeButton').click();await page.waitForFunction(()=>window.__trialTest.state().nodes.length===1);await page.evaluate(()=>window.__trialTest.expire());
   assert.equal(await page.locator('#accountGate').isVisible(),true);assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),0);
   assert.equal(await page.locator('#accountGateTrial').isDisabled(),true);
   await page.reload();await page.waitForFunction(()=>window.__trialTest);await page.evaluate(()=>window.__trialTest.ready());
@@ -68,6 +68,16 @@ const authModule=`const listeners=[];const auth={currentUser:null,authStateReady
   await page.locator('#accountGateSignIn').click();await page.waitForFunction(()=>window.__trialTest.signed());
   assert.equal(await page.locator('#accountGate').isVisible(),false);assert.equal(await page.locator('#trialBanner').isVisible(),false);
   assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),0);assert.equal(await page.locator('#consoleKey').inputValue(),'');
+  // A Google sign-in during an active trial must discard temporary content too.
+  await page.evaluate(async()=>{await window.__trialTest.signOut();localStorage.removeItem('vision-guest-receipt-v1');});
+  await page.reload();await page.waitForFunction(()=>window.__trialTest);await page.evaluate(()=>window.__trialTest.ready());
+  await page.locator('#accountGateTrial').click();await page.waitForFunction(()=>window.__trialTest.active());
+  await page.locator('#addNodeButton').click();await page.waitForFunction(()=>window.__trialTest.state().nodes.length===1);
+  await page.evaluate(()=>{document.getElementById('consoleKey').value='temporary-key';});
+  await page.locator('#trialSignIn').click();await page.waitForFunction(()=>window.__trialTest.signed());
+  assert.equal(await page.evaluate(()=>window.__trialTest.state().nodes.length),0);
+  assert.equal(await page.locator('#consoleKey').inputValue(),'');
+  assert.equal(await page.locator('#trialBanner').isVisible(),false);
   assert.deepEqual(errors,[]);await context.close();
   console.log('PASS: small supplied logo; accessible Why modal; no auto-consumption; trial processing without saved project; no guest persistence; refresh retains deadline; expiry wipes and locks; Google sign-in unaffected.');
  }finally{await browser.close();}

@@ -355,6 +355,10 @@ class UploadedMedia:
                 if row is None:
                     return False
                 value = dict(row)
+                trials = self.app.config.get('TRIALS')
+                if trials and trials.expired(value['project_id']):
+                    db.execute("UPDATE uploaded_media SET status='cancelled',cancel_requested=1,phase='Trial ended' WHERE id=?", (value['id'],))
+                    return True
                 db.execute("UPDATE uploaded_media SET status='processing',phase='Reading video',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
             directory = self.root / value['id']
             processing_started = time.monotonic()
