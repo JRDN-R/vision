@@ -616,5 +616,11 @@ def main():
         return 1
 
 
+# Optional private activity dashboard, enabled on the PC by Enable-Vision-Activity.ps1.
+if Path(__file__).with_name('activity_dashboard.py').is_file():
+    from activity_dashboard import register as register_activity_dashboard
+    register_activity_dashboard(app, connect_db)
+
+
 if __name__ == '__main__':
     raise SystemExit(main())
