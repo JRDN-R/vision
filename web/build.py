@@ -11,8 +11,8 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css']
 
 
 def build():

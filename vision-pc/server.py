@@ -23,6 +23,7 @@ from media import normalize_url, process_job, MEDIA_LOCK
 from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
 from transcription import LocalTranscription
 from uploaded_media import UploadedMedia
+from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
 
@@ -86,6 +87,7 @@ def configure(config_path):
     app.config['AUDIT_LOGS'].initialize()
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
+    documents.initialize(config)
     return config
 
 
@@ -133,7 +135,8 @@ def api_error(error):
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
-        message = ('Video uploads exceed 100 MB. Choose a smaller video.' if '/media' in request.path
+        message = ('Document uploads exceed 50 MB.' if '/documents' in request.path
+                   else 'Video uploads exceed 100 MB. Choose a smaller video.' if '/media' in request.path
                    else 'Server transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
                    else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
                    else 'Attachments exceed 25 MB. Export fewer or smaller images.')
@@ -223,14 +226,15 @@ def health():
     local = transcriptions.capability()
     sounds = transcriptions.sound_capability()
     video = uploaded_media.capability()
+    document = documents.capability()
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    serverName='FUPCJ Server',
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
                    firebaseAuth={'enabled': bool(app.config.get('FIREBASE_IDENTITY')),
                                  'projectId': app.config['FIREBASE_IDENTITY'].project_id if app.config.get('FIREBASE_IDENTITY') else None},
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
-                   localTranscription=local, localSoundEvents=sounds, videoMedia=video,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready']})
+                   localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready']})
 
 
 def get_job(job_id):
@@ -556,6 +560,7 @@ def openai_artifact(container_id, file_id):
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
+documents = DocumentJobs(app, connect_db, APIError, sessions)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')
@@ -595,6 +600,7 @@ def main():
         sessions.start()
         transcriptions.start()
         uploaded_media.start()
+        documents.start()
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
@@ -607,6 +613,8 @@ def main():
             sessions.wake.set()
             transcriptions.stop.set()
             transcriptions.wake.set()
+            documents.stop.set()
+            documents.wake.set()
             uploaded_media.stop.set()
             uploaded_media.wake.set()
         return 0
