@@ -15,6 +15,15 @@ SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'aut
 STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css']
 
 
+def without_browser_gemini(source):
+    """The owner Gemini key and direct Gemini client belong only on the PC.
+
+    Remove these before asset restoration so future builds need neither the
+    retired credential bundle nor its browser transcription runtime.
+    """
+    return re.sub(r'<script\b(?=[^>]*\bid=["\'](?:credential-source|transcription-source)["\'])[^>]*>[\s\S]*?</script>\s*', '', source, flags=re.I)
+
+
 def build():
     source = (ROOT / 'Vision.html').read_text(encoding='utf-8')
     previous_version = re.search(r'<meta name="vision-version" content="(\d+\.\d+\.\d+\.\d+)">', source)
@@ -26,7 +35,7 @@ def build():
                for m in re.finditer(r'<script\b[^>]*>([\s\S]*?)</script>', source)}
     assets = {hashlib.sha256(m[0].encode('utf-8')).hexdigest(): m[0]
               for m in re.finditer(r'''data:[^\s"'<>]+''', source) if len(m[0]) > 500}
-    template = (WEB / 'document.html').read_text(encoding='utf-8')
+    template = without_browser_gemini((WEB / 'document.html').read_text(encoding='utf-8'))
     def restore(match):
         kind, digest = match.groups()
         value = (bundles if kind == 'BUNDLE' else assets).get(digest)

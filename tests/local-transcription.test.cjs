@@ -16,7 +16,7 @@ function fixture(job=makeJob()){
   $:()=>null,videoFile:()=>false,uid:()=>`new-request-${++serial}`,checkpoint:()=>{},markDirty:()=>stats.saved++,refreshNodeAttachments:()=>{},renderAttachments:()=>{},toast:()=>{},recordActivity:()=>{},
   bytesFromDataURL:()=>new Uint8Array([1]),videoTranscriptClock:text=>text,saveTranscript:(n,s,text,status)=>transcripts.push({text,status}),storeVideoTranscript:(n,s,text,status)=>transcripts.push({text,status}),releaseCompletedSourceAudio:()=>stats.released++,
   setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout:()=>{},
-  ensureProjectIdentity:()=>state.projectCloud,projectCapabilities:async()=>{if(control.healthError)throw control.healthError;return{capabilities:{localTranscription:control.ready},localTranscription:{ready:control.ready,maxRequestBytes:104857600}};},
+  ensureProjectIdentity:()=>state.projectCloud,projectCapabilities:async()=>{if(control.healthError)throw control.healthError;return{capabilities:{localTranscription:control.ready,geminiTranscription:true},localTranscription:{ready:control.ready,maxRequestBytes:104857600}};},
   ensureRemoteProject:async()=>{stats.registered++;return state.projectCloud;},projectBackup:async()=>stats.saved++,
   cloudFetch:async(route,options)=>{calls.push({route,options});assert.equal(options.headers.get('X-Vision-Project-Key'),state.projectCloud.key);assert.ok(route.startsWith('/projects/'+state.projectCloud.id+'/transcriptions'));const data=options.method==='POST'?await control.post(JSON.parse(options.body)):await control.get();return{ok:true,status:options.method==='POST'?202:200,json:async()=>data};}
  };
@@ -81,7 +81,33 @@ function fixture(job=makeJob()){
  // Terminal error retries have fresh IDs; accepted jobs cannot silently switch provider.
  {
   const f=fixture();await f.pump();f.run("changeQueuedProvider('job-1','gemini')");assert.equal(f.job.provider,'local');f.due();f.control.get=()=>({status:'error',error:'Local model stopped'});await f.pump();assert.equal(f.job.remoteTerminal,true);f.run("retryTranscriptionQueue('job-1')");assert.equal(f.job.remoteId,null);assert.notEqual(f.job.remoteRequestId,'job-1');
-  f.run("changeQueuedProvider('job-1','gemini')");assert.equal(f.job.provider,'gemini');await f.pump();assert.equal(f.stats.gemini,1);
+  f.run("changeQueuedProvider('job-1','gemini')");assert.equal(f.job.provider,'gemini');await f.pump();assert.equal(f.stats.gemini,0);assert.equal(JSON.parse(f.calls.at(-1).options.body).provider,'gemini');
+ }
+ // Gemini uses the same durable authenticated queue, with no browser credentials or API calls.
+ {
+  const f=fixture(makeJob({provider:'gemini',includeSoundEvents:true}));delete f.context.window.JEWCredential;delete f.context.sessionApiKey;
+  f.control.ready=false;f.control.post=()=>({id:'remote-gemini',status:'approval_waiting',phase:'Waiting for Gemini approval'});
+  await f.pump();assert.equal(f.job.status,'approval_waiting');assert.match(f.run('queueStatusText(state.nodes[0].transcriptionJobs[0])'),/Waiting for Gemini approval/);
+  const posted=JSON.parse(f.calls[0].options.body);assert.equal(posted.provider,'gemini');assert.equal(posted.includeSoundEvents,true);assert.ok(!('geminiApiKey' in posted));assert.equal(f.stats.gemini,0);
+  f.context.raw=JSON.parse(JSON.stringify([f.job]));const restored=f.run('validateTranscriptionJobs(raw,state.nodes[0].attachments)')[0];assert.equal(restored.remoteId,'remote-gemini');assert.equal(restored.status,'approval_waiting');assert.equal(restored.includeSoundEvents,true);f.state.nodes[0].transcriptionJobs=[restored];
+  // Pending and denied accounts retain the receipt indefinitely, without reposting.
+  for(const phase of ['Waiting for Gemini approval','Gemini access denied','Gemini access revoked']){f.control.get=()=>({status:'approval_waiting',phase});f.due();await f.pump();assert.equal(restored.status,'approval_waiting');assert.equal(restored.phase,phase);assert.ok(restored.nextAttemptAt>Date.now());}
+  assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.stats.gemini,0);
+  f.control.get=()=>({status:'processing',phase:'Transcribing speech',progress:30});f.due();await f.pump();assert.equal(restored.status,'waiting');assert.equal(restored.remoteId,'remote-gemini');assert.equal(restored.progress,30);
+  f.run("changeQueuedProvider('job-1','local')");assert.equal(restored.provider,'gemini');
+ }
+ // Approval waits yield between polling ticks so later Gemini and local work can upload.
+ {
+  const f=fixture(makeJob({provider:'gemini'}));f.control.post=payload=>({id:'remote-'+payload.clientRequestId,status:payload.provider==='gemini'?'approval_waiting':'queued'});
+  for(const [id,provider]of [['job-2','gemini'],['job-3','local']]){const sourceId='source-'+id;f.state.nodes[0].attachments.push({...source,id:sourceId});f.state.nodes[0].transcriptionJobs.push(makeJob({id,sourceId,provider}));}
+  await f.pump();await f.pump();await f.pump();assert.equal(f.calls.filter(call=>call.options.method==='POST').length,3);
+  assert.deepEqual(f.state.nodes[0].transcriptionJobs.map(job=>job.status),['approval_waiting','approval_waiting','waiting']);assert.ok(f.state.nodes[0].transcriptionJobs.every(job=>job.remoteId));assert.equal(f.stats.gemini,0);
+ }
+ // A speech-only Gemini job completes using the same receipt after account approval.
+ {
+  const f=fixture(makeJob({provider:'gemini'}));f.control.post=()=>({id:'approved-receipt',status:'approval_waiting'});await f.pump();
+  f.control.get=()=>({status:'complete',result:{sections:[{start:0,end:10,text:'[00:00:00.000] First.'},{start:10,end:20,text:'[00:00:10.000] Second.'}]}});f.due();await f.pump();
+  assert.equal(f.state.nodes[0].transcriptionJobs.length,0);assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.stats.released,1);assert.equal(f.stats.gemini,0);assert.match(f.transcripts[0].text,/First.*\n\n.*Second/s);
  }
  // Invalid complete response cannot discard source audio or completed text.
  {

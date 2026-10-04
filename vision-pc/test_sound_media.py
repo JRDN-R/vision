@@ -14,8 +14,8 @@ class YouTubeSoundMediaTests(unittest.TestCase):
     def test_captioned_video_retains_audio_only_when_sounds_requested(self):
         jpeg = io.BytesIO()
         Image.new('RGB', (160, 90), 'black').save(jpeg, format='JPEG')
-        for include_sounds in (False, True):
-            with self.subTest(include_sounds=include_sounds):
+        for include_sounds, provider in ((False, 'local'), (True, 'local'), (False, 'gemini'), (True, 'gemini')):
+            with self.subTest(include_sounds=include_sounds, provider=provider):
                 formats, conversions, updates = [], [], []
 
                 class FakeYouTubeDL:
@@ -47,16 +47,17 @@ class YouTubeSoundMediaTests(unittest.TestCase):
                      patch.object(media.subprocess, 'run', side_effect=run):
                     media.process_job('job', 'https://youtu.be/abcdefghijk', 'ffmpeg',
                                       lambda job, **values: updates.append(values),
-                                      include_sound_events=include_sounds)
+                                      include_sound_events=include_sounds, provider=provider)
 
                 self.assertEqual(updates[-1]['status'], 'complete', updates[-1])
                 result = json.loads(updates[-1]['result'])
-                self.assertEqual(result['transcript'], captions)
+                self.assertEqual(result['transcript'], None if provider == 'gemini' else captions)
                 self.assertEqual(result['includeSoundEvents'], include_sounds)
-                self.assertEqual(bool(result['audio']), include_sounds)
-                self.assertEqual(len(conversions), int(include_sounds))
-                self.assertEqual('+ba' in formats[0], include_sounds)
-                if include_sounds:
+                needs_audio = include_sounds or provider == 'gemini'
+                self.assertEqual(bool(result['audio']), needs_audio)
+                self.assertEqual(len(conversions), int(needs_audio))
+                self.assertEqual('+ba' in formats[0], needs_audio)
+                if needs_audio:
                     self.assertTrue(result['audio']['data'].startswith('data:audio/mp4;base64,'))
 
 

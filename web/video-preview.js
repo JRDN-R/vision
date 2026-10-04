@@ -10,7 +10,7 @@ function normalizePCVideo(value){
  const id=/^[-\w]{1,120}$/.test(value.id||'')?value.id:'';
  const status=['uploading','waiting','working','error','complete'].includes(value.status)?value.status:'waiting';
  const preview=value.preview&&value.preview.mime==='video/mp4'&&Number(value.preview.size)>0&&Number(value.preview.size)<=PC_VIDEO_PREVIEW_LIMIT?{mime:'video/mp4',size:Number(value.preview.size),width:Math.min(1920,Math.max(1,Number(value.preview.width)||480)),height:Math.min(1920,Math.max(1,Number(value.preview.height)||270))}:null;
- return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.provider!=='gemini'&&value.includeSoundEvents===true,status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
+ return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
 }
 function pcVideoCurrent(project,n,requestId){return state===project&&state.nodes.includes(n)&&n.pcVideo?.requestId===requestId;}
 function pcVideoUpdate(n,values,{save=true}={}){
@@ -20,7 +20,7 @@ function pcVideoUpdate(n,values,{save=true}={}){
   const target=saved.nodes?.find(item=>item.id===n.id&&item.pcVideo?.requestId===n.pcVideo.requestId);
   if(target)target.pcVideo={...target.pcVideo,id:n.pcVideo.id,preview:n.pcVideo.preview,status:'waiting',phase:'Reconnecting to FUPCJ Server',error:''};
  }
- installPCVideoControls(n);if(save)markDirty();
+ installPCVideoControls(n);if(save)markDirty();if(typeof renderActivity==='function')renderActivity();
 }
 function pcVideoPath(n,suffix=''){
  const media=n.pcVideo,meta=ensureProjectIdentity();
@@ -50,7 +50,7 @@ async function pcVideoFirstFrame(n,file,project){
  }finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
 }
 async function importPCVideoFiles(files,location,options={}){
- const provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=provider==='local'&&(typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider));
+ const provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider);
  const context=boardAsyncContext(),project=context.project,created=[];
  for(const [index,file]of Array.from(files).entries()){
   if(!boardAsyncCurrent(context))break;
@@ -135,14 +135,14 @@ async function applyPCVideoResult(runtime,result){
  const hasJob=n.transcriptionJobs?.some(job=>job.sourceId===source.id),sections=[];
  if(!hasJob&&source.transcriptionStatus!=='complete')for(const [index,part]of result.audioSections.entries()){
   check();if(!Number.isFinite(part.start)||!Number.isFinite(part.end)||part.start<0||part.end<=part.start||part.end-part.start>901||part.mime!=='audio/mpeg')throw new Error('An audio section has invalid timing.');
-  const suffix=pcVideoArtifactSuffix(n,part.url,'audio',index),blob=await pcVideoRequest(n,suffix,{binary:true,maxBytes:window.JEWTranscription.MAX_INLINE_BYTES,signal:controller.signal});check();
-  if(blob.size>window.JEWTranscription.MAX_INLINE_BYTES||!blob.size)throw new Error('An audio section exceeds the transcription size limit.');
+  const suffix=pcVideoArtifactSuffix(n,part.url,'audio',index),blob=await pcVideoRequest(n,suffix,{binary:true,maxBytes:LOCAL_ASR_SECTION_MAX_BYTES,signal:controller.signal});check();
+  if(blob.size>LOCAL_ASR_SECTION_MAX_BYTES||!blob.size)throw new Error('An audio section exceeds the transcription size limit.');
   const audioData=await readFile(new Blob([blob],{type:part.mime}));check();sections.push({start:part.start,end:part.end,mimeType:part.mime,audioData,text:null,done:false});
  }
  check();n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);
  source.videoDuration=Number(result.duration)||0;source.snapshotInterval=Number(result.snapshotInterval)||0;source.videoHasAudio=!!result.audioSections.length;source.snapshotsStatus='complete';
  pcVideoSetPoster(n,result.thumbnail||frames[0].data,project);
- if(sections.length){const job={id:uid(),provider:n.pcVideo.provider,includeSoundEvents:n.pcVideo.provider==='local'&&n.pcVideo.includeSoundEvents===true,sourceId:source.id,sourceName:source.name,sourceKind:'video',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();}
+ if(sections.length){const job={id:uid(),provider:n.pcVideo.provider,includeSoundEvents:n.pcVideo.includeSoundEvents===true,sourceId:source.id,sourceName:source.name,sourceKind:'video',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();}
  else if(!result.audioSections.length)storeVideoTranscript(n,source,'No audio track was detected. Review the timestamped snapshots.','no-audio');
  markDirty();
 }

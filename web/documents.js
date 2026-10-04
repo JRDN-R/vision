@@ -16,7 +16,7 @@ function normalizeDocumentJob(value){
 }
 function documentCurrent(r){return state===r.project&&projectEpoch===r.epoch&&projectAccountUID()===r.account&&state.nodes.includes(r.n)&&r.n.attachments.includes(r.source)&&r.source.documentJob?.requestId===r.requestId&&!r.controller.signal.aborted;}
 function scheduleDocuments(delay=250){clearTimeout(documentTimer);documentTimer=setTimeout(()=>void pumpDocuments(),delay);}
-function updateDocument(r,fields,save=true){if(!documentCurrent(r))return;Object.assign(r.source.documentJob,fields);renderDocumentStatus(r.n);if(save)markDirty();}
+function updateDocument(r,fields,save=true){if(!documentCurrent(r))return;Object.assign(r.source.documentJob,fields);renderDocumentStatus(r.n);if(save)markDirty();if(typeof renderActivity==='function')renderActivity();}
 async function documentRequest(r,suffix='',options={}){
  if(!documentCurrent(r))throw new DOMException('The destination changed.','AbortError');
  const job=r.source.documentJob,meta=ensureProjectIdentity();
@@ -46,7 +46,7 @@ function collectDocumentSources(){
   }
   renderDocumentStatus(n);
  }
- if(changed)markDirty();
+ if(changed){markDirty();if(typeof renderActivity==='function')renderActivity();}
 }
 async function pumpDocuments(){
  for(const [id,r]of documentWorkers)if(!documentCurrent(r)){r.controller.abort();documentWorkers.delete(id);}
@@ -120,7 +120,7 @@ function retryDocument(n,source){
  // Connection failures reuse their accepted receipt. Terminal server failures
  // or an explicit reprocess use a new ID; matching completed files are cached.
  source.documentJob={...job,projectId:meta.id,backendUrl:meta.backendUrl,requestId:'doc-'+uid(),id:'',status:'waiting',phase:'Waiting to prepare',error:'',nextAttempt:0,sourceSha256:''};
- markDirty();renderDocumentStatus(n);scheduleDocuments();
+ markDirty();renderDocumentStatus(n);scheduleDocuments();if(typeof renderActivity==='function')renderActivity();
 }
 function renderDocumentStatus(n){
  const el=document.getElementById('node-'+n.id);if(!el)return;
@@ -138,7 +138,7 @@ renderNode=async function(n){await documentRenderNode(n);renderDocumentStatus(n)
 const documentRenderAll=renderAll;
 renderAll=function(){documentRenderAll();scheduleDocuments();};
 const documentRemoveAttachment=removeAttachment;
-removeAttachment=function(n,a){documentRemoveAttachment(n,a);if(!n.attachments.some(v=>v.id===a.id)){n.attachments=n.attachments.filter(v=>v.documentOf!==a.id);const active=a.documentJob&&documentWorkers.get(a.documentJob.requestId);active?.controller.abort();markDirty();renderDocumentStatus(n);refreshNodeAttachments(n);}};
+removeAttachment=function(n,a){documentRemoveAttachment(n,a);if(!n.attachments.some(v=>v.id===a.id)){n.attachments=n.attachments.filter(v=>v.documentOf!==a.id);const active=a.documentJob&&documentWorkers.get(a.documentJob.requestId);active?.controller.abort();markDirty();renderDocumentStatus(n);refreshNodeAttachments(n);if(typeof renderActivity==='function')renderActivity();}};
 const documentExport=buildExportFiles;
 buildExportFiles=async function(nodes,single,onProgress){const files=await documentExport(nodes,single,onProgress);if(single)return files;
  const jobs=nodes.flatMap(n=>(n.attachments||[]).filter(a=>a.documentJob).map(a=>({module:n.title,source:a.name,status:a.documentJob.status,sha256:a.documentJob.sourceSha256,error:a.documentJob.error||null})));
@@ -154,7 +154,7 @@ function installDocumentControls(){
   const title=document.createElement('h3');title.textContent='Document processing';dialog.appendChild(title);
   const text=document.createElement('p');text.textContent='Loading server cache…';dialog.appendChild(text);document.body.appendChild(dialog);dialog.showModal();
   try{const meta=await ensureRemoteProject();const result=await projectResponse(await projectRequest('/projects/'+meta.id+'/documents'));if(state!==project||projectEpoch!==epoch)throw new Error('Project changed.');text.textContent='Prepared cache expires after 30 days. Extracted content already saved in your project is kept.';
-   for(const item of result.items||[]){if(!/^[a-f0-9]{24}$/.test(item.id))continue;const row=document.createElement('div'),label=document.createElement('span');label.textContent=item.sourceName+' · '+item.status+' · '+readableBytes(item.bytes||0);row.appendChild(label);const remove=document.createElement('button');remove.textContent='Remove cache';remove.onclick=async()=>{if(state!==project||projectEpoch!==epoch)return;remove.disabled=true;try{await projectResponse(await projectRequest('/projects/'+meta.id+'/documents/'+item.id,{method:'DELETE'}));if(state!==project||projectEpoch!==epoch)return;for(const n of state.nodes)for(const a of n.attachments||[])if(a.documentJob?.id===item.id&&a.documentJob.status!=='complete'){a.documentJob.status='paused';a.documentJob.phase='Server processing canceled';renderDocumentStatus(n);}markDirty();row.remove();}catch(e){text.textContent=e.message;remove.disabled=false;}};row.appendChild(remove);dialog.appendChild(row);}
+   for(const item of result.items||[]){if(!/^[a-f0-9]{24}$/.test(item.id))continue;const row=document.createElement('div'),label=document.createElement('span');label.textContent=item.sourceName+' · '+item.status+' · '+readableBytes(item.bytes||0);row.appendChild(label);const remove=document.createElement('button');remove.textContent='Remove cache';remove.onclick=async()=>{if(state!==project||projectEpoch!==epoch)return;remove.disabled=true;try{await projectResponse(await projectRequest('/projects/'+meta.id+'/documents/'+item.id,{method:'DELETE'}));if(state!==project||projectEpoch!==epoch)return;for(const n of state.nodes)for(const a of n.attachments||[])if(a.documentJob?.id===item.id&&a.documentJob.status!=='complete'){a.documentJob.status='paused';a.documentJob.phase='Server processing canceled';renderDocumentStatus(n);}markDirty();row.remove();if(typeof renderActivity==='function')renderActivity();}catch(e){text.textContent=e.message;remove.disabled=false;}};row.appendChild(remove);dialog.appendChild(row);}
   }catch(e){text.textContent=e.message;}
  };
 }

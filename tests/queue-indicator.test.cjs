@@ -1,0 +1,32 @@
+/* The single workspace indicator counts the existing queue, including approval waits. */
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const base=fs.readFileSync('web/base.js','utf8'),html=fs.readFileSync('web/document.html','utf8'),css=fs.readFileSync('web/styles.css','utf8');
+const helpers=base.slice(base.indexOf('function activityQueueState(){'),base.indexOf('function openActivity(){'));
+const makeElement=()=>({children:[],attributes:{},hidden:false,textContent:'',appendChild(child){this.children.push(child);return child;},replaceChildren(){this.children=[];},setAttribute(key,value){this.attributes[key]=value;},querySelector(){return this.children[0];}});
+const elements={activityList:makeElement(),activitySummary:makeElement(),queueIndicator:makeElement()};elements.queueIndicator.appendChild(makeElement());
+const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){}};
+vm.createContext(context);vm.runInContext(helpers,context);
+const render=()=>vm.runInContext('renderActivity()',context),count=()=>Number(elements.queueIndicator.children[0].textContent);
+render();assert.equal(elements.queueIndicator.hidden,true);
+context.entries=[{source:{id:'audio'},job:{sourceId:'audio',status:'approval_waiting',phase:'Waiting for Gemini approval',sections:[{done:false}],sourceName:'Audio'}}];
+render();assert.equal(count(),1);assert.equal(elements.queueIndicator.hidden,false);assert.match(elements.queueIndicator.attributes['aria-label'],/^1 processing job queued/);assert.match(elements.activityList.children[0].children[1].textContent,/Waiting for Gemini approval/);assert.equal(elements.activityList.children[0].children.length,2,'approval waits do not show misleading progress bars');
+context.entries.push({source:{id:'speech'},job:{sourceId:'speech',status:'waiting',sections:[{done:false}],sourceName:'Speech'}});
+context.mediaActivity.push({sourceId:'youtube',title:'YouTube',detail:'Importing',progress:40});
+context.state.nodes.push({id:'video-node',title:'Video',pcVideo:{sourceId:'video',status:'working',phase:'Extracting snapshots',progress:60}});
+render();assert.equal(count(),4);assert.equal(elements.activityList.children.length,4);
+// Each media-to-transcription handoff keeps a single visible queue item and count.
+context.mediaActivity.push({sourceId:'audio',title:'Audio',detail:'Preparing audio',progress:100});
+context.state.nodes.push({id:'speech-node',pcVideo:{sourceId:'speech',status:'working',progress:100}});
+render();assert.equal(count(),4);assert.equal(elements.activityList.children.length,4);
+context.entries[0].job.status='waiting';context.entries[0].job.phase='Transcribing';context.entries[0].job.remoteId='same-receipt';context.entries[0].job.progress=30;
+render();assert.equal(count(),4);assert.match(elements.activityList.children[2].children[1].textContent,/Transcribing/);
+context.state.nodes.push({id:'document-node',attachments:[{id:'doc',name:'Brief.docx',documentJob:{status:'queued',phase:'Preparing document'}}]});
+context.state.consoleSession={runs:[{status:'in_progress',phase:'Reading your project'}]};
+render();assert.equal(count(),6);assert.equal(elements.activityList.children.length,6);
+context.state.nodes.at(-1).attachments[0].documentJob.status='complete';context.state.consoleSession.runs[0].status='completed';render();assert.equal(count(),4);
+context.entries[0].job.status='error';context.entries[1].job.status='error';context.mediaActivity.forEach(task=>task.finished=true);context.state.nodes.forEach(n=>{if(n.pcVideo)n.pcVideo.status='error';});
+render();assert.equal(count(),0);assert.equal(elements.queueIndicator.hidden,true);assert.equal(elements.activitySummary.textContent,'Processing needs attention');
+assert.equal((html.match(/id="queueIndicator"/g)||[]).length,1);assert.doesNotMatch(html,/id="activityBadge"/);assert.match(base,/\$\('queueIndicator'\)\.onclick=openActivity/);assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.queue-indicator::before\{animation:none/);
+assert.doesNotMatch(base,/requestAudio\(|JEWCredential|JEWTranscription|geminiApiKey/,'normal processing must not expose a direct Gemini API path');
+console.log('PASS: one accessible queue indicator; approval waits, four-job count, media handoff deduplication, completion/errors, reduced motion and backend-only Gemini.');

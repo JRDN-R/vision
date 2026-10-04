@@ -127,7 +127,7 @@ def friendly_error(error):
     return "The video could not be processed. Try again later, or upload a video file directly."
 
 
-def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False, deadline=None):
+def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False, deadline=None, provider='local'):
     def budget(normal):
         if deadline is None:
             return normal
@@ -158,7 +158,7 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                     raise ValueError("Use a finished video up to two hours long.")
                 title = str(info.get("title") or "YouTube video")[:240]
                 update(job_id, phase="Looking for timestamped captions", progress=5, title=title)
-                transcript = caption_result(ydl, info)
+                transcript = None if provider == 'gemini' else caption_result(ydl, info)
 
             def progress_hook(event):
                 if event.get("status") == "downloading":

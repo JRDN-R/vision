@@ -27,6 +27,8 @@ from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
 from trials import Trials
+from gemini_access import GeminiAccess, GeminiUsage
+from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -43,7 +45,7 @@ class APIError(Exception):
         self.message, self.status, self.code = message, status, code
 
 
-def configure(config_path):
+def configure(config_path, migrate_gemini=False):
     """Read installation settings without printing credentials."""
     config_path = Path(config_path).resolve()
     config = json.loads(config_path.read_text(encoding='utf-8-sig'))
@@ -87,6 +89,15 @@ def configure(config_path):
     sessions.initialize()
     app.config['AUDIT_LOGS'] = AuditLogs(local_path('auditLogDir', 'data/audit-logs'), connect_db, app.logger)
     app.config['AUDIT_LOGS'].initialize()
+    app.config['GEMINI_CREDENTIALS'] = GeminiCredentials(config_path, data_dir)
+    try:
+        app.config['GEMINI_CREDENTIALS'].initialize(import_legacy=migrate_gemini)
+    except GeminiCredentialUnavailable:
+        app.logger.warning('The existing Gemini credential could not be migrated; local processing remains available.')
+    app.config['GEMINI_ACCESS'] = GeminiAccess(app, connect_db, wake=transcriptions.wake.set)
+    app.config['GEMINI_ACCESS'].initialize()
+    app.config['GEMINI_USAGE'] = GeminiUsage(app, connect_db)
+    app.config['GEMINI_USAGE'].initialize()
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
     documents.initialize(config)
@@ -116,6 +127,8 @@ def initialize_db():
             db.execute("ALTER TABLE jobs ADD COLUMN uid TEXT NOT NULL DEFAULT 'installation-owner'")
         if 'include_sound_events' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
             db.execute('ALTER TABLE jobs ADD COLUMN include_sound_events INTEGER NOT NULL DEFAULT 0')
+        if 'provider' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
+            db.execute("ALTER TABLE jobs ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'")
 
 
 def recover_jobs():
@@ -267,6 +280,8 @@ def health():
     sounds = transcriptions.sound_capability()
     video = uploaded_media.capability()
     document = documents.capability()
+    gemini = {'available': True, 'approvalRequired': True,
+              'speechModel': 'gemini-3.5-transcribe', 'soundModel': 'gemini-3.8-flash'}
     return jsonify(ok=True, mode='private-pc', service='vision-pc', version='1.0', authRequired=True, queued=queued,
                    serverName='FUPCJ Server',
                    publicAccess=app.config.get('PUBLIC_ACCESS', False),
@@ -274,7 +289,8 @@ def health():
                                  'projectId': app.config['FIREBASE_IDENTITY'].project_id if app.config.get('FIREBASE_IDENTITY') else None},
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   geminiTranscription=gemini,
+                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -303,6 +319,11 @@ def youtube():
     if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
         raise APIError('Invalid request identifier.')
     include_sound_events = payload.get('includeSoundEvents', False)
+    provider = payload.get('provider', 'local')
+    if provider not in ('local', 'gemini'):
+        raise APIError('Choose a supported transcription provider.')
+    if provider == 'gemini' and g.auth_kind != 'firebase-google':
+        raise APIError('Sign in with Google to request Gemini processing.', 403)
     if not isinstance(include_sound_events, bool):
         raise APIError('Choose whether to include sound effects.')
     # Existing installation receipts retain their IDs. New accounts cannot collide
@@ -313,9 +334,9 @@ def youtube():
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
         if client_id:
-            old = db.execute('SELECT id,status,url,include_sound_events FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
+            old = db.execute('SELECT id,status,url,include_sound_events,provider FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
             if old:
-                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events:
+                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events or old['provider'] != provider:
                     raise APIError('This request identifier belongs to another video or sound setting.', 409)
                 return jsonify(id=old['id'], status=old['status']), 202
         if include_sound_events and not transcriptions.sound_capability()['ready']:
@@ -324,8 +345,10 @@ def youtube():
         if pending >= 25:
             raise APIError('The server queue is full. Wait for an import to finish.', 429)
         job_id, now = secrets.token_hex(12), time.time()
-        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events)
-            VALUES(?,?,?,'queued','Waiting',?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events)))
+        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events,provider)
+            VALUES(?,?,?,'queued','Waiting',?,?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events), provider))
+        if provider == 'gemini':
+            app.config['GEMINI_ACCESS'].request_access(g.uid, db=db)
     WAKE.set()
     return jsonify(id=job_id, status='queued'), 202
 
@@ -391,6 +414,7 @@ def _process_next_job():
             process_job(value['id'], value['url'], app.config['FFMPEG'], update,
                         deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'),
                         include_sound_events=bool(value['include_sound_events']),
+                        provider=value['provider'],
                         **({'deadline': deadline} if deadline is not None else {}))
     except Exception:
         if trial_id and trials.expired(trial_id):
@@ -632,7 +656,7 @@ def main():
     parser.add_argument('--health', action='store_true', help='Check the already-running local processor, then exit')
     args = parser.parse_args()
     try:
-        configure(args.config)
+        configure(args.config, migrate_gemini=not (args.check or args.health))
         if args.health:
             response = requests.get('http://127.0.0.1:%s/api/health' % app.config['PORT'],
                                     headers={'Authorization': 'Bearer ' + app.config['CONNECTION_TOKEN'],

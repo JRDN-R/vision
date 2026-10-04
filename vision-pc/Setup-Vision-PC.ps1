@@ -25,7 +25,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -117,6 +117,29 @@ function Initialize-ServerConfiguration($Configuration) {
     try { Write-Utf8 $WriteProbe 'Vision log folder write check' }
     finally { if (Test-Path -LiteralPath $WriteProbe) { Remove-Item -LiteralPath $WriteProbe -Force } }
     $Configuration | Add-Member -NotePropertyName auditLogDir -NotePropertyValue $AuditDirectory -Force
+}
+function Stage-ExistingGeminiCredential($Configuration) {
+    # Migrate the already configured credential; no new key or API setup.
+    # The SYSTEM service imports this once using its existing DPAPI protection.
+    # The legacy source is checked against its fingerprint by the importer.
+    $GeminiDataDirectory = [string]$Configuration.dataDir
+    if (-not $GeminiDataDirectory) { $GeminiDataDirectory = Join-Path $InstallRoot 'data' }
+    if (-not [IO.Path]::IsPathRooted($GeminiDataDirectory)) { $GeminiDataDirectory = Join-Path $InstallRoot $GeminiDataDirectory }
+    New-Item -ItemType Directory -Path $GeminiDataDirectory -Force | Out-Null
+    if ((Get-Item -LiteralPath $GeminiDataDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The Gemini data folder must not be a link.' }
+    Set-PrivateDirectory $GeminiDataDirectory
+    $ProtectedGemini = Join-Path $GeminiDataDirectory 'gemini-credential.dpapi'
+    $LegacyGemini = Join-Path $GeminiDataDirectory 'gemini-credential-migration.html'
+    foreach ($GeminiFile in @($ProtectedGemini,$LegacyGemini,"$LegacyGemini.part")) {
+        if (Test-Path -LiteralPath $GeminiFile) {
+            $GeminiItem = Get-Item -LiteralPath $GeminiFile -Force
+            if ($GeminiItem.PSIsContainer -or ($GeminiItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'The existing Gemini credential path must be a regular private file.'
+            }
+        }
+    }
+    if (Test-Path -LiteralPath $ProtectedGemini -PathType Leaf) { return }
+    Get-Download 'https://raw.githubusercontent.com/JRDN-R/vision/b5258fab149074a572d35687d8e110862bbd020a/Vision.html' $LegacyGemini
 }
 function Get-LocalDiagnosticHeaders($Configuration) {
     $Headers = @{ Authorization = "Bearer $($Configuration.token)" }
@@ -275,6 +298,7 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         Write-Utf8 $TempConfig ($Configuration | ConvertTo-Json -Depth 20)
         Move-Item -LiteralPath $TempConfig -Destination $ConfigPath -Force
         Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
+        Stage-ExistingGeminiCredential $Configuration
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The updated processor did not become healthy.' }
         if ($CheckDocuments) {
@@ -804,6 +828,7 @@ try {
         Invoke-Checked $PythonExe @($GetPip,'--disable-pip-version-check','--no-warn-script-location')
     }
     Invoke-Checked $PythonExe @('-m','pip','install','--disable-pip-version-check','--no-warn-script-location','--upgrade','-r',(Join-Path $InstallRoot 'requirements.txt'))
+    Stage-ExistingGeminiCredential $Config
 
     if (-not (Test-Path -LiteralPath (Join-Path $ToolsDir 'ffmpeg.exe')) -or -not (Test-Path -LiteralPath (Join-Path $ToolsDir 'ffprobe.exe'))) {
         Write-Host 'Downloading video tools...'

@@ -61,7 +61,7 @@ function applyImportedTranscript(n,source,text){
 }
 async function queueImportedAudio(n,source,file,provider,context=boardImportContext(),includeSoundEvents=soundEventsSelected(provider)){
  assertBoardImportContext(context);
- const activity={title:source.name,detail:'Preparing audio',progress:0,finished:false};mediaActivity.push(activity);renderActivity();
+ const activity={sourceId:source.id,title:source.name,detail:'Preparing audio',progress:0,finished:false};mediaActivity.push(activity);renderActivity();
  let decoder;const controller=new AbortController();boardImportControllers.add(controller);
  try{
   const wasmBinary=await embeddedBytes('ffmpeg-wasm-source',controller.signal);assertBoardImportContext(context);const fvadBinary=await embeddedBytes('fvad-wasm-source',controller.signal);assertBoardImportContext(context);
@@ -73,7 +73,7 @@ async function queueImportedAudio(n,source,file,provider,context=boardImportCont
 async function importBoardFiles(files,location,options={}){
  const context=options.importContext||boardImportContext();if(!boardImportCurrent(context))return[];
  if(busy||ioBusy||boardImportRunning){toast('Finish the current import first.');return[];}
- const list=Array.from(files||[]);if(!list.length)return[];const added=[],errors=[],provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=provider==='local'&&(typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider)),rect=board.getBoundingClientRect(),origin=location||(list.length>1?{x:rect.left+board.clientWidth/2,y:rect.top+board.clientHeight/2}:undefined);boardImportRunning=true;
+ const list=Array.from(files||[]);if(!list.length)return[];const added=[],errors=[],provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider),rect=board.getBoundingClientRect(),origin=location||(list.length>1?{x:rect.left+board.clientWidth/2,y:rect.top+board.clientHeight/2}:undefined);boardImportRunning=true;
  try{for(let index=0;index<list.length;index++){
   if(!boardImportCurrent(context))break;
   const file=list[index],info=boardFileInfo(file),point=boardImportLocation(origin,index);let n;

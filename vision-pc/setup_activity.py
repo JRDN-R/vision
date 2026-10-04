@@ -84,7 +84,7 @@ def prepare(root, stage, email=''):
     if len(permitted) > 100:
         raise ValueError('The dashboard supports at most 100 explicitly authorized accounts.')
     print('Selected Google account: ' + name + ' <' + actual_email + '>')
-    print('This grants read-only access to ALL user activity and briefly restarts the PC processor.')
+    print('This grants owner access to ALL user activity and Gemini access controls, and briefly restarts the PC processor.')
     if input('When processing jobs are idle, type YES to enable this account: ').strip() != 'YES':
         raise ValueError('Cancelled. No server files or access permissions were changed.')
     incoming, backup = stage / 'incoming', stage / 'backup'

@@ -93,7 +93,7 @@ function normalizeYouTubeImports(raw){
   if(!value||typeof value!=='object')return[];try{
    const text=(x,max=180)=>String(x||'').slice(0,max),clientRequestId=text(value.clientRequestId),targetId=text(value.targetId),sourceId=text(value.sourceId),u=new URL(value.backendUrl);
    if(!/^[\w-]{8,180}$/.test(clientRequestId)||!targetId||!sourceId||u.protocol!=='https:'||u.username||u.password||u.search||u.hash||ids.has(clientRequestId))return[];
-   ids.add(clientRequestId);return[{provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.provider!=='gemini'&&value.includeSoundEvents===true,url:normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
+   ids.add(clientRequestId);return[{provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,url:normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
   }catch{return[];}
  });
 }
@@ -109,7 +109,7 @@ async function youtubeAPI(path,options={}){
  finally{clearTimeout(timer);parentSignal?.removeEventListener('abort',abort);}
 }
 function youtubeTask(job){
- let task=youtubeImportTasks.get(job.clientRequestId);if(!task){const n=nodeById(job.targetId);task={title:n?.title||'YouTube video',detail:'Queued',progress:0};youtubeImportTasks.set(job.clientRequestId,task);mediaActivity.push(task);}return task;
+ let task=youtubeImportTasks.get(job.clientRequestId);if(!task){const n=nodeById(job.targetId);task={sourceId:job.sourceId,title:n?.title||'YouTube video',detail:'Queued',progress:0};youtubeImportTasks.set(job.clientRequestId,task);mediaActivity.push(task);}return task;
 }
 function removeYouTubeTask(job){const task=youtubeImportTasks.get(job.clientRequestId);if(task){task.finished=true;const index=mediaActivity.indexOf(task);if(index>=0)mediaActivity.splice(index,1);youtubeImportTasks.delete(job.clientRequestId);}}
 function youtubeConnected(){if(typeof accountCanUseApp==='function'&&!accountCanUseApp())return false;return !!(cloudConfig&&cloudAuth&&cloudAuth.backendUrl===cloudConfig.backendUrl&&(cloudAuth.kind==='firebase-google'?cloudAuth.uid:['private-pc','trial'].includes(cloudAuth.kind)?cloudAuth.accessToken:cloudAuth.refreshToken||cloudAuth.idToken));}
@@ -124,7 +124,7 @@ function resumeYouTubeImports(){
  renderActivity();scheduleYouTubeImports();
 }
 function openYouTubeDialog(){
- syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Uses available captions first. Include sound effects sends the full audio to FUPCJ Server Whisper and sound detection. Save your project to keep pending imports; reopen it to resume.';
+ syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Gemini transcribes the original audio. FUPCJ Server uses available captions first unless sound effects are included. Save your project to keep pending imports; reopen it to resume.';
  $('youtubeImport').disabled=youtubeImportRunning;$('youtubeDialog').showModal();$('youtubeURL').focus();
  if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();
 }
@@ -161,7 +161,7 @@ async function pumpYouTubeImports(){
  const check=()=>{if(signal.aborted||state!==project||!state.nodes.includes(n)||!n.attachments.includes(source)||!state.youtubeImports?.includes(job))throw new DOMException('The destination module is no longer open.','AbortError');if(job.backendUrl!==cloudConfig?.backendUrl)throw new DOMException('The connection changed.','AbortError');};
  try{
   check();job.status='working';task.detail=job.remoteId?'Reconnecting':'Connecting';renderActivity();
-  if(!job.remoteId){const accepted=await youtubeAPI('youtube',{method:'POST',body:JSON.stringify({url:job.url,clientRequestId:job.clientRequestId,includeSoundEvents:job.includeSoundEvents===true}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
+  if(!job.remoteId){const accepted=await youtubeAPI('youtube',{method:'POST',body:JSON.stringify({url:job.url,provider:job.provider,clientRequestId:job.clientRequestId,includeSoundEvents:job.includeSoundEvents===true}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
   let result;
   while(true){check();const status=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{signal});check();task.detail=status.phase||status.status;task.progress=Math.min(90,Number(status.progress||0)*.9);renderActivity();if(['error','failed','cancelled'].includes(status.status)){terminal=true;throw new Error(status.error||'The video could not be imported.');}if(status.status==='complete'){result=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId)+'/result',{signal});check();break;}await new Promise(resolve=>setTimeout(resolve,1200));}
   while(busy||ioBusy){check();await new Promise(resolve=>setTimeout(resolve,250));}check();ioBusy=true;ownsIO=true;
@@ -174,8 +174,8 @@ async function pumpYouTubeImports(){
   // Replace only generated frames belonging to this import when recovering an interrupted application.
   n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);source.snapshotsStatus='complete';
   if(n.videoSourceId===source.id){n.title=title;n.src=result.frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;await renderNode(n);}
-  if(job.includeSoundEvents&&!result.audio?.data)throw new Error('Sound effects require the full YouTube audio. Update FUPCJ Server and retry this import. Captions alone cannot detect sounds.');
-  if(result.transcript?.text&&!job.includeSoundEvents){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
+  if((job.includeSoundEvents||job.provider==='gemini')&&!result.audio?.data)throw new Error('This processing option requires the original YouTube audio. Update FUPCJ Server and retry this import. Captions alone cannot detect sounds.');
+  if(result.transcript?.text&&!job.includeSoundEvents&&job.provider!=='gemini'){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
   else if(result.audio?.data){
    if(!(n.transcriptionJobs||[]).some(j=>j.sourceId===source.id)&&source.transcriptionStatus!=='complete'){
     task.detail='Preparing audio for transcription';task.progress=90;renderActivity();

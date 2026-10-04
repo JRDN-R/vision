@@ -1,0 +1,15 @@
+{
+  "version": "google-paid-standard-2026-10-04",
+  "currency": "USD",
+  "basis": "Published paid standard API rates; estimates are not invoices and exclude any free-tier allowance.",
+  "source": "https://ai.google.dev/gemini-api/docs/pricing",
+  "models": {
+    "gemini-3.5-transcribe": [
+      {"effectiveFrom": "2026-10-04", "inputPerMillion": 2.0, "outputPerMillion": 12.0, "thoughtPerMillion": 12.0}
+    ],
+    "gemini-3.8-flash": [
+      {"effectiveFrom": "2026-10-04", "effectiveUntil": "2027-01-01", "inputPerMillion": 0.75, "outputPerMillion": 3.75, "thoughtPerMillion": 3.75},
+      {"effectiveFrom": "2027-01-01", "inputPerMillion": 1.5, "outputPerMillion": 7.5, "thoughtPerMillion": 7.5}
+    ]
+  }
+}

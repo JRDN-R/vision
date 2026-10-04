@@ -1,4 +1,4 @@
-"""Read-only owner activity API. No log files or credentials are served publicly.
+"""Owner activity and Gemini administration. No credentials are served publicly.
 
 Enable-Vision-Activity.ps1 creates DATA_DIR/activity-admins.json locally. Only
 explicit Firebase UIDs in that protected file can read the dashboard. A Google
@@ -142,3 +142,76 @@ def register(app, connect_db):
         return respond(value)
 
     app.add_url_rule('/api/admin/activity', 'vision_activity', activity, methods=['GET'])
+
+    def owner_access():
+        return allowed(app.config, getattr(g, 'uid', ''), getattr(g, 'auth_kind', ''), request.headers.get('Origin'))
+
+    def forbidden():
+        return respond({'code': 'ACTIVITY_FORBIDDEN',
+                        'error': 'This Google account does not have activity access. Enable it on the Vision PC.'}, 403)
+
+    def gemini_admin():
+        if not owner_access():
+            return forbidden()
+        access, usage = app.config.get('GEMINI_ACCESS'), app.config.get('GEMINI_USAGE')
+        if access is None or usage is None:
+            return respond({'error': 'Gemini administration is not available on this processor yet.'}, 503)
+        raw_limit = request.args.get('limit', '200')
+        if not re.fullmatch(r'[0-9]{1,4}', raw_limit):
+            return respond({'error': 'Choose a request limit from 1 through 2000.'}, 400)
+        try:
+            since = float(request.args['since']) if 'since' in request.args else None
+            until = float(request.args['until']) if 'until' in request.args else None
+            result = access.snapshot()
+            result['usage'] = usage.snapshot(request.args.get('user', ''), int(raw_limit), since, until)
+        except (TypeError, ValueError) as error:
+            return respond({'error': str(error)}, 400)
+        return respond(result)
+
+    def gemini_decision():
+        if not owner_access():
+            return forbidden()
+        access = app.config.get('GEMINI_ACCESS')
+        if access is None:
+            return respond({'error': 'Gemini administration is not available on this processor yet.'}, 503)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return respond({'error': 'Choose an account and an access decision.'}, 400)
+        try:
+            result = access.decide(body.get('userId'), body.get('decision'), g.uid)
+        except (TypeError, ValueError) as error:
+            return respond({'error': str(error)}, 400)
+        except LookupError as error:
+            return respond({'error': str(error)}, 404)
+        return respond(result)
+
+    def gemini_pricing():
+        if not owner_access():
+            return forbidden()
+        usage = app.config.get('GEMINI_USAGE')
+        if usage is None:
+            return respond({'error': 'Gemini administration is not available on this processor yet.'}, 503)
+        if request.method == 'GET':
+            return respond({'pricing': usage.pricing()})
+        try:
+            value = usage.save_pricing(request.get_json(silent=True))
+        except (TypeError, ValueError) as error:
+            return respond({'error': str(error)}, 400)
+        audit = app.config.get('AUDIT_LOGS')
+        if audit:
+            audit.event(g.uid, 'gemini_pricing_updated', outcome='updated')
+        return respond({'pricing': value})
+
+    def gemini_own_access():
+        if getattr(g, 'auth_kind', '') != 'firebase-google':
+            return respond({'error': 'Sign in with Google to request Gemini access.', 'status': 'denied'}, 403)
+        access = app.config.get('GEMINI_ACCESS')
+        if access is None:
+            return respond({'error': 'Gemini access requests are not available on this processor yet.'}, 503)
+        status = access.request_access(g.uid) if request.method == 'POST' else access.status(g.uid)
+        return respond({'status': status, 'approved': status == 'approved'})
+
+    app.add_url_rule('/api/admin/gemini', 'vision_gemini_admin', gemini_admin, methods=['GET'])
+    app.add_url_rule('/api/admin/gemini/access', 'vision_gemini_decision', gemini_decision, methods=['POST'])
+    app.add_url_rule('/api/admin/gemini/pricing', 'vision_gemini_pricing', gemini_pricing, methods=['GET', 'PUT'])
+    app.add_url_rule('/api/gemini/access', 'vision_gemini_own_access', gemini_own_access, methods=['GET', 'POST'])

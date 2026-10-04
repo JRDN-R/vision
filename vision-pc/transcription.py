@@ -120,7 +120,9 @@ def timestamp(value):
     return f'{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d}.{ms % 1000:03d}'
 
 
-def sound_caption(label):
+def sound_caption(label, enhanced=False):
+    if enhanced:
+        return '**' + label.replace('*', '') + '**'
     aliases = {'Meow': 'cat meows', 'Bark': 'dog barks', 'Smash, crash': 'smash/crash', 'Wail, moan': 'wail/moan'}
     return '*' + aliases.get(label, label.lower()) + '*'
 
@@ -177,11 +179,12 @@ def combine_transcription(speech, sound_result):
             if not any(section['start'] <= start < end <= section['end'] + .001 for section in sections):
                 raise ValueError('sound-event-outside-audio-section')
             label = ' '.join(label.split())
-            events.append({'start': start, 'end': end, 'label': label, 'score': score})
+            events.append({'start': start, 'end': end, 'label': label, 'score': score,
+                           **({'enhanced': True} if event.get('enhanced') is True else {})})
     events.sort(key=lambda value: (value['start'], value['end'], value['label']))
     segments = speech.get('speechSegments', [])
     cues = [dict(value) for value in segments]
-    cues.extend({'start': event['start'], 'end': event['end'], 'text': sound_caption(event['label'])} for event in events)
+    cues.extend({'start': event['start'], 'end': event['end'], 'text': sound_caption(event['label'], event.get('enhanced', False))} for event in events)
     cues.sort(key=lambda value: (value['start'], value['end'], value['text']))
     combined_sections = []
     for section in sections:
@@ -208,6 +211,14 @@ class LocalTranscription:
         return self.app.config['DATA_DIR'] / 'transcriptions'
 
     def initialize(self, config, config_path):
+        gemini = config.get('geminiProcessing') or {}
+        if not isinstance(gemini, dict):
+            raise ValueError('geminiProcessing must be a configuration object.')
+        self.gemini_settings = {'speechModel': gemini.get('speechModel', 'gemini-3.5-transcribe'),
+                                'soundModel': gemini.get('soundModel', 'gemini-3.8-flash')}
+        if any(not isinstance(value, str) or not re.fullmatch(r'gemini-[A-Za-z0-9._-]{1,100}', value)
+               for value in self.gemini_settings.values()):
+            raise ValueError('Gemini model identifiers must be valid model names.')
         supplied = config.get('localTranscription')
         supplied = supplied if isinstance(supplied, dict) else {}
         self.settings = {'enabled': supplied.get('enabled') is True}
@@ -243,6 +254,11 @@ class LocalTranscription:
                 attempts INTEGER NOT NULL DEFAULT 0, cancel_requested INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL, updated_at REAL NOT NULL, expires_at REAL NOT NULL,
                 UNIQUE(project_id,client_id))''')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(local_transcriptions)')}
+            for name, definition in (('provider', "TEXT NOT NULL DEFAULT 'whisper'"), ('requester_uid', 'TEXT')):
+                if name not in columns:
+                    db.execute(f'ALTER TABLE local_transcriptions ADD COLUMN {name} {definition}')
+            db.execute('CREATE INDEX IF NOT EXISTS transcriptions_access_queue ON local_transcriptions(provider,requester_uid,status)')
 
     def capability(self):
         model = Path(self.settings.get('modelPath') or '__not_installed__')
@@ -300,6 +316,8 @@ class LocalTranscription:
     def validate(self, body):
         if not isinstance(body, dict):
             raise self.Error('Send audio sections for transcription.')
+        if body.get('provider', 'whisper') not in ('whisper', 'local', 'gemini'):
+            raise self.Error('Choose an existing transcription provider.')
         if not isinstance(body.get('includeSoundEvents', False), bool):
             raise self.Error('includeSoundEvents must be true or false.')
         client = body.get('clientRequestId')
@@ -315,6 +333,8 @@ class LocalTranscription:
         validated, previous_end, duration, encoded_size = [], 0, 0, 0
         digest = hashlib.sha256()
         digest.update(source.encode('utf-8'))
+        if body.get('provider') == 'gemini':
+            digest.update(b'\x00provider:gemini\x00')
         # Keep existing speech-only receipts idempotent across this upgrade.
         if body.get('includeSoundEvents'):
             digest.update(b'\x00includeSoundEvents:true\x00')
@@ -350,7 +370,7 @@ class LocalTranscription:
         return client, source, validated, duration, digest.hexdigest()
 
     def register_routes(self):
-        from flask import jsonify, request
+        from flask import g, jsonify, request
 
         @self.app.post('/api/projects/<project_id>/transcriptions')
         def local_transcription_create(project_id):
@@ -359,6 +379,13 @@ class LocalTranscription:
             body = request.get_json(silent=True)
             client, source, sections, duration, content_hash = self.validate(body)
             include_sounds = body.get('includeSoundEvents', False)
+            provider = body.get('provider', 'whisper')
+            if provider == 'local':
+                provider = 'whisper'
+            requester_uid = getattr(g, 'uid', None)
+            access = self.app.config.get('GEMINI_ACCESS')
+            if provider == 'gemini' and (getattr(g, 'auth_kind', None) != 'firebase-google' or not access):
+                raise self.Error('Sign in with Google to request Gemini processing.', 403)
             directory = None
             try:
                 with self.db() as db:
@@ -368,11 +395,11 @@ class LocalTranscription:
                         if previous['content_hash'] != content_hash:
                             raise self.Error('This request identifier belongs to different audio. Start a new transcription.', 409)
                         return jsonify(id=previous['id'], status=previous['status']), 202
-                    if not self.capability()['ready']:
+                    if provider == 'whisper' and not self.capability()['ready']:
                         raise self.Error('Server transcription is not ready. Enable the server transcription plugin on FUPCJ Server first.', 503)
                     if include_sounds and not self.sound_capability()['ready']:
                         raise self.Error('Sound recognition is not ready. Run InstallSoundEvents on FUPCJ Server first, or turn off Include sound effects to transcribe speech only.', 503)
-                    pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing')").fetchone()[0]
+                    pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing','approval_waiting')").fetchone()[0]
                     if pending >= MAX_QUEUED:
                         raise self.Error('The server transcription queue is full. Wait for a job to finish.', 429)
                     if shutil.disk_usage(self.root).free < DISK_RESERVE + sum(len(s['data']) for s in sections):
@@ -388,20 +415,25 @@ class LocalTranscription:
                             out.flush()
                             os.fsync(out.fileno())
                         manifest.append({k: v for k, v in section.items() if k != 'data'} | {'file': path.name})
+                    access_status = access.request_access(requester_uid, db=db) if provider == 'gemini' else 'approved'
+                    status = 'queued' if access_status == 'approved' else 'approval_waiting'
+                    phase = ('Waiting for FUPCJ Server' if status == 'queued' else self.approval_phase(access_status))
                     atomic_json(directory / 'manifest.json', {'sections': manifest, 'includeSoundEvents': include_sounds,
+                        'provider': provider, 'geminiSettings': dict(self.gemini_settings) if provider == 'gemini' else None,
                         'whisperSettings': dict(self.settings), 'soundSettings': dict(self.sound_settings) if include_sounds else None})
                     db.execute('''INSERT INTO local_transcriptions
-                        (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at)
-                        VALUES(?,?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?)''',
-                        (job_id, project_id, client, content_hash, source, duration, now, now, now + RETAIN_SECONDS))
+                        (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at,provider,requester_uid)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (job_id, project_id, client, content_hash, status, phase, source, duration, now, now, now + RETAIN_SECONDS,
+                         provider, requester_uid))
                 directory = None  # The committed receipt now owns these files.
             finally:
                 if directory:
                     shutil.rmtree(directory, ignore_errors=True)
-            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType='whisper_sound' if include_sounds else 'whisper',
+            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType=provider + ('_sound' if include_sounds else ''),
                                                         uploadedBytes=sum(len(s['data']) for s in sections))
             self.wake.set()
-            return jsonify(id=job_id, status='queued'), 202
+            return jsonify(id=job_id, status=status, phase=phase), 202
 
         @self.app.get('/api/projects/<project_id>/transcriptions/<job_id>')
         def local_transcription_status(project_id, job_id):
@@ -427,6 +459,10 @@ class LocalTranscription:
         with self.db() as db:
             return db.execute('UPDATE local_transcriptions SET ' + ','.join(k + '=?' for k in fields) + ' WHERE id=?' + guard, (*fields.values(), job_id)).rowcount
 
+    @staticmethod
+    def approval_phase(status):
+        return {'denied': 'Gemini access denied', 'revoked': 'Gemini access revoked'}.get(status, 'Waiting for Gemini approval')
+
     def recover(self):
         with self.db() as db:
             db.execute("UPDATE local_transcriptions SET status='error',phase='Stopped',error='Server transcription stopped repeatedly. Retry this audio.' WHERE status='processing' AND attempts>=3")
@@ -449,26 +485,33 @@ class LocalTranscription:
         if not self._worker_lock.acquire(blocking=False):
             return False
         try:
-            if not self.capability()['ready']:
-                return False
+            local_ready = self.capability()['ready']
             with self.db() as db:
                 db.execute('BEGIN IMMEDIATE')
-                row = db.execute("SELECT * FROM local_transcriptions WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
+                row = db.execute("SELECT * FROM local_transcriptions WHERE status='queued' AND (provider='gemini' OR ?=1) ORDER BY created_at LIMIT 1", (int(local_ready),)).fetchone()
                 if row is None:
                     return False
                 value = dict(row)
+                if value.get('provider') == 'gemini':
+                    access = self.app.config.get('GEMINI_ACCESS')
+                    approval = access.status(value['requester_uid'], db=db) if access else 'pending'
+                    if approval != 'approved':
+                        db.execute("UPDATE local_transcriptions SET status='approval_waiting',phase=?,updated_at=? WHERE id=?",
+                                   (self.approval_phase(approval), time.time(), value['id']))
+                        return True
                 trials = self.app.config.get('TRIALS')
                 if trials and trials.expired(value['project_id']):
                     db.execute("UPDATE local_transcriptions SET status='cancelled',cancel_requested=1,phase='Trial ended' WHERE id=?", (value['id'],))
                     return True
-                db.execute("UPDATE local_transcriptions SET status='processing',phase='Loading Whisper model',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+                db.execute("UPDATE local_transcriptions SET status='processing',phase=?,attempts=attempts+1,updated_at=? WHERE id=?",
+                           ('Preparing Gemini processing' if value.get('provider') == 'gemini' else 'Loading Whisper model', time.time(), value['id']))
             processing_started = time.monotonic()
-            job_type, partial = 'whisper', False
+            job_type, partial = value.get('provider') or 'whisper', False
             try:
                 manifest = json.loads((self.root / value['id'] / 'manifest.json').read_text(encoding='utf-8'))
                 if manifest.get('includeSoundEvents'):
-                    job_type = 'whisper_sound'
-                result = self.run_local(value)
+                    job_type += '_sound'
+                result = self.run_gemini(value, manifest) if value.get('provider') == 'gemini' else self.run_local(value)
                 current = self.row(value['id'])
                 if current['status'] == 'cancelled':
                     return True
@@ -484,9 +527,22 @@ class LocalTranscription:
                     raise RuntimeError('no-result')
             except Exception as error:
                 if self.row(value['id'])['status'] != 'cancelled':
-                    self.app.logger.exception('Local transcription job %s failed.', value['id'])
-                    safe = error if isinstance(error, LocalRunnerError) else LocalRunnerError(failure_code(error, 'startup'))
-                    self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=str(safe))
+                    if value.get('provider') == 'gemini':
+                        from gemini_access import GeminiAccessDenied
+                        from gemini_processing import GeminiInterrupted, GeminiProcessingError
+                        if isinstance(error, GeminiAccessDenied):
+                            self.update(value['id'], only_processing=True, status='approval_waiting',
+                                        phase=self.approval_phase(error.status), error=None)
+                        elif isinstance(error, GeminiInterrupted) and self.stop.is_set():
+                            self.update(value['id'], only_processing=True, status='queued', phase='Waiting for FUPCJ Server restart')
+                        else:
+                            self.app.logger.error('Gemini transcription job %s failed (%s).', value['id'], type(error).__name__)
+                            safe = str(error) if isinstance(error, GeminiProcessingError) else 'Gemini processing could not finish. Check the owner activity monitor.'
+                            self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=safe)
+                    else:
+                        self.app.logger.exception('Local transcription job %s failed.', value['id'])
+                        safe = error if isinstance(error, LocalRunnerError) else LocalRunnerError(failure_code(error, 'startup'))
+                        self.update(value['id'], only_processing=True, status='error', phase='Stopped', error=str(safe))
             finally:
                 current = self.row(value['id'])
                 self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType=job_type,
@@ -495,6 +551,10 @@ class LocalTranscription:
             return True
         finally:
             self._worker_lock.release()
+
+    def run_gemini(self, value, manifest):
+        from gemini_processing import GeminiProcessor
+        return GeminiProcessor(self, value, manifest).run()
 
     def run_local(self, value):
         directory = self.root / value['id']
@@ -529,7 +589,7 @@ class LocalTranscription:
             self.app.logger.exception('Sound recognition job %s failed; preserving speech.', value['id'])
             return combine_transcription(result, None)
 
-    def run_sound_events(self, value, settings):
+    def run_sound_events(self, value, settings, abort=None):
         if not self.sound_capability(settings)['ready']:
             raise RuntimeError('sound-recognition-not-ready')
         directory = self.root / value['id']
@@ -538,9 +598,9 @@ class LocalTranscription:
                    '--ffmpeg', self.app.config['FFMPEG'], '--device', settings.get('device', 'cpu'),
                    '--threads', str(settings.get('cpuThreads', 2))]
         self.update(value['id'], only_processing=True, phase='Recognizing sound events', progress=50)
-        return self.run_worker(value, command, settings.get('cpuThreads', 2), sound=True, combined=True)
+        return self.run_worker(value, command, settings.get('cpuThreads', 2), sound=True, combined=True, abort=abort)
 
-    def run_worker(self, value, command, threads, sound=False, combined=False):
+    def run_worker(self, value, command, threads, sound=False, combined=False, abort=None):
         directory = self.root / value['id']
         prefix = 'sound-' if sound else ''
         env = os.environ.copy()
@@ -559,7 +619,7 @@ class LocalTranscription:
         started, previous, last_stage = time.monotonic(), None, 'startup'
         try:
             while child.poll() is None:
-                if self.stop.wait(0.5) or self.row(value['id'])['cancel_requested']:
+                if self.stop.wait(0.5) or self.row(value['id'])['cancel_requested'] or (abort is not None and abort.is_set()):
                     return None
                 if time.monotonic() - started > min(12 * 3600, max(1800, value['duration'] * (8 if sound else 4) + 900)):
                     raise TimeoutError('local-transcription-timeout')

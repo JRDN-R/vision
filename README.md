@@ -111,6 +111,11 @@ The same instructions include disable/enable commands for church services.
 Gemini transcription and OpenAI conversations remain separate online options;
 their provider's billing terms apply when selected.
 
+Gemini transcription now uses the same durable PC queue, with account approval
+and private usage monitoring in [Vision Status](https://jrdn-r.github.io/vision-status/).
+See [Gemini processing and the existing PC update](vision-pc/GEMINI.md) for activation,
+bounded sound enhancement, pricing, and credential migration details.
+
 ## Export to ChatGPT
 
 Prepare an AI package in Export. Supported devices can share the prepared ZIP
