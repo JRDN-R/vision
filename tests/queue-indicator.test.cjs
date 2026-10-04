@@ -5,8 +5,8 @@ const base=fs.readFileSync('web/base.js','utf8'),html=fs.readFileSync('web/docum
 const helpers=base.slice(base.indexOf('function activityQueueState(){'),base.indexOf('function openActivity(){'));
 const makeElement=()=>({children:[],attributes:{},hidden:false,textContent:'',appendChild(child){this.children.push(child);return child;},replaceChildren(){this.children=[];},setAttribute(key,value){this.attributes[key]=value;},querySelector(){return this.children[0];}});
 const elements={activityList:makeElement(),activitySummary:makeElement(),queueIndicator:makeElement()};elements.queueIndicator.appendChild(makeElement());
-const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){}};
-vm.createContext(context);vm.runInContext(helpers,context);
+const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){},notifyActivityQueue(){}};
+vm.createContext(context);vm.runInContext(helpers,context);context.notifyActivityQueue=()=>{};
 const render=()=>vm.runInContext('renderActivity()',context),count=()=>Number(elements.queueIndicator.children[0].textContent);
 render();assert.equal(elements.queueIndicator.hidden,true);
 context.entries=[{source:{id:'audio'},job:{sourceId:'audio',status:'approval_waiting',phase:'Waiting for Gemini approval',sections:[{done:false}],sourceName:'Audio'}}];
@@ -27,6 +27,6 @@ render();assert.equal(count(),6);assert.equal(elements.activityList.children.len
 context.state.nodes.at(-1).attachments[0].documentJob.status='complete';context.state.consoleSession.runs[0].status='completed';render();assert.equal(count(),4);
 context.entries[0].job.status='error';context.entries[1].job.status='error';context.mediaActivity.forEach(task=>task.finished=true);context.state.nodes.forEach(n=>{if(n.pcVideo)n.pcVideo.status='error';});
 render();assert.equal(count(),0);assert.equal(elements.queueIndicator.hidden,true);assert.equal(elements.activitySummary.textContent,'Processing needs attention');
-assert.equal((html.match(/id="queueIndicator"/g)||[]).length,1);assert.doesNotMatch(html,/id="activityBadge"/);assert.match(base,/\$\('queueIndicator'\)\.onclick=openActivity/);assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.queue-indicator::before\{animation:none/);
+assert.equal((html.match(/id="queueIndicator"/g)||[]).length,1);assert.ok(html.indexOf('id="queueIndicator"')>html.indexOf('id="appHeader"')&&html.indexOf('id="queueIndicator"')<html.indexOf('</header>'),'queue button belongs to top bar');assert.doesNotMatch(html,/id="activityBadge"/);assert.match(base,/\$\('queueIndicator'\)\.onclick=openActivity/);assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.queue-indicator::before\{animation:none/);
 assert.doesNotMatch(base,/requestAudio\(|JEWCredential|JEWTranscription|geminiApiKey/,'normal processing must not expose a direct Gemini API path');
 console.log('PASS: one accessible queue indicator; approval waits, four-job count, media handoff deduplication, completion/errors, reduced motion and backend-only Gemini.');

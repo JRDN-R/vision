@@ -84,7 +84,7 @@ async function workDocument(r){
   if(status.status==='complete'){
    const result=await documentRequest(r,'/result');check();applyDocumentResult(r,result);check();
    updateDocument(r,{status:'complete',phase:'Prepared for AI'+(result.warnings?.length?' · see extraction notes':''),error:'',sourceSha256:result.sourceSha256});
-   recordActivity(r.source.name,'Document content prepared');
+   recordActivity(r.source.name,'Document content prepared');toast('Document ready: '+r.source.name);
   }else updateDocument(r,{status:status.status,phase:status.phase||'Processing document',nextAttempt:Date.now()+2500},false);
  }catch(error){
   if(!documentCurrent(r)){

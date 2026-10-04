@@ -115,6 +115,7 @@ async function workPCVideo(runtime){
    const result=await pcVideoRequest(n,'/result',{signal});check();await applyPCVideoResult(runtime,result);check();
    pcVideoUpdate(n,{status:'complete',phase:'FUPCJ Server preview ready',progress:100,error:''});
    refreshNodeAttachments(n);updateSequence();recordActivity(n.title,'Video preview and snapshots ready');
+   if(!(n.transcriptionJobs||[]).some(job=>job.sourceId===n.pcVideo.sourceId))toast('Video ready: '+n.title);
   }
  }catch(error){
   if(!pcVideoCurrent(project,n,requestId)||signal.aborted||!sameAccount())return;

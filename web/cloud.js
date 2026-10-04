@@ -124,7 +124,9 @@ function resumeYouTubeImports(){
  renderActivity();scheduleYouTubeImports();
 }
 function openYouTubeDialog(){
- syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected);$('youtubeNotice').textContent='Gemini transcribes the original audio. FUPCJ Server uses available captions first unless sound effects are included. Save your project to keep pending imports; reopen it to resume.';
+ syncTranscriptionProviderUI();$('youtubeNewModule').checked=!nodeById(selected)||(typeof rememberedYouTubeNewModule==='function'&&rememberedYouTubeNewModule());$('youtubeNotice').textContent='Choose a video, then press Run. Open Controls to change transcription or where the video is added.';
+ $('youtubeNewModule').disabled=!nodeById(selected);
+ if(typeof setYouTubeControls==='function')setYouTubeControls(false);
  $('youtubeImport').disabled=youtubeImportRunning;$('youtubeDialog').showModal();$('youtubeURL').focus();
  if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();
 }

@@ -1,4 +1,23 @@
 // Board controls are separate from project/job identity and the run conversation.
+// Keep the existing temporary banner in the board's free upper-right area.
+// Follow the mobile header while it opens/closes, without covering its controls.
+function positionToast(){
+ const notice=$('toast');if(!notice||!board.isConnected)return;
+ const bounds=board.getBoundingClientRect(),viewport=document.documentElement.clientWidth;
+ notice.style.setProperty('--toast-board-inset',Math.max(0,viewport-bounds.right)+'px');
+ notice.style.setProperty('--toast-max-width',Math.max(0,Math.min(310,bounds.width-86))+'px');
+ const right=parseFloat(getComputedStyle(notice).right)||12,left=viewport-right-notice.offsetWidth;
+ let top=Math.max(8,bounds.top+12);
+ for(const control of [appHeader,headerReveal,$('sidebarToggle'),$('refreshNotice')]){
+  if(!control||control.hidden)continue;
+  const style=getComputedStyle(control),rect=control.getBoundingClientRect();
+  if(style.display==='none'||style.visibility==='hidden'||!rect.height||rect.bottom<=0)continue;
+  if(rect.right>left&&rect.left<viewport-right)top=Math.max(top,rect.bottom+8);
+ }
+ notice.style.setProperty('--toast-top',Math.ceil(top)+'px');
+ cancelAnimationFrame(positionToast.frame||0);
+ positionToast.frame=requestAnimationFrame(()=>{if(notice.classList.contains('show'))positionToast();});
+}
 function syncBoardAppearance(){
  const mode=['drift','stars','static'].includes(state.settings.boardBackground)?state.settings.boardBackground:'drift';
  const palette=['sage','rose','redshift'].includes(state.settings.boardPalette)?state.settings.boardPalette:'sage';

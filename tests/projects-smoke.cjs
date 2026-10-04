@@ -24,6 +24,16 @@ function harness(){
  await assert.rejects(h.run('projectRequest("/projects/project-another-id/runs")'),/active project changed/);
  const old=harness();old.setSupported(false);old.run('markDirty()');await assert.rejects(old.run('flushProjectSave()'),/Update FUPCJ Server/);assert.equal(old.requests.filter(r=>r.opts.method==='PUT').length,0);assert.match(old.el('saveState').textContent,/Update FUPCJ Server/);assert.ok([...old.storage.keys()].some(k=>k.startsWith('vision-projects-v1:')),'old server keeps browser backup');
  const conflict=harness();conflict.run('markDirty()');await conflict.run('flushProjectSave()');const id=conflict.context.state.projectCloud.id;conflict.remote.get(id).revision++;conflict.remote.get(id).project.title='Other device';conflict.context.state.title='Local';conflict.run('markDirty()');await conflict.run('projectReconcile()');assert.equal(conflict.context.state.title,'Local');assert.equal(conflict.run('projectConflict'),true);await conflict.run('projectReconcile({force:true})');assert.equal(conflict.context.state.title,'Other device');assert.equal(conflict.context.state.projectCloud.revision,2);
+ const dates=harness(),savedAt='2026-10-04T18:17:53.000Z',milliseconds=Date.parse(savedAt),seconds=milliseconds/1000,localDate=new Date(savedAt).toLocaleString();
+ dates.context.cloudAuth={kind:'firebase-google',uid:'date-owner'};
+ dates.context.dateEntries=[seconds,milliseconds,String(seconds),String(milliseconds),savedAt,null,0,'not-a-date'].map((updatedAt,index)=>({id:'project-date-test-'+index,title:'Saved project '+index,updatedAt}));
+ dates.run('projectAccountList=dateEntries;renderAccountProjectList()');
+ const savedDates=dates.el('accountProjectList').children.map(button=>button.children[1].textContent);
+ assert.deepEqual(savedDates,[...Array(5).fill(localDate),...Array(3).fill('Date unavailable')],'server seconds, browser milliseconds and ISO dates render in the device timezone; missing dates are not epoch dates');
+ dates.context.dateMeta={id:'project-date-current',key:'a'.repeat(64),backendUrl:'https://desktop.test.ts.net',revision:1,ownerUid:'date-owner'};dates.context.state.projectCloud=dates.context.dateMeta;
+ dates.run('projectRemember(dateMeta,"Local project",dateEntries[4].updatedAt);renderProjectMenu()');
+ assert.equal(dates.el('projectRecentList').children[0].children[1].textContent,'Current · '+localDate,'local ISO recovery date is not converted twice');
+ for(const value of [undefined,null,'',false,-1,'-1',NaN,Infinity,{}])assert.equal(dates.context.projectDateText(value),'Date unavailable','invalid project date does not display 1970 or Invalid Date');
  const base=fs.readFileSync('web/base.js','utf8'),exportCode=base.slice(base.indexOf('async function buildExportFiles('),base.indexOf('async function readProjectInput('));assert.doesNotMatch(exportCode,/JSON\.stringify\(archive\)|projectCloud|\.vision\.json/,'AI package does not emit editable project or project secret');
- console.log('Project smoke: blank boot, identity, revision saves, portable metadata, safe conflicts, fork, origin/ID isolation, old-server fallback, latest PC recovery, and export-secret isolation passed.');
+ console.log('Project smoke: blank boot, identity, revision saves, portable metadata, safe conflicts, fork, origin/ID isolation, old-server fallback, latest PC recovery, project dates, and export-secret isolation passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

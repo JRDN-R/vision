@@ -1,4 +1,14 @@
-#youtubeDialog{width:min(920px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px}
+#youtubeDialog{width:min(920px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:hidden;padding:0}
+#youtubeDialog[open]{display:flex;flex-direction:column}
+.youtube-header{flex:none;padding:20px 24px 14px;border-bottom:1px solid var(--line);background:#1c2224}
+.youtube-toolbar{display:flex;align-items:center;gap:8px;margin-top:14px}
+.youtube-toolbar button{flex:none;min-height:42px}
+#youtubeRunSummary{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
+#youtubeBody{min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 24px 24px;-webkit-overflow-scrolling:touch}
+#youtubeControlsPanel{padding:0 0 12px;border-bottom:1px solid var(--line)}
+#youtubeControlsPanel[hidden]{display:none}
+.attachment-source-actions{display:flex;gap:4px;margin-top:7px;flex-wrap:wrap}
+.attachment-source-actions button{flex:1;min-height:40px}
 .youtube-search-bar{display:flex;gap:8px;align-items:center;margin:7px 0 12px}
 .youtube-search-bar input{min-width:0;flex:1;margin:0;border-radius:22px;padding:11px 16px;font-size:16px}
 .youtube-search-bar button{flex:none;border-radius:22px;padding:11px 18px}
@@ -22,4 +32,4 @@
 #youtubeDialog .youtube-target{margin-top:15px}#youtubeDialog #youtubeNotice{margin-bottom:12px}
 #driveDialog{width:500px}.drive-identity{font-size:12px;color:#b7caaa;overflow-wrap:anywhere;margin:14px 0}
 .picker-dialog{z-index:2147483640!important}.picker-dialog-bg{z-index:2147483639!important}
-@media(max-width:560px){#youtubeDialog{padding:17px}.youtube-search-bar{gap:6px}.youtube-search-bar button{padding:10px 13px}.youtube-result-select{gap:11px}.youtube-result-thumbnail{flex-basis:42%;border-radius:7px}.youtube-result-copy{gap:5px}.youtube-result-copy strong{font-size:13px;line-height:1.35}.youtube-result-meta,.youtube-result-channel{font-size:10px}.youtube-result-description{display:none}.youtube-result-watch{font-size:10px}.youtube-result-duration{font-size:10px}#driveDialog .dialog-actions{flex-wrap:wrap}}
+@media(max-width:560px){.youtube-header{padding:17px 17px 12px}#youtubeBody{padding:0 17px 17px}.youtube-search-bar{gap:6px}.youtube-search-bar button{padding:10px 13px}.youtube-result-select{gap:11px}.youtube-result-thumbnail{flex-basis:42%;border-radius:7px}.youtube-result-copy{gap:5px}.youtube-result-copy strong{font-size:13px;line-height:1.35}.youtube-result-meta,.youtube-result-channel{font-size:10px}.youtube-result-description{display:none}.youtube-result-watch{font-size:10px}.youtube-result-duration{font-size:10px}#driveDialog .dialog-actions{flex-wrap:wrap}}

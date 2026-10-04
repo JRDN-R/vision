@@ -25,7 +25,39 @@ function ensureProjectIdentity(){
 function projectSnapshot(){return{format:'Vision',version:4,savedAt:new Date().toISOString(),...withoutVideoPayloads(snapshot()),projectCloud:{...ensureProjectIdentity()}};}
 function projectLocalGet(key,scope=projectStorageScope){if(projectIsTemporary(scope))return null;try{return localStorage.getItem(projectScopedKey(key,scope));}catch{return null;}}
 function projectLocalSet(key,value,scope=projectStorageScope){if(projectIsTemporary(scope))return false;try{localStorage.setItem(projectScopedKey(key,scope),value);return true;}catch{return false;}}
+// Last import choices belong to this browser account, not the currently open
+// project. Reading a saved project must not replace them or alter queued jobs.
+const IMPORT_PREFERENCES_KEY='vision-import-preferences-v1';
+let importPreferencesScope=null,importPreferencesValues={};
+function validImportPreference(name,value){return name==='transcriptionProvider'?['local','gemini'].includes(value):['includeSoundEvents','youtubeNewModule'].includes(name)&&typeof value==='boolean';}
+function importPreference(name,fallback){
+ // The portable app calls its base controls before project storage initializes.
+ if(!importPreference.ready)return fallback;
+ if(importPreferencesScope!==projectStorageScope){
+  importPreferencesScope=projectStorageScope;importPreferencesValues={};
+  try{const saved=JSON.parse(projectLocalGet(IMPORT_PREFERENCES_KEY)||'{}');for(const name of ['transcriptionProvider','includeSoundEvents','youtubeNewModule'])if(validImportPreference(name,saved?.[name]))importPreferencesValues[name]=saved[name];}catch{}
+ }
+ return validImportPreference(name,importPreferencesValues[name])?importPreferencesValues[name]:fallback;
+}
+function rememberImportPreference(name,value){
+ if(!importPreference.ready||projectAccountSwitching||!validImportPreference(name,value))return;
+ importPreference(name,undefined);importPreferencesValues[name]=value;
+ projectLocalSet(IMPORT_PREFERENCES_KEY,JSON.stringify(importPreferencesValues));
+}
+function rememberedYouTubeNewModule(){return importPreference('youtubeNewModule',false);}
+function setYouTubeNewModulePreference(value){rememberImportPreference('youtubeNewModule',value===true);}
+importPreference.ready=true;
 function projectRecentList(){try{const text=projectLocalGet(PROJECT_RECENT);return (text?JSON.parse(text):projectRecentMemory).filter(r=>validProjectIdentity(r)&&typeof r.title==='string').slice(0,30);}catch{return projectRecentMemory;}}
+function projectDateText(value){
+ // FUPCJ Server sends Unix seconds; device recovery uses ISO strings or milliseconds.
+ if(typeof value==='string')value=value.trim();
+ if(value==null||value===''||!['string','number'].includes(typeof value))return 'Date unavailable';
+ const numeric=typeof value==='number'||/^[+-]?\d+(?:\.\d+)?$/.test(value);
+ const number=numeric?Number(value):null;
+ if(numeric&&(!Number.isFinite(number)||number<=0))return 'Date unavailable';
+ const date=new Date(numeric?(number<1e11?number*1000:number):value);
+ return Number.isFinite(date.getTime())?date.toLocaleString():'Date unavailable';
+}
 function projectRemember(meta,title,updatedAt=new Date().toISOString()){
  if(projectIsTemporary())return;
  const entries=projectRecentList().filter(r=>r.id!==meta.id);entries.unshift({...meta,title:String(title||'Untitled project').slice(0,100),updatedAt});projectRecentMemory=entries.slice(0,30);projectLocalSet(PROJECT_RECENT,JSON.stringify(entries.slice(0,30)));projectLocalSet(PROJECT_ACTIVE,meta.id);
@@ -161,7 +193,7 @@ async function projectFork(){
 function renderProjectMenu(){
  renderAccountProjectList();
  $('projectSyncStatus').textContent=projectMessage;$('projectConflictActions').hidden=!projectConflict;const list=$('projectRecentList');list.replaceChildren();
- for(const entry of projectRecentList()){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title;detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+new Date(entry.updatedAt).toLocaleString();button.append(name,detail);button.onclick=()=>void projectOpenRecent(entry);list.appendChild(button);}
+ for(const entry of projectRecentList()){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title;detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+projectDateText(entry.updatedAt);button.append(name,detail);button.onclick=()=>void projectOpenRecent(entry);list.appendChild(button);}
  if(!list.children.length){const empty=document.createElement('p');empty.className='mini-note';empty.textContent='Your recent projects will appear here after you start editing. Each editable project file also carries its connection to FUPCJ Server copy.';list.appendChild(empty);}
 }
 function openProjectsMenu(){if(projectIsTemporary()){openAccountDialog('Sign in with Google to save projects. Temporary trial work will be cleared when you sign in.');return;}renderProjectMenu();if(!$('projectsDialog').open)$('projectsDialog').showModal();void projectRefreshAccountList();}
@@ -193,7 +225,7 @@ function renderAccountProjectList(){
  const signedIn=!!projectAccountUID();list.replaceChildren();
  status.textContent=projectAccountListMessage||(signedIn?'Your projects are saved on FUPCJ Server.':'Sign in with Google to see the same projects on every device.');
  $('accountProjectRefresh').hidden=!signedIn;$('projectAccountClaim').hidden=!projectNeedsAccountClaim();$('projectDeviceImport').hidden=!signedIn;
- for(const entry of signedIn?projectAccountList:[]){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title||'Untitled project';detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+new Date(entry.updatedAt).toLocaleString();button.append(name,detail);button.onclick=()=>void projectOpenAccount(entry);list.appendChild(button);}
+ for(const entry of signedIn?projectAccountList:[]){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title||'Untitled project';detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+projectDateText(entry.updatedAt);button.append(name,detail);button.onclick=()=>void projectOpenAccount(entry);list.appendChild(button);}
  const deviceList=$('projectDeviceList');deviceList.replaceChildren();
  if(signedIn){let entries=[];try{entries=JSON.parse(projectLocalGet(PROJECT_RECENT,'')||'[]');}catch{}
   for(const entry of entries.filter(r=>validProjectIdentity(r)&&!r.ownerUid)){const button=document.createElement('button');button.className='project-recent';button.textContent=entry.title||'Untitled project';button.onclick=()=>void projectOpenDeviceImport(entry);deviceList.appendChild(button);}

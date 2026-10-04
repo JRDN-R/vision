@@ -8,7 +8,7 @@ const DRIVE_EXPORTS={
  'application/vnd.google-apps.presentation':{mime:'application/vnd.openxmlformats-officedocument.presentationml.presentation',ext:'.pptx'},
  'application/vnd.google-apps.drawing':{mime:'application/pdf',ext:'.pdf'}
 };
-let driveCredential=null,driveRuntime=null,drivePicker=null,drivePickerLoading=null;
+let driveCredential=null,driveRuntime=null,drivePicker=null,drivePickerLoading=null,driveDestination=null;
 let youtubeSearchRuntime=null,youtubeSearchQuery='',youtubeSearchNext='',youtubeSearchCache=new Map();
 
 function googleSourceError(data,service,status){
@@ -46,11 +46,11 @@ async function googleSourceResponse(url,{signal,headers={},limit=1024*1024,timeo
  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }
 
-function driveCurrent(run){return driveRuntime===run&&!run.controller.signal.aborted&&accountSignedIn()&&run.uid===accountFirebase.currentUser?.uid&&run.epoch===accountAuthEpoch&&boardImportCurrent(run.context);}
+function driveCurrent(run){return driveRuntime===run&&!run.controller.signal.aborted&&accountSignedIn()&&run.uid===accountFirebase.currentUser?.uid&&run.epoch===accountAuthEpoch&&boardImportCurrent(run.context)&&(!run.target||nodeById(run.target.id)===run.target);}
 function assertDriveCurrent(run){if(!driveCurrent(run))throw new DOMException('The project or Google account changed. Import canceled.','AbortError');}
 function disposeDrivePicker(){const picker=drivePicker;drivePicker=null;picker?.dispose();}
 function cancelGoogleSourceImports(){
- const run=driveRuntime;driveRuntime=null;run?.controller.abort();
+ const run=driveRuntime;driveRuntime=null;driveDestination=null;run?.controller.abort();
  disposeDrivePicker();
  $('driveDialog')?.close();
 }
@@ -124,18 +124,22 @@ async function downloadDriveFile(doc,token,run,remaining){
  return new File([blob],name+(format&&!name.toLowerCase().endsWith(format.ext)?format.ext:''),{type:format?.mime||meta.mimeType||blob.type});
 }
 
-function openDriveDialog(){
+function openDriveDialog(targetId=''){
  if(!accountSignedIn()){openAccountDialog('Sign in with Google to choose Drive files.');return;}
  if(busy||ioBusy||boardImportRunning||driveRuntime){toast('Finish the current import first.');return;}
+ const target=targetId?nodeById(targetId):null,context=boardImportContext();
+ if(!context)return;if(targetId&&!target){toast('Select a module to attach Drive files.');return;}
+ driveDestination={context,target};
  boardAddDialog.close();$('driveIdentity').textContent=accountFirebase.currentUser.email||'Your signed-in Google account';
- $('driveStatus').textContent='Choose files from your Google Drive. Selected files are added to this project and saved on FUPCJ Server.';
+ $('driveStatus').textContent=target?'Choose files to attach to '+(target.title||'the selected module')+'.':'Choose files from your Google Drive. Each file is added as a module in this project.';
  $('driveChoose').disabled=false;$('driveCancel').disabled=false;$('driveProgress').hidden=true;$('driveDialog').showModal();
 }
 
 async function importDriveFiles(){
  if(driveRuntime||busy||ioBusy||boardImportRunning||!accountSignedIn())return;
- const context=boardImportContext();if(!context)return;
- const run={context,uid:accountFirebase.currentUser.uid,epoch:accountAuthEpoch,controller:new AbortController(),provider:transcriptionProvider(),phase:'choose'};
+ const context=driveDestination?.context||boardImportContext(),target=driveDestination?.target||null;if(!boardImportCurrent(context))return;
+ if(target&&nodeById(target.id)!==target){closeDriveImport();toast('The destination module was removed. Choose another module.');return;}
+ const run={context,target,uid:accountFirebase.currentUser.uid,epoch:accountAuthEpoch,controller:new AbortController(),provider:transcriptionProvider(),phase:'choose'};
  run.includeSoundEvents=soundEventsSelected(run.provider);driveRuntime=run;
  $('driveChoose').disabled=true;$('driveStatus').textContent='Connecting to your Google Drive…';
  try{
@@ -152,9 +156,10 @@ async function importDriveFiles(){
    const file=await downloadDriveFile(documents[i],token,run,DRIVE_MAX_BYTES-size);assertDriveCurrent(run);files.push(file);size+=file.size;$('driveProgress').value=(i+1)/documents.length;
   }
   if(busy||ioBusy||boardImportRunning)throw new Error('Another import is still running. Let it finish, then choose your Drive files again.');
-  run.phase='import';$('driveCancel').disabled=true;$('driveStatus').textContent='Adding files to your board…';
-  await importBoardFiles(files,undefined,{importContext:context,provider:run.provider,includeSoundEvents:run.includeSoundEvents});
-  assertDriveCurrent(run);$('driveDialog').close();
+  run.phase='import';$('driveCancel').disabled=true;$('driveStatus').textContent=target?'Attaching files to your module…':'Adding files to your board…';
+  if(target)await attachFiles(target.id,files);
+  else await importBoardFiles(files,undefined,{importContext:context,provider:run.provider,includeSoundEvents:run.includeSoundEvents});
+  assertDriveCurrent(run);driveDestination=null;$('driveDialog').close();
  }catch(error){
   if(error.status===401||error.status===403)driveCredential=null;
   if(driveCurrent(run)&&error.name!=='AbortError'){
@@ -173,7 +178,11 @@ function syncYouTubeSearchUI(){
  const value=$('youtubeURL').value.trim(),url=youtubeInputIsURL(value),running=!!youtubeSearchRuntime;
  $('youtubeSearch').disabled=running||!value||url;$('youtubeImport').disabled=youtubeImportRunning||!url;
  $('youtubeMore').disabled=running;$('youtubeSearch').textContent=running?'Searching…':'Search';
+ const chosen=Array.from($('youtubeResults').children).find(row=>url&&value==='https://www.youtube.com/watch?v='+row.dataset.videoId);
+ $('youtubeRunSummary').textContent=chosen?.dataset.title||(url?'Video ready to run':'Choose a video');
+ $('youtubeRunSummary').title=$('youtubeRunSummary').textContent;
 }
+function setYouTubeControls(open){$('youtubeControlsPanel').hidden=!open;$('youtubeControls').setAttribute('aria-expanded',String(open));if(open)$('youtubeBody').scrollTop=0;}
 function youtubePlainText(value){const node=document.createElement('textarea');node.innerHTML=String(value||'');return node.value;}
 function youtubeDuration(value){const m=String(value||'').match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/);if(!m)return'';const seconds=Math.round(Number(m[1]||0)*86400+Number(m[2]||0)*3600+Number(m[3]||0)*60+Number(m[4]||0));return seconds>=3600?Math.floor(seconds/3600)+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'):Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');}
 function youtubeViewCount(value){const n=Number(value);return Number.isFinite(n)&&n>=0?new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1}).format(n)+' views':'';}
@@ -197,7 +206,7 @@ async function fetchYouTubeResults(query,pageToken,signal){
 function renderYouTubeResults(items,append=false){
  const list=$('youtubeResults');if(!append)list.replaceChildren();const existing=new Set(Array.from(list.children).map(el=>el.dataset.videoId));
  for(const item of items){
-  if(existing.has(item.id))continue;const row=document.createElement('article');row.className='youtube-result';row.dataset.videoId=item.id;
+  if(existing.has(item.id))continue;const row=document.createElement('article');row.className='youtube-result';row.dataset.videoId=item.id;row.dataset.title=item.title;
   const select=document.createElement('button');select.type='button';select.className='youtube-result-select';select.setAttribute('aria-pressed','false');select.setAttribute('aria-label','Select '+item.title);
   const thumb=document.createElement('span');thumb.className='youtube-result-thumbnail';
   const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';thumb.appendChild(image);
@@ -208,7 +217,7 @@ function renderYouTubeResults(items,append=false){
   const channel=document.createElement('span');channel.className='youtube-result-channel';channel.textContent=item.channel;copy.appendChild(channel);
   const description=document.createElement('span');description.className='youtube-result-description';description.textContent=item.description;copy.appendChild(description);select.append(thumb,copy);
   const url='https://www.youtube.com/watch?v='+item.id;
-  select.onclick=()=>{for(const el of list.querySelectorAll('[aria-pressed]'))el.setAttribute('aria-pressed','false');select.setAttribute('aria-pressed','true');$('youtubeURL').value=url;$('youtubeNotice').textContent='Selected: '+item.title+'. Press Import video to add it.';syncYouTubeSearchUI();};
+  select.onclick=()=>{for(const el of list.querySelectorAll('[aria-pressed]'))el.setAttribute('aria-pressed','false');select.setAttribute('aria-pressed','true');$('youtubeURL').value=url;$('youtubeNotice').textContent='Selected: '+item.title+'. Press Run above to add it.';syncYouTubeSearchUI();};
   const watch=document.createElement('a');watch.href=url;watch.target='_blank';watch.rel='noopener noreferrer';watch.className='youtube-result-watch';watch.textContent='Watch on YouTube ↗';row.append(select,watch);list.appendChild(row);
  }
 }
@@ -227,7 +236,7 @@ async function searchYouTubeVideos(more=false){
  try{
   const result=await fetchYouTubeResults(query,more?youtubeSearchNext:'',run.controller.signal);if(!current())return;
   renderYouTubeResults(result.items,more);youtubeSearchNext=result.next;$('youtubeMore').hidden=!result.next;
-  $('youtubeNotice').textContent=result.items.length?'Choose a video, then press Import video.':'No videos found. Try a different search.';
+  $('youtubeNotice').textContent=result.items.length?'Choose a video, then press Run above.':'No videos found. Try a different search.';
  }catch(error){if(current()&&error.name!=='AbortError')$('youtubeNotice').textContent=error.message;}
  finally{if(youtubeSearchRuntime===run){youtubeSearchRuntime=null;syncYouTubeSearchUI();}}
 }
@@ -236,9 +245,11 @@ const driveDialog=document.createElement('dialog');driveDialog.id='driveDialog';
 driveDialog.innerHTML='<div class="row spread"><h2 id="driveTitle">Add from Google Drive</h2><button type="button" id="closeDrive" class="dialog-close" aria-label="Close Google Drive import">×</button></div><p id="driveIdentity" class="drive-identity"></p><p id="driveStatus" class="intro" role="status"></p><progress id="driveProgress" max="1" value="0" hidden></progress><p class="mini-note">Choose up to 20 files, 100 MB total. Google Docs, Sheets, and Slides import as Word, Excel, and PowerPoint files. Google may ask you to approve access to selected files.</p><div class="dialog-actions"><button id="driveCancel" type="button">Cancel</button><button id="driveChoose" type="button" class="primary">Choose files from Drive</button></div>';
 document.body.appendChild(driveDialog);
 const driveButton=document.createElement('button');driveButton.id='boardAddDrive';driveButton.type='button';driveButton.innerHTML='<strong>Google Drive</strong><span>Files from your Google account</span>';$('boardAddFiles').after(driveButton);
-driveButton.onclick=openDriveDialog;$('driveChoose').onclick=()=>void importDriveFiles();
+driveButton.onclick=()=>openDriveDialog();$('addAttachmentsDrive').onclick=()=>{if(selected)openDriveDialog(selected);};$('driveChoose').onclick=()=>void importDriveFiles();
 function closeDriveImport(){if(driveRuntime?.phase==='import')return;cancelGoogleSourceImports();}
 $('driveCancel').onclick=$('closeDrive').onclick=closeDriveImport;driveDialog.addEventListener('cancel',event=>{event.preventDefault();closeDriveImport();});
 $('youtubeSearch').onclick=()=>void searchYouTubeVideos();$('youtubeMore').onclick=()=>void searchYouTubeVideos(true);
+$('youtubeControls').onclick=()=>setYouTubeControls($('youtubeControlsPanel').hidden);
+$('youtubeNewModule').onchange=()=>{if(typeof setYouTubeNewModulePreference==='function')setYouTubeNewModulePreference($('youtubeNewModule').checked);};
 $('youtubeURL').addEventListener('input',()=>{cancelYouTubeSearch();$('youtubeMore').hidden=!youtubeSearchNext||$('youtubeURL').value.trim()!==youtubeSearchQuery;for(const el of $('youtubeResults').querySelectorAll('[aria-pressed]'))el.setAttribute('aria-pressed','false');});
 $('youtubeDialog').addEventListener('close',()=>{cancelYouTubeSearch();syncYouTubeSearchUI();});

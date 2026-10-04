@@ -6,7 +6,7 @@ const normalize=cloud.slice(cloud.indexOf('function normalizeYouTubeURL('),cloud
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(){
- const elements=new Map(),requests=[],imports=[],consents=[],pickers=[];
+ const elements=new Map(),requests=[],imports=[],attachments=[],consents=[],pickers=[];
  class Element{
   constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.dataset={};this.attrs={};this.listeners={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.open=false;}
   set innerHTML(value){this.html=value;for(const m of value.matchAll(/id="([^"]+)"/g))elements.set(m[1],new Element());if(this.tagName==='TEXTAREA')this.value=value.replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');}
@@ -33,16 +33,17 @@ function fixture(){
   window:{google},google,location:{origin:'https://vision.test'},document:{createElement:tag=>new Element(tag),body:new Element(),head:new Element()},$:el,
   VISION_FIREBASE:{apiKey:'public-test-key',appId:'1:123:web:abc'},accountFirebase:{currentUser:{uid:'user-a',email:'a@example.com'}},accountAuthEpoch:1,accountSignedIn:()=>control.signedIn,
   accountSDK:{GoogleAuthProvider:Provider,reauthenticateWithPopup:async(user,provider)=>{consents.push({user,provider});return control.reauth(user);}},
-  state:{nodes:[]},busy:false,ioBusy:false,boardImportRunning:false,youtubeImportRunning:false,
+  state:{nodes:[]},selected:null,nodeById:id=>c.state.nodes.find(node=>node.id===id),busy:false,ioBusy:false,boardImportRunning:false,youtubeImportRunning:false,
   boardAsyncContext:()=>({project:c.state,epoch:c.accountAuthEpoch}),boardAsyncCurrent:context=>context.project===c.state&&context.epoch===c.accountAuthEpoch,
   boardImportContext:()=>c.boardAsyncContext(),boardImportCurrent:context=>c.boardAsyncCurrent(context),
   boardAddDialog:new Element('dialog'),transcriptionProvider:()=> 'local',soundEventsSelected:()=>true,
   importBoardFiles:async(files,location,options)=>{imports.push({files,location,options});return files.map(file=>({title:file.name}));},
+  attachFiles:async(id,files)=>attachments.push({id,files}),
   toast(){},openAccountDialog(){},accountErrorText:error=>error.message,
   fetch:async(url,options)=>{const request={url:new URL(url),options};requests.push(request);return control.response(request);}
  };
  vm.createContext(c);vm.runInContext(normalize+'\n'+source,c);el('youtubeDialog').open=true;
- return{c,el,control,requests,imports,consents,pickers,run:code=>vm.runInContext(code,c)};
+ return{c,el,control,requests,imports,attachments,consents,pickers,run:code=>vm.runInContext(code,c)};
 }
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});
 const videoId='jNQXAC9IVRw';
@@ -66,6 +67,20 @@ const videoId='jNQXAC9IVRw';
   assert.equal(f.imports[0].options.provider,'local');assert.equal(f.imports[0].options.includeSoundEvents,true);assert.equal(f.el('driveDialog').open,false);
   f.control.docs=[];await f.run('importDriveFiles()');assert.equal(f.consents.length,1,'reuse only the in-memory credential for this account');
   f.run('cancelGoogleSources()');assert.equal(f.run('driveCredential'),null);
+ }
+ // The Files-tab shortcut captures its module before opening Drive, even when
+ // selection later changes, and never silently creates a separate module.
+ {
+  const f=fixture();f.c.state.nodes=[{id:'module-a',title:'Evidence'},{id:'module-b',title:'Other'}];f.c.selected='module-a';
+  f.el('addAttachmentsDrive').onclick();assert.match(f.el('driveStatus').textContent,/Evidence/);f.c.selected='module-b';
+  f.control.docs=[{id:'photo-1'}];f.control.response=({url})=>url.pathname.endsWith('/about')?json({}):url.searchParams.get('alt')==='media'?new Response('photo'):json({name:'Photo.png',mimeType:'image/png',size:5});
+  await f.run('importDriveFiles()');assert.equal(f.imports.length,0);assert.equal(f.attachments.length,1);assert.equal(f.attachments[0].id,'module-a');assert.equal(f.attachments[0].files[0].name,'Photo.png');
+  f.el('boardAddDrive').onclick();await f.run('importDriveFiles()');assert.equal(f.imports.length,1,'the board shortcut still creates modules');
+ }
+ // Removed module targets cannot fall back to another selected module/board.
+ {
+  const f=fixture();f.c.state.nodes=[{id:'module-a',title:'Evidence'}];f.c.selected='module-a';f.el('addAttachmentsDrive').onclick();f.c.state.nodes=[];
+  await f.run('importDriveFiles()');assert.equal(f.requests.length,0);assert.equal(f.attachments.length,0);assert.equal(f.imports.length,0);assert.equal(f.el('driveDialog').open,false);
  }
  // Reauthentication cannot silently replace the signed-in Vision account.
  {
@@ -105,10 +120,16 @@ const videoId='jNQXAC9IVRw';
   await f.run('searchYouTubeVideos()');assert.equal(f.requests.length,2);const row=f.el('youtubeResults').children[0];assert.equal(f.el('youtubeResults').children.length,1);
   const select=row.children[0],thumb=select.children[0],copy=select.children[1];assert.equal(copy.children[0].textContent,'Cat & dog');assert.equal(copy.children[3].textContent,'<img src=x onerror=bad()>');assert.equal(copy.children[3].innerHTML,'');
   assert.equal(thumb.children[1].textContent,'1:02:03');assert.match(copy.children[1].textContent,/2.5K views/);assert.equal(thumb.children[0].src,'https://i.ytimg.com/vi/'+videoId+'/mqdefault.jpg');
-  select.onclick();assert.equal(f.el('youtubeURL').value,'https://www.youtube.com/watch?v='+videoId);assert.equal(f.el('youtubeImport').disabled,false);assert.equal(f.imports.length,0,'selecting a card must not start an import');
+  select.onclick();assert.equal(f.el('youtubeURL').value,'https://www.youtube.com/watch?v='+videoId);assert.equal(f.el('youtubeImport').disabled,false);assert.equal(f.imports.length,0,'selecting a card must not start an import');assert.equal(select.getAttribute('aria-pressed'),'true');assert.equal(f.el('youtubeRunSummary').textContent,'Cat & dog');assert.match(f.el('youtubeNotice').textContent,/Press Run/);
   await f.run('searchYouTubeVideos(true)');assert.equal(f.requests[2].url.searchParams.get('pageToken'),'next-page');assert.equal(f.el('youtubeResults').children.length,1,'pagination deduplicates videos');
   f.el('youtubeURL').value='cat sounds';await f.run('searchYouTubeVideos()');assert.equal(f.requests.length,4,'identical searches use the short-lived cache');
-  f.el('youtubeURL').value='different search';f.el('youtubeURL').dispatch('input');assert.equal(f.el('youtubeMore').hidden,true);
+  f.el('youtubeURL').value='different search';f.el('youtubeURL').dispatch('input');assert.equal(f.el('youtubeMore').hidden,true);assert.equal(f.el('youtubeImport').disabled,true);assert.equal(f.el('youtubeRunSummary').textContent,'Choose a video');
+ }
+ // Controls open above the results without changing the selected video.
+ {
+  const f=fixture();f.el('youtubeURL').value='https://youtu.be/'+videoId;f.run('setYouTubeControls(false)');f.el('youtubeBody').scrollTop=1600;f.el('youtubeControls').onclick();
+  assert.equal(f.el('youtubeControlsPanel').hidden,false);assert.equal(f.el('youtubeControls').getAttribute('aria-expanded'),'true');assert.equal(f.el('youtubeBody').scrollTop,0);assert.equal(f.el('youtubeURL').value,'https://youtu.be/'+videoId);
+  f.el('youtubeControls').onclick();assert.equal(f.el('youtubeControlsPanel').hidden,true);assert.equal(f.requests.length,0);
  }
  // API setup errors keep direct-link import available; signed-out requests do nothing.
  {

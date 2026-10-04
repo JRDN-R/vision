@@ -6,7 +6,7 @@ const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
 const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local',includeSoundEvents:false});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
-let history=[],future=[],toastTimer,dragDepth=0,lastPointer=null,renderTickets=new Map();
+let history=[],future=[],toastTimer,activityNoticeTimer=null,activityNoticeContext=null,dragDepth=0,lastPointer=null,renderTickets=new Map();
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const nodeById=id=>state.nodes.find(n=>n.id===id), escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cloneAnnotation=a=>({...a,...(a.points?{points:a.points.map(p=>({...p}))}:{})});
@@ -14,7 +14,7 @@ const snapshot=()=>({...state,consoleSession:normalizeConsoleSession(state.conso
 function checkpoint(){history.push(snapshot());if(history.length>45)history.shift();future=[];updateHistory();}
 function markDirty(){dirty=true;$('saveState').textContent='Unsaved changes · save project to keep your work';updateHistory();updateRefreshNotice();}
 function updateHistory(){$('undoBtn').disabled=!history.length;$('redoBtn').disabled=!future.length;for(const [id,count]of [['boardUndo',history.length],['boardRedo',future.length]]){const b=$(id);if(b){b.disabled=!count;b.title=(id==='boardUndo'?'Undo':'Redo')+' · '+count+' available';}}}
-function toast(msg,error=false){clearTimeout(toastTimer);$('toast').textContent=msg;$('toast').className='show'+(error?' error':'');toastTimer=setTimeout(()=>$('toast').className='',error?6500:3500);}
+function toast(msg,error=false){clearTimeout(activityNoticeTimer);activityNoticeTimer=null;activityNoticeContext?.added.clear();clearTimeout(toastTimer);const notice=$('toast');notice.className='';notice.textContent=msg;if(typeof positionToast==='function')positionToast();void notice.offsetWidth;notice.className='show'+(error?' error':'');toastTimer=setTimeout(()=>notice.className='',error?6500:3500);}
 function undo(redo=false){if(busy||ioBusy)return;const source=redo?future:history,dest=redo?history:future;if(!source.length)return;dest.push(snapshot());const live={projectCloud:state.projectCloud,consoleSession:state.consoleSession,youtubeImports:state.youtubeImports};cancelTranscriptionQueue();state=Object.assign(source.pop(),live);consoleRefreshProject();resumeYouTubeImports();scheduleTranscriptionQueue();selected=nodeById(selected)?selected:null;selectedMark=null;selectedEdge=null;pending=null;action=null;renderAll();markDirty();}
 function screenToWorld(x,y){const r=board.getBoundingClientRect();return{x:(x-r.left-state.view.x)/state.view.scale,y:(y-r.top-state.view.y)/state.view.scale};}
 function updateView(){const v=state.view;world.style.transform=`translate(${v.x}px,${v.y}px) scale(${v.scale})`;board.style.backgroundSize=`${24*v.scale}px ${24*v.scale}px`;board.style.backgroundPosition=`${v.x}px ${v.y}px`;board.style.setProperty('--board-grid-size',`${24*v.scale}px`);board.style.setProperty('--board-grid-x',`${v.x}px`);board.style.setProperty('--board-grid-y',`${v.y}px`);board.style.setProperty('--port-hit-size',`${Math.max(44/v.scale,18)}px`);$('zoomValue').value=Math.round(v.scale*100)+'%';drawCables();}
@@ -260,7 +260,7 @@ async function attachFiles(id,files){
 }
 function removeAttachment(n,a){if(busy||ioBusy)return;checkpoint();const removed=new Set([a.id]);for(const f of n.attachments)if(f.videoOf===a.id||f.transcriptOf===a.id||f.subtitleOf===a.id)removed.add(f.id);n.attachments=n.attachments.filter(f=>!removed.has(f.id));if(n.videoSourceId===a.id)n.videoSourceId=null;pruneTranscriptionQueue();markDirty();renderAttachments();refreshNodeAttachments(n);updateSequence();}
 function renderAttachments(){
- const host=$('attachmentsList');host.innerHTML='';const n=nodeById(selected);$('attachmentCount').textContent=(n?.attachments||[]).filter(a=>!a.metadataOnly).length;$('addAttachments').disabled=!n;if(!n)return;
+ const host=$('attachmentsList');host.innerHTML='';const n=nodeById(selected);$('attachmentCount').textContent=(n?.attachments||[]).filter(a=>!a.metadataOnly).length;$('addAttachments').disabled=!n;if($('addAttachmentsDrive'))$('addAttachmentsDrive').disabled=!n;if(!n)return;
  for(const a of n.attachments||[]){if(a.role==='video-frame')continue;const row=document.createElement('div');row.className='attachment-row';const info=document.createElement('div');info.className='attachment-info';const name=document.createElement('span');name.textContent=a.name;name.title=a.name;info.appendChild(name);const meta=document.createElement('small'),shots=n.attachments.filter(f=>f.videoOf===a.id&&f.role==='video-frame').length;meta.textContent=videoFile(a)?`${shots} screenshots · ${a.snapshotsStatus||'not processed'} · ${n.pcVideo?.sourceId===a.id?(n.pcVideo.preview?'small preview on FUPCJ Server · original omitted':n.pcVideo.previewDeleted?'FUPCJ Server preview removed · original omitted':'FUPCJ Server preview pending · original omitted'):'video not stored'}`:(a.metadataOnly&&isAudioSource(a)?'Audio removed · transcript saved':readableBytes(a.size))+(a.transcriptOf?' · transcript · '+(a.status||'pending'):a.status?' · '+a.status:'');info.appendChild(meta);row.appendChild(info);const buttons=document.createElement('div');buttons.className='attachment-actions';if(a.data){const down=document.createElement('button');down.textContent='↓';down.title='Download attachment';down.onclick=()=>download(new Blob([bytesFromDataURL(a.data)],{type:a.mime}),R.safeFilename(a.name));buttons.appendChild(down);if(mediaFile(a)){const tr=document.createElement('button');tr.textContent='Text';tr.title='Transcribe audio again';tr.onclick=()=>offerTranscription(n.id,[a.id]);buttons.appendChild(tr);}}const remove=document.createElement('button');remove.textContent='×';remove.title='Remove file and its generated screenshots/transcript';remove.onclick=()=>removeAttachment(n,a);buttons.appendChild(remove);row.appendChild(buttons);host.appendChild(row);
  }if(!n.attachments.length){const p=document.createElement('p');p.className='mini-note';p.textContent='Drop files onto this module. Videos create timed screenshots and a transcript.';host.appendChild(p);}
 }
@@ -643,10 +643,10 @@ async function makeContactSheets(frames){
 let asrRuntime=null,asrWakeTimer=null,asrWakeAt=0;
 const LOCAL_ASR_HELP='https://github.com/JRDN-R/vision/tree/main/vision-pc#local-transcription';
 const LOCAL_ASR_MAX_BYTES=100*1024*1024,LOCAL_ASR_SECTION_MAX_BYTES=14000000;
-function transcriptionProvider(){return state.settings?.transcriptionProvider==='gemini'?'gemini':'local';}
+function transcriptionProvider(){const fallback=state.settings?.transcriptionProvider==='gemini'?'gemini':'local';return typeof importPreference==='function'?importPreference('transcriptionProvider',fallback):fallback;}
 function transcriptionProviderLabel(provider){return provider==='gemini'?'Gemini':'FUPCJ Server · Whisper';}
-function soundEventsSelected(provider=transcriptionProvider()){return ['local','gemini'].includes(provider)&&state.settings?.includeSoundEvents===true;}
-function setIncludeSoundEvents(value){checkpoint();state.settings.includeSoundEvents=value===true;markDirty();syncTranscriptionProviderUI();}
+function soundEventsSelected(provider=transcriptionProvider()){const fallback=state.settings?.includeSoundEvents===true;return ['local','gemini'].includes(provider)&&(typeof importPreference==='function'?importPreference('includeSoundEvents',fallback):fallback);}
+function setIncludeSoundEvents(value){checkpoint();state.settings.includeSoundEvents=value===true;if(typeof rememberImportPreference==='function')rememberImportPreference('includeSoundEvents',value===true);markDirty();syncTranscriptionProviderUI();}
 function soundEventsChoice(id){
  const wrapper=document.createElement('div');wrapper.id=id;wrapper.className='sound-events-choice';
  const label=document.createElement('label');label.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px';
@@ -729,7 +729,7 @@ function providerChoice(value,onchange,label){
  const select=document.createElement('select');select.setAttribute('aria-label',label);select.style.cssText='width:100%;min-height:40px;max-width:100%';
  for(const provider of ['local','gemini']){const option=document.createElement('option');option.value=provider;option.textContent=transcriptionProviderLabel(provider);select.appendChild(option);}select.value=value;select.onchange=()=>onchange(select.value);wrapper.appendChild(select);return wrapper;
 }
-function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';markDirty();syncTranscriptionProviderUI();}
+function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';if(typeof rememberImportPreference==='function')rememberImportPreference('transcriptionProvider',state.settings.transcriptionProvider);markDirty();syncTranscriptionProviderUI();}
 function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider','youtubeProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();syncSoundEventsChoice(id+'Sounds');}}
 function addQueueProviderControl(row,job){
  const choice=providerChoice(job.provider||'local',value=>changeQueuedProvider(job.id,value),'Transcription provider for '+job.sourceName);
@@ -928,7 +928,7 @@ function recordActivity(title,detail='Complete'){
  recentActivity.unshift({title,detail,at:Date.now()});recentActivity.splice(8);renderActivity();
 }
 // All processing stays in the existing activity queue. Source IDs avoid counting
-// the import-to-transcription handoff twice in the one floating indicator.
+// the import-to-transcription handoff twice in the one header indicator.
 function activityQueueState(){
  const entries=queueEntries().filter(e=>e.source),sourceIds=new Set(entries.map(({job})=>job.sourceId));
  const active=mediaActivity.filter(a=>!a.finished&&(!a.sourceId||!sourceIds.has(a.sourceId)));
@@ -938,9 +938,33 @@ function activityQueueState(){
  const count=entries.filter(({job})=>job.status!=='error').length+active.length+videos.filter(n=>n.pcVideo.status!=='error').length+documents.filter(({job})=>!['error','paused'].includes(job.status)).length+runs.length;
  return{entries,active,videos,documents,runs,count};
 }
+function notifyActivityQueue({entries,active,videos,documents,runs}){
+ const account=typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch,keys=new Set();
+ for(const{job}of entries)if(job.status!=='error')keys.add('source:'+job.sourceId);
+ for(const task of active)keys.add(task.sourceId?'source:'+task.sourceId:task);
+ for(const n of videos)if(n.pcVideo.status!=='error')keys.add('source:'+n.pcVideo.sourceId);
+ for(const{source,job}of documents)if(!['error','paused'].includes(job.status))keys.add('document:'+source.id);
+ for(const run of runs)keys.add('run:'+(run.clientRequestId||run.runId||run.responseId));
+ // Restoring a project, undoing, or changing accounts establishes a baseline.
+ // A polling update or an import handing off to transcription is not new work.
+ if(!activityNoticeContext||activityNoticeContext.project!==state||activityNoticeContext.account!==account){
+  clearTimeout(activityNoticeTimer);activityNoticeTimer=null;activityNoticeContext={project:state,account,keys,added:new Set()};return;
+ }
+ const context=activityNoticeContext;
+ for(const key of keys)if(!context.keys.has(key))context.added.add(key);
+ context.keys=keys;if(!context.added.size)return;
+ clearTimeout(activityNoticeTimer);
+ activityNoticeTimer=setTimeout(()=>{
+  activityNoticeTimer=null;
+  if(context!==activityNoticeContext||context.project!==state||context.account!==(typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch))return;
+  const count=[...context.added].filter(key=>context.keys.has(key)).length;context.added.clear();
+  // Explicit import/error messages take precedence over this generic notice.
+  if(count&&!$('toast').classList.contains('error'))toast(`${count} job${count===1?'':'s'} queued`);
+ },180);
+}
 function renderActivity(){
  const host=$('activityList'),summary=$('activitySummary'),indicator=$('queueIndicator');if(!host||!summary)return;
- const{entries,active,videos,documents,runs,count}=activityQueueState();
+ const activity=activityQueueState(),{entries,active,videos,documents,runs,count}=activity;notifyActivityQueue(activity);
  if(indicator){indicator.hidden=!count;indicator.querySelector('span').textContent=String(count);indicator.setAttribute('aria-label',`${count} processing job${count===1?'':'s'} queued or active. Open activity`);indicator.title=`${count} job${count===1?'':'s'} queued or active`;}
  const stopped=entries.filter(({job})=>job.status==='error').length+videos.filter(n=>n.pcVideo.status==='error').length+documents.filter(({job})=>['error','paused'].includes(job.status)).length;
  summary.textContent=count?`${count} task${count===1?'':'s'} remaining${navigator.onLine===false?' · offline':''}`:stopped?'Processing needs attention':'All caught up';host.replaceChildren();
@@ -965,5 +989,5 @@ if(activityBrand){activityBrand.setAttribute('role','button');activityBrand.setA
 $('closeActivity').onclick=()=>$('activityDialog').close();
 $('queueIndicator').onclick=openActivity;
 for(const type of ['pointerdown','touchstart','wheel'])$('queueIndicator').addEventListener(type,event=>event.stopPropagation());
-for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary'],['youtubeProvider','youtubeNotice']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);control.after(soundEventsChoice(id+'Sounds'));}
+for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary'],['youtubeProvider','youtubeProviderAnchor']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);control.after(soundEventsChoice(id+'Sounds'));}
 const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='Keep Vision open until FUPCJ Server accepts the audio, then processing continues in the background. Gemini jobs wait here until your account is approved.';$('activityProvider').after(asrNote);
