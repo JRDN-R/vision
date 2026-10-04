@@ -1,6 +1,6 @@
 // The original upload stays in memory only until FUPCJ Server acknowledges it.
 // Saved nodes hold a receipt and lightweight preview metadata, never a bearer or project key.
-const pcVideoUploads=new Map(),pcVideoWorkers=new Map(),pcVideoPlayers=new Map();
+const pcVideoUploads=new Map(),pcVideoWorkers=new Map(),pcVideoPlayers=new Map(),pcVideoRetryAt=new Map();
 let pcVideoTimer=null;
 const PC_VIDEO_UPLOAD_LIMIT=100*1024*1024,PC_VIDEO_PREVIEW_LIMIT=128*1024*1024;
 function normalizePCVideo(value){
@@ -68,6 +68,7 @@ function schedulePCVideos(delay=0){clearTimeout(pcVideoTimer);pcVideoTimer=setTi
 function pcVideoResume(){
  for(const [key,runtime]of pcVideoWorkers)if(!pcVideoCurrent(runtime.project,runtime.n,key)){runtime.controller.abort();pcVideoWorkers.delete(key);}
  for(const [key]of pcVideoUploads)if(!state.nodes.some(n=>n.pcVideo?.requestId===key))pcVideoUploads.delete(key);
+ for(const [key]of pcVideoRetryAt)if(!state.nodes.some(n=>n.pcVideo?.requestId===key))pcVideoRetryAt.delete(key);
  cleanupPCVideoPlayers();schedulePCVideos();
 }
 async function pumpPCVideos(){
@@ -75,14 +76,16 @@ async function pumpPCVideos(){
  const project=state;
  for(const n of state.nodes){
   const media=n.pcVideo;if(!media||media.status==='complete'||pcVideoWorkers.has(media.requestId)||pcVideoWorkers.size>=2)continue;
-  if(media.status==='error')continue;
+  if(media.status==='error'||(pcVideoRetryAt.get(media.requestId)||0)>Date.now())continue;
+  pcVideoRetryAt.delete(media.requestId);
   const runtime={project,n,controller:new AbortController()};pcVideoWorkers.set(media.requestId,runtime);void workPCVideo(runtime);
  }
  if(state.nodes.some(n=>n.pcVideo&&!['error','complete'].includes(n.pcVideo.status)))schedulePCVideos(1500);
 }
 async function workPCVideo(runtime){
- const{project,n,controller}=runtime,signal=controller.signal,requestId=n.pcVideo.requestId;
- const check=()=>{if(signal.aborted||!pcVideoCurrent(project,n,requestId))throw new DOMException('The destination project changed.','AbortError');};
+ const{project,n,controller}=runtime,signal=controller.signal,requestId=n.pcVideo.requestId,authEpoch=typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch;
+ const sameAccount=()=>authEpoch===(typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch);
+ const check=()=>{if(signal.aborted||!sameAccount()||!pcVideoCurrent(project,n,requestId))throw new DOMException('The destination project or account changed.','AbortError');};
  try{
   check();
   if(!n.pcVideo.id){
@@ -114,7 +117,14 @@ async function workPCVideo(runtime){
    refreshNodeAttachments(n);updateSequence();recordActivity(n.title,'Video preview and snapshots ready');
   }
  }catch(error){
-  if(!pcVideoCurrent(project,n,requestId)||signal.aborted)return;
+  if(!pcVideoCurrent(project,n,requestId)||signal.aborted||!sameAccount())return;
+  if(!error.status&&(error.name==='AbortError'||error.code==='VISION_SERVER_UNAVAILABLE'||error.retryable===true)){
+   // Preserve the request identity: the next attempt checks for an accepted
+   // receipt before resending an upload whose response may have been lost.
+   pcVideoRetryAt.set(requestId,Date.now()+15000);
+   pcVideoUpdate(n,{status:'waiting',error:'',needsFile:false,phase:n.pcVideo.id?'Connection interrupted · reconnecting automatically in 15 seconds':'Connection interrupted · retrying in 15 seconds · keep this page open'});
+   return;
+  }
   const message=error.name==='AbortError'?(n.pcVideo.id?'FUPCJ Server did not reply. Its video work may still be running. Retry to reconnect.':'The upload was not confirmed. Keep this page open and retry.'):String(error.message||'Video processing could not finish.');
   pcVideoUpdate(n,{status:'error',error:message,needsFile:error.code==='VISION_VIDEO_FILE_REQUIRED'});
  }finally{if(pcVideoWorkers.get(requestId)===runtime)pcVideoWorkers.delete(requestId);schedulePCVideos(1500);}
@@ -148,6 +158,7 @@ async function applyPCVideoResult(runtime,result){
 }
 function retryPCVideo(n){
  if(!state.nodes.includes(n)||!n.pcVideo)return;
+ pcVideoRetryAt.delete(n.pcVideo.requestId);
  if(n.pcVideo.needsFile&&!n.pcVideo.id&&!pcVideoUploads.has(n.pcVideo.requestId)){choosePCVideoAgain(n);return;}
  pcVideoUpdate(n,{status:'waiting',error:'',needsFile:false,phase:n.pcVideo.id?'Reconnecting to FUPCJ Server':'Waiting to upload · keep this page open'});schedulePCVideos();
 }
@@ -215,7 +226,7 @@ renderNode=async function(n){await pcVideoOriginalRenderNode(n);installPCVideoCo
 const pcVideoOriginalRenderAll=renderAll;
 renderAll=function(){for(const id of pcVideoPlayers.keys())stopPCVideoPlayer(id);pcVideoOriginalRenderAll();pcVideoResume();};
 new MutationObserver(cleanupPCVideoPlayers).observe(world,{childList:true,subtree:true});
-window.addEventListener('online',()=>{for(const n of state.nodes)if(n.pcVideo?.status==='error'&&n.pcVideo.id&&/reply|reach|unavailable|connection/i.test(n.pcVideo.error))retryPCVideo(n);schedulePCVideos();});
+window.addEventListener('online',()=>{for(const n of state.nodes){const media=n.pcVideo;if(media&&(pcVideoRetryAt.has(media.requestId)||(media.id||pcVideoUploads.has(media.requestId))&&media.status==='error'&&/^(This device cannot reach FUPCJ Server\.|FUPCJ Server did not reply\.|The upload was not confirmed\.)/.test(media.error)))retryPCVideo(n);}schedulePCVideos();});
 window.addEventListener('beforeunload',event=>{if(pcVideoUploads.size){event.preventDefault();event.returnValue='';}});
 window.addEventListener('pagehide',()=>{for(const id of pcVideoPlayers.keys())stopPCVideoPlayer(id);});
 schedulePCVideos();
