@@ -344,7 +344,7 @@ class UploadedMedia:
             if offset < 0:
                 raise self.Error('A valid upload offset is required.')
             length = request.content_length
-            if length is None or length <= 0 or length > UPLOAD_CHUNK_BYTES:
+            if length is not None and (length <= 0 or length > UPLOAD_CHUNK_BYTES):
                 raise self.Error('The video upload chunk is invalid.', 400)
             with self.upload_lock:
                 with self.db() as db:
@@ -367,7 +367,8 @@ class UploadedMedia:
                     raise self.Error('This partial video upload is unavailable. Start it again.', 404)
                 if offset != received:
                     raise self.Error(f'Upload offset changed; resume at byte {received}.', 409, 'VISION_UPLOAD_OFFSET')
-                if received + length > upload['source_size']:
+                maximum = min(UPLOAD_CHUNK_BYTES, upload['source_size'] - received)
+                if maximum <= 0 or (length is not None and length > maximum):
                     raise self.Error('The video upload chunk exceeds the declared file size.', 400)
                 remaining = upload['source_size'] - received
                 reserve = DISK_RESERVE + remaining + PREVIEW_LIMIT + RESULT_LIMIT + 8 * AUDIO_LIMIT
@@ -377,24 +378,28 @@ class UploadedMedia:
                 written = 0
                 try:
                     with source.open('ab') as target:
-                        while written < length:
-                            chunk = request.stream.read(min(1024 * 1024, length - written))
+                        while written <= maximum:
+                            chunk = request.stream.read(min(1024 * 1024, maximum + 1 - written))
                             if not chunk:
                                 break
                             target.write(chunk)
                             written += len(chunk)
+                            if written > maximum:
+                                break
                         target.flush()
                         os.fsync(target.fileno())
-                    if written != length:
+                    if written <= 0 or written > maximum or (length is not None and written != length):
                         with source.open('r+b') as target:
                             target.truncate(received)
                             target.flush()
                             os.fsync(target.fileno())
-                        raise self.Error('The video upload ended before the chunk was complete.', 400)
+                        raise self.Error('The video upload chunk was incomplete or exceeded its expected size.', 400)
                 except Exception:
                     if source.exists() and source.stat().st_size > received:
                         with source.open('r+b') as target:
                             target.truncate(received)
+                            target.flush()
+                            os.fsync(target.fileno())
                     raise
                 received += written
                 with self.db() as db:
@@ -408,6 +413,22 @@ class UploadedMedia:
                     return jsonify(result), 202
                 return jsonify(accepted=False, requestId=request_id, receivedBytes=received,
                                totalBytes=upload['source_size'], chunkBytes=UPLOAD_CHUNK_BYTES), 202
+
+        @app.delete('/api/projects/<project_id>/media/upload/<request_id>')
+        def delete_video_upload(project_id, request_id):
+            self.sessions.project(project_id)
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
+                raise self.Error('This partial video upload is unavailable.', 404)
+            with self.upload_lock:
+                with self.db() as db:
+                    row = db.execute('SELECT * FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                     (project_id, request_id)).fetchone()
+                    if row is not None:
+                        db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                   (project_id, request_id))
+                if row is not None:
+                    shutil.rmtree(self.upload_directory(project_id, request_id), ignore_errors=True)
+            return jsonify(removed=row is not None)
 
         @app.post('/api/projects/<project_id>/media')
         def upload_video(project_id):
