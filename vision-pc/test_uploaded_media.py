@@ -39,6 +39,15 @@ class UploadedMediaTests(unittest.TestCase):
         return self.client.post((base or self.base)+'/media', data={'requestId': request_id, 'file': (io.BytesIO(content), name)},
                                 headers=self.headers if headers is None else headers)
 
+    def begin_upload(self, size, request_id='chunked1', base=None, headers=None, name='clip.mp4'):
+        return self.client.post((base or self.base)+'/media/upload/'+request_id, json={'name': name, 'size': size},
+                                headers=self.headers if headers is None else headers)
+
+    def upload_chunk(self, content, offset=0, request_id='chunked1', base=None, headers=None):
+        return self.client.put((base or self.base)+'/media/upload/'+request_id+'?offset='+str(offset), data=content,
+                               content_type='application/octet-stream',
+                               headers=self.headers if headers is None else headers)
+
     def status(self, job, base=None, headers=None):
         return self.client.get((base or self.base)+'/media/'+job, headers=self.headers if headers is None else headers)
 
@@ -127,6 +136,56 @@ class UploadedMediaTests(unittest.TestCase):
         self.assertIsNone(second['nextCursor'])
         self.assertEqual(len({v['id'] for v in first['items']+second['items']}), 52)
         self.assertNotIn('thumbnail', first['items'][0])
+
+    def test_resumable_upload_progress_resume_and_finalize(self):
+        health = self.client.get('/api/health', headers=self.headers).json['videoMedia']
+        self.assertTrue(health['resumableUpload'])
+        self.assertEqual(health['uploadChunkBytes'], media.UPLOAD_CHUNK_BYTES)
+        started = self.begin_upload(10, name='../../private.mov')
+        self.assertEqual(started.status_code, 202, started.json)
+        self.assertFalse(started.json['accepted'])
+        self.assertEqual(started.json['receivedBytes'], 0)
+        first = self.upload_chunk(b'abcd')
+        self.assertEqual(first.status_code, 202, first.json)
+        self.assertEqual(first.json['receivedBytes'], 4)
+        resumed = self.begin_upload(10, name='../../private.mov')
+        self.assertEqual(resumed.json['sourceName'], 'private.mov')
+        self.assertEqual(resumed.json['receivedBytes'], 4)
+        stale_offset = self.upload_chunk(b'xx', offset=0)
+        self.assertEqual(stale_offset.status_code, 409)
+        self.assertEqual(stale_offset.json['code'], 'VISION_UPLOAD_OFFSET')
+        finished = self.upload_chunk(b'efghij', offset=4)
+        self.assertEqual(finished.status_code, 202, finished.json)
+        self.assertTrue(finished.json['accepted'])
+        job = finished.json['id']
+        self.assertEqual((self.service.root/job/'source.input').read_bytes(), b'abcdefghij')
+        again = self.begin_upload(10, name='private.mov')
+        self.assertTrue(again.json['accepted'])
+        self.assertEqual(again.json['id'], job)
+        with server.connect_db() as db:
+            self.assertIsNone(db.execute('SELECT 1 FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                         ('project_video_test1', 'chunked1')).fetchone())
+        self.assertFalse(self.service.upload_directory('project_video_test1', 'chunked1').exists())
+
+    def test_resumable_upload_validation_and_restart_recovery(self):
+        self.assertEqual(self.begin_upload(4, headers={}).status_code, 401)
+        self.assertEqual(self.begin_upload(4, name='secret.json').status_code, 400)
+        with patch.object(media, 'UPLOAD_LIMIT', 3):
+            self.assertEqual(self.begin_upload(4).status_code, 413)
+        started = self.begin_upload(5, request_id='resume1')
+        self.assertEqual(started.status_code, 202, started.json)
+        self.assertEqual(self.upload_chunk(b'ab', request_id='resume1').json['receivedBytes'], 2)
+        self.service.recover()
+        resumed = self.begin_upload(5, request_id='resume1')
+        self.assertEqual(resumed.json['receivedBytes'], 2)
+        self.assertEqual(self.begin_upload(6, request_id='resume1').status_code, 409)
+        self.assertEqual(self.upload_chunk(b'c', offset=3, request_id='resume1').status_code, 409)
+        self.assertEqual(self.upload_chunk(b'cdef', offset=2, request_id='resume1').status_code, 400)
+        with patch.object(media.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100, 100, 0)):
+            failed = self.begin_upload(5, request_id='no-space')
+        self.assertEqual(failed.status_code, 507)
+        with server.connect_db() as db:
+            self.assertIsNone(db.execute('SELECT 1 FROM uploaded_media_uploads WHERE request_id=?', ('no-space',)).fetchone())
 
     def test_limits_queue_reservations_and_no_leftover_files(self):
         self.assertEqual(self.submit(content=b'').status_code, 400)
