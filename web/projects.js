@@ -111,10 +111,10 @@ async function projectRequest(path,options={}){
  const headers=new Headers(options.headers||{});headers.set('X-Vision-Project-Key',meta.key);headers.set('Accept','application/json');
  return cloudFetch(path,{...options,headers});
 }
-async function projectResponse(response){let data;try{data=await response.json();}catch{throw new Error('FUPCJ Server did not return a valid project response.');}if(!response.ok){const error=new Error(data.error||'FUPCJ Server could not save this project.');error.status=response.status;error.data=data;if(response.status===401&&projectAccountUID()){error.message='Enable Google sign-in on FUPCJ Server, then retry. Your browser is signed in, but the processor has not accepted the account yet.';error.code='VISION_PC_UPDATE_REQUIRED';}throw error;}return data;}
+async function projectResponse(response){let data;try{data=await response.json();}catch{throw new Error('FUPCJ Server did not return a valid project response.');}if(!response.ok){const error=new Error(data.error||'FUPCJ Server could not save this project.');error.status=response.status;error.data=data;if(response.status===401&&projectAccountUID()){error.message='Enable Firebase account sign-in on FUPCJ Server, then retry. Your browser is signed in, but the processor has not accepted the account yet.';error.code='VISION_PC_UPDATE_REQUIRED';}throw error;}return data;}
 async function projectCapabilities(force=false){
  if(typeof accountReady!=='undefined')await accountReady;
- if(cloudConfig?.kind!=='private-pc'||(!cloudAuth?.accessToken&&!projectAccountUID()))throw new Error('FUPCJ Server autosave is not connected. Sign in with Google, or use your existing FUPCJ Server connection.');
+ if(cloudConfig?.kind!=='private-pc'||(!cloudAuth?.accessToken&&!projectAccountUID()))throw new Error('FUPCJ Server autosave is not connected. Sign in, or use your existing FUPCJ Server connection.');
  if(!force&&projectHealthCache?.url===cloudConfig.backendUrl&&Date.now()-projectHealthCache.time<30000)return projectHealthCache.data;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);let data;
  try{data=await projectResponse(await cloudFetch('/health',{signal:controller.signal}));}finally{clearTimeout(timer);}
@@ -196,7 +196,7 @@ function renderProjectMenu(){
  for(const entry of projectRecentList()){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title;detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+projectDateText(entry.updatedAt);button.append(name,detail);button.onclick=()=>void projectOpenRecent(entry);list.appendChild(button);}
  if(!list.children.length){const empty=document.createElement('p');empty.className='mini-note';empty.textContent='Your recent projects will appear here after you start editing. Each editable project file also carries its connection to FUPCJ Server copy.';list.appendChild(empty);}
 }
-function openProjectsMenu(){if(projectIsTemporary()){openAccountDialog('Sign in with Google to save projects. Temporary trial work will be cleared when you sign in.');return;}renderProjectMenu();if(!$('projectsDialog').open)$('projectsDialog').showModal();void projectRefreshAccountList();}
+function openProjectsMenu(){if(projectIsTemporary()){openAccountDialog('Sign in to save projects. Temporary trial work will be cleared when you sign in.');return;}renderProjectMenu();if(!$('projectsDialog').open)$('projectsDialog').showModal();void projectRefreshAccountList();}
 async function projectSwitchAccountScope(scope){
  if(scope===projectStorageScope)return;
  projectAccountSwitching=true;projectAccountList=[];projectAccountListMessage='';projectAccountListEpoch++;
@@ -223,7 +223,7 @@ async function projectSwitchAccountScope(scope){
 function renderAccountProjectList(){
  const list=$('accountProjectList'),status=$('accountProjectStatus');if(!list||!status)return;
  const signedIn=!!projectAccountUID();list.replaceChildren();
- status.textContent=projectAccountListMessage||(signedIn?'Your projects are saved on FUPCJ Server.':'Sign in with Google to see the same projects on every device.');
+ status.textContent=projectAccountListMessage||(signedIn?'Your projects are saved on FUPCJ Server.':'Sign in to see the same projects on every device.');
  $('accountProjectRefresh').hidden=!signedIn;$('projectAccountClaim').hidden=!projectNeedsAccountClaim();$('projectDeviceImport').hidden=!signedIn;
  for(const entry of signedIn?projectAccountList:[]){const button=document.createElement('button');button.className='project-recent';const name=document.createElement('strong'),detail=document.createElement('small');name.textContent=entry.title||'Untitled project';detail.textContent=(entry.id===state.projectCloud?.id?'Current · ':'')+projectDateText(entry.updatedAt);button.append(name,detail);button.onclick=()=>void projectOpenAccount(entry);list.appendChild(button);}
  const deviceList=$('projectDeviceList');deviceList.replaceChildren();
@@ -293,7 +293,7 @@ const projectOriginalSave=saveProject;
 saveProject=function(){if(projectIsTemporary()){openProjectsMenu();return;}if(!busy&&!ioBusy)ensureProjectIdentity();projectOriginalSave();if(state.projectCloud){void projectBackup();if(projectPending)void flushProjectSave().catch(()=>{});}};
 $('saveBtn').onclick=saveProject;
 const projectOriginalOpen=openProject;
-openProject=async function(file){if(projectIsTemporary()){openAccountDialog('Sign in with Google to open saved projects. You can still add files and videos to the trial board.');return;}const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
+openProject=async function(file){if(projectIsTemporary()){openAccountDialog('Sign in to open saved projects. You can still add files and videos to the trial board.');return;}const oldState=state;await projectBackup();await projectOriginalOpen(file);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();projectEpoch++;projectGeneration=0;projectPending=true;projectConflict=false;projectLocalOK=false;ensureProjectIdentity();await projectBackup();await projectReconcile();}};
 const projectOriginalNew=$('newBtn').onclick;
 $('newBtn').onclick=async function(event){await projectBackup();const oldState=state;projectOriginalNew(event);if(state!==oldState){if(typeof cancelBoardImports==='function')cancelBoardImports();clearTimeout(projectBackupTimer);clearTimeout(projectSyncTimer);projectEpoch++;projectGeneration=0;projectPending=false;projectConflict=false;projectLocalOK=false;projectLocalSet(PROJECT_ACTIVE,'');void projectStorePut({id:'__active__',activeId:'',recents:projectRecentList()}).catch(()=>{});projectStatus('New project · autosaves after your first change');}};
 async function projectRecoverStartup(){

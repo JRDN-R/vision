@@ -31,7 +31,7 @@ function fixture(){
  const google={picker:{DocsView,PickerBuilder,ViewId:{DOCS:'docs'},Feature:{MULTISELECT_ENABLED:'multiselect'},Action:{PICKED:'picked',CANCEL:'cancel'}}};
  const c={console,URL,URLSearchParams,Headers,Response,Blob,File,Uint8Array,ReadableStream,TextEncoder,AbortController,DOMException,setTimeout,clearTimeout,Date,Map,Set,Intl,
   window:{google},google,location:{origin:'https://vision.test'},document:{createElement:tag=>new Element(tag),body:new Element(),head:new Element()},$:el,
-  VISION_FIREBASE:{apiKey:'public-test-key',appId:'1:123:web:abc'},accountFirebase:{currentUser:{uid:'user-a',email:'a@example.com'}},accountAuthEpoch:1,accountSignedIn:()=>control.signedIn,
+  VISION_FIREBASE:{apiKey:'public-test-key',appId:'1:123:web:abc'},accountFirebase:{currentUser:{uid:'user-a',email:'a@example.com',providerData:[{providerId:'google.com'}]}},accountAuthEpoch:1,accountSignedIn:()=>control.signedIn,
   accountSDK:{GoogleAuthProvider:Provider,reauthenticateWithPopup:async(user,provider)=>{consents.push({user,provider});return control.reauth(user);}},
   state:{nodes:[]},selected:null,nodeById:id=>c.state.nodes.find(node=>node.id===id),busy:false,ioBusy:false,boardImportRunning:false,youtubeImportRunning:false,
   boardAsyncContext:()=>({project:c.state,epoch:c.accountAuthEpoch}),boardAsyncCurrent:context=>context.project===c.state&&context.epoch===c.accountAuthEpoch,
@@ -81,6 +81,10 @@ const videoId='jNQXAC9IVRw';
  {
   const f=fixture();f.c.state.nodes=[{id:'module-a',title:'Evidence'}];f.c.selected='module-a';f.el('addAttachmentsDrive').onclick();f.c.state.nodes=[];
   await f.run('importDriveFiles()');assert.equal(f.requests.length,0);assert.equal(f.attachments.length,0);assert.equal(f.imports.length,0);assert.equal(f.el('driveDialog').open,false);
+ }
+ // Password-only Vision accounts are valid for the app but must use Google sign-in for Drive.
+ {
+  const f=fixture();f.c.accountFirebase.currentUser.providerData=[{providerId:'password'}];f.el('boardAddDrive').onclick();assert.equal(f.el('driveDialog').open,false);assert.equal(f.consents.length,0);
  }
  // Reauthentication cannot silently replace the signed-in Vision account.
  {
