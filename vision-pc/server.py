@@ -22,7 +22,7 @@ from werkzeug.exceptions import HTTPException
 from media import normalize_url, process_job, MEDIA_LOCK
 from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
 from transcription import LocalTranscription
-from uploaded_media import UploadedMedia
+from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
 from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
@@ -154,7 +154,7 @@ def api_error(error):
 def http_error(error):
     if error.code == 413:
         message = ('Document uploads exceed 50 MB.' if '/documents' in request.path
-                   else 'Video uploads exceed 100 MB. Choose a smaller video.' if '/media' in request.path
+                   else 'Video uploads exceed 5 GB. Choose a smaller video.' if '/media' in request.path
                    else 'Server transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
                    else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
                    else 'Attachments exceed 25 MB. Export fewer or smaller images.')
@@ -693,7 +693,7 @@ def main():
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
-                  max_request_body_size=PROJECT_LIMIT, channel_timeout=300,
+                  max_request_body_size=max(PROJECT_LIMIT, VIDEO_BODY_LIMIT), channel_timeout=300,
                   expose_tracebacks=False, trusted_proxy='127.0.0.1',
                   trusted_proxy_count=1, trusted_proxy_headers={'x-forwarded-for', 'x-forwarded-proto'},
                   clear_untrusted_proxy_headers=True)
