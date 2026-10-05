@@ -2,7 +2,7 @@
 // Saved nodes hold a receipt and lightweight preview metadata, never a bearer or project key.
 const pcVideoUploads=new Map(),pcVideoWorkers=new Map(),pcVideoPlayers=new Map(),pcVideoRetryAt=new Map();
 let pcVideoTimer=null;
-const PC_VIDEO_UPLOAD_LIMIT=100*1024*1024,PC_VIDEO_PREVIEW_LIMIT=128*1024*1024;
+const PC_VIDEO_UPLOAD_LIMIT=5*1024*1024*1024,PC_VIDEO_PREVIEW_LIMIT=128*1024*1024;
 function normalizePCVideo(value){
  if(!value||typeof value!=='object'||!/^[-\w]{8,120}$/.test(value.requestId||''))return null;
  const config=validCloudConfig({kind:'private-pc',backendUrl:value.backendUrl});
@@ -30,7 +30,7 @@ function pcVideoPath(n,suffix=''){
 async function pcVideoRequest(n,suffix='',options={}){
  const controller=new AbortController(),parent=options.signal,abort=()=>controller.abort();
  parent?.addEventListener('abort',abort,{once:true});if(parent?.aborted)abort();
- const timer=setTimeout(abort,options.method==='POST'?300000:options.binary?120000:30000);
+ const timer=setTimeout(abort,options.method==='POST'?6*60*60*1000:options.binary?120000:30000);
  try{const {binary,maxBytes=PC_VIDEO_PREVIEW_LIMIT,...request}=options,response=await projectRequest(pcVideoPath(n,suffix),{...request,signal:controller.signal});if(!response.ok||!binary)return await projectResponse(response);
   if(Number(response.headers.get('Content-Length'))>maxBytes)throw new Error('FUPCJ Server file exceeds its download size limit.');
   const reader=response.body?.getReader();if(!reader){const blob=await response.blob();if(blob.size>maxBytes)throw new Error('FUPCJ Server file exceeds its download size limit.');return blob;}
@@ -59,7 +59,7 @@ async function importPCVideoFiles(files,location,options={}){
   const meta=ensureProjectIdentity(),source={id:uid(),name:file.name||'video.mp4',mime:file.type||mimeFromName(file.name),size:file.size,metadataOnly:true,role:'video',generated:false,status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   n.attachments.push(source);n.videoSourceId=source.id;n.fileType='Video';
   n.pcVideo={requestId:'media-'+uid(),id:'',projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',sourceId:source.id,sourceName:source.name,sourceSize:file.size,provider,includeSoundEvents,status:'waiting',phase:'Waiting to upload · keep this page open',progress:0,error:'',preview:null};
-  created.push(n);if(file.size>PC_VIDEO_UPLOAD_LIMIT)pcVideoUpdate(n,{status:'error',error:'This video exceeds FUPCJ Server’s 100 MB upload limit. Choose a smaller copy.'});else{pcVideoUploads.set(n.pcVideo.requestId,file);void pcVideoFirstFrame(n,file,project);}
+  created.push(n);if(file.size>PC_VIDEO_UPLOAD_LIMIT)pcVideoUpdate(n,{status:'error',error:'This video exceeds FUPCJ Server’s 5 GB upload limit. Choose a smaller copy.'});else{pcVideoUploads.set(n.pcVideo.requestId,file);void pcVideoFirstFrame(n,file,project);}
   refreshNodeAttachments(n);installPCVideoControls(n);markDirty();
  }
  if(boardAsyncCurrent(context))schedulePCVideos();return created;
@@ -165,7 +165,7 @@ function retryPCVideo(n){
 }
 function choosePCVideoAgain(n){
  const project=state,input=document.createElement('input');input.type='file';input.accept='video/*,.mp4,.mov,.m4v,.webm,.mkv';
- input.onchange=()=>{const file=input.files?.[0];if(!file||state!==project||!state.nodes.includes(n))return;if(file.size>PC_VIDEO_UPLOAD_LIMIT){toast('Choose a video under 100 MB.',true);return;}
+ input.onchange=()=>{const file=input.files?.[0];if(!file||state!==project||!state.nodes.includes(n))return;if(file.size>PC_VIDEO_UPLOAD_LIMIT){toast('Choose a video no larger than 5 GB.',true);return;}
   if(file.name!==n.pcVideo.sourceName||file.size!==n.pcVideo.sourceSize){toast('Choose the same video, or drop a different video onto the board to make a new module.',true);return;}
   const oldId=n.pcVideo.requestId;
   // A terminal FUPCJ Server failure can be restarted using a fresh receipt, while an unconfirmed upload keeps its identity.
