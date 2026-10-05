@@ -25,7 +25,7 @@ from flask import jsonify, request, send_file
 from media import MEDIA_LOCK, data_url, snapshot_interval, timestamp
 from sessions import safe_name
 
-UPLOAD_LIMIT = 100 * 1024 * 1024
+UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024
 BODY_LIMIT = UPLOAD_LIMIT + 1024 * 1024
 PREVIEW_LIMIT = 128 * 1024 * 1024
 RESULT_LIMIT = 20 * 1024 * 1024
@@ -33,8 +33,8 @@ AUDIO_LIMIT = 4 * 1024 * 1024
 AUDIO_SECTION_SECONDS = 900
 MAX_DURATION = 7200
 MAX_QUEUED = 3
-PROJECT_LIMIT = 2 * 1024 * 1024 * 1024
-STORAGE_LIMIT = 10 * 1024 * 1024 * 1024
+PROJECT_LIMIT = 16 * 1024 * 1024 * 1024
+STORAGE_LIMIT = 20 * 1024 * 1024 * 1024
 DISK_RESERVE = 1024 * 1024 * 1024
 # Reserve the worst case while a worker is still producing its outputs.
 JOB_RESERVE = UPLOAD_LIMIT + PREVIEW_LIMIT + RESULT_LIMIT + 8 * AUDIO_LIMIT
@@ -185,14 +185,14 @@ class UploadedMedia:
                     if old is None:
                         self.check_capacity(db, project_id)
                 if shutil.disk_usage(self.root).free < DISK_RESERVE + UPLOAD_LIMIT:
-                    raise self.Error('Free at least 1 GB on FUPCJ Server before uploading a video.', 507)
+                    raise self.Error('Free at least 6 GB on FUPCJ Server before uploading a video.', 507)
                 source = Path(temporary) / 'source.input'
                 size, digest = 0, hashlib.sha256()
                 with source.open('wb') as target:
                     while chunk := upload.stream.read(65536):
                         size += len(chunk)
                         if size > UPLOAD_LIMIT:
-                            raise self.Error('Video uploads exceed 100 MB. Choose a smaller video.', 413)
+                            raise self.Error('Video uploads exceed 5 GB. Choose a smaller video.', 413)
                         digest.update(chunk)
                         target.write(chunk)
                     target.flush()
