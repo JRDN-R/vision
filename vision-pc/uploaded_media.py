@@ -27,6 +27,8 @@ from sessions import safe_name
 
 UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024
 BODY_LIMIT = UPLOAD_LIMIT + 1024 * 1024
+UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024
+UPLOAD_SESSION_TTL = 24 * 3600
 PREVIEW_LIMIT = 128 * 1024 * 1024
 RESULT_LIMIT = 20 * 1024 * 1024
 AUDIO_LIMIT = 4 * 1024 * 1024
@@ -123,12 +125,18 @@ class UploadedMedia:
                 error TEXT, attempts INTEGER NOT NULL DEFAULT 0, cancel_requested INTEGER NOT NULL DEFAULT 0,
                 output_size INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL,
                 UNIQUE(project_id,request_id))''')
+            db.execute('''CREATE TABLE IF NOT EXISTS uploaded_media_uploads (
+                project_id TEXT NOT NULL, request_id TEXT NOT NULL, source_name TEXT NOT NULL,
+                source_size INTEGER NOT NULL, received_size INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                PRIMARY KEY(project_id,request_id))''')
 
     def capability(self):
         ffmpeg = Path(self.app.config['FFMPEG'])
         ready = ffmpeg.is_file() and ffmpeg.with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe').is_file()
         return dict(ready=ready, maxUploadBytes=UPLOAD_LIMIT, maxDuration=MAX_DURATION,
-                    maxPreviewBytes=PREVIEW_LIMIT, maxResultBytes=RESULT_LIMIT)
+                    maxPreviewBytes=PREVIEW_LIMIT, maxResultBytes=RESULT_LIMIT,
+                    resumableUpload=True, uploadChunkBytes=UPLOAD_CHUNK_BYTES)
 
     def row(self, job_id, project_id=None):
         if not re.fullmatch(r'[0-9a-f]{24}', job_id):
@@ -159,8 +167,244 @@ class UploadedMedia:
         with self.db() as db:
             db.execute('UPDATE uploaded_media SET ' + ','.join(key+'=?' for key in fields) + ' WHERE id=?', [*fields.values(), job_id])
 
+    @property
+    def upload_root(self):
+        return self.root / '.uploads'
+
+    def upload_directory(self, project_id, request_id):
+        key = hashlib.sha256((project_id + '\0' + request_id).encode('utf-8')).hexdigest()
+        return self.upload_root / key
+
+    def sweep_uploads(self):
+        """Remove stale/orphaned partial uploads and reconcile bytes after a restart."""
+        cutoff = time.time() - UPLOAD_SESSION_TTL
+        with self.db() as db:
+            rows = [dict(row) for row in db.execute('SELECT * FROM uploaded_media_uploads')]
+            for row in rows:
+                if row['updated_at'] < cutoff:
+                    db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                               (row['project_id'], row['request_id']))
+        active = []
+        for row in rows:
+            directory = self.upload_directory(row['project_id'], row['request_id'])
+            if row['updated_at'] < cutoff:
+                shutil.rmtree(directory, ignore_errors=True)
+                continue
+            source = directory / 'source.part'
+            try:
+                actual = source.stat().st_size
+            except FileNotFoundError:
+                with self.db() as db:
+                    db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                               (row['project_id'], row['request_id']))
+                shutil.rmtree(directory, ignore_errors=True)
+                continue
+            if actual < 0 or actual > row['source_size']:
+                with self.db() as db:
+                    db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                               (row['project_id'], row['request_id']))
+                shutil.rmtree(directory, ignore_errors=True)
+                continue
+            if actual != row['received_size']:
+                with self.db() as db:
+                    db.execute('UPDATE uploaded_media_uploads SET received_size=?,updated_at=? WHERE project_id=? AND request_id=?',
+                               (actual, time.time(), row['project_id'], row['request_id']))
+            active.append(directory.name)
+        if self.upload_root.is_dir():
+            keep = set(active)
+            for directory in self.upload_root.iterdir():
+                if directory.is_dir() and directory.name not in keep:
+                    shutil.rmtree(directory, ignore_errors=True)
+            try:
+                self.upload_root.rmdir()
+            except OSError:
+                pass
+
+    def finalize_upload(self, project_id, request_id, upload, source):
+        digest = hashlib.sha256()
+        with source.open('rb') as incoming:
+            while chunk := incoming.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        job_id, now = secrets.token_hex(12), time.time()
+        directory = self.root / job_id
+        directory.mkdir(mode=0o700)
+        target = directory / 'source.input'
+        moved = False
+        try:
+            os.replace(source, target)
+            moved = True
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                existing = db.execute('SELECT * FROM uploaded_media WHERE project_id=? AND request_id=?',
+                                      (project_id, request_id)).fetchone()
+                if existing is not None:
+                    if existing['content_hash'] != digest.hexdigest():
+                        raise self.Error('This requestId belongs to another video. Start a new import.', 409)
+                    db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                               (project_id, request_id))
+                    shutil.rmtree(directory, ignore_errors=True)
+                    shutil.rmtree(self.upload_directory(project_id, request_id), ignore_errors=True)
+                    return dict(existing)
+                db.execute('''INSERT INTO uploaded_media
+                    (id,project_id,request_id,content_hash,source_name,source_size,status,phase,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,'queued','Waiting for FUPCJ Server video processor',?,?)''',
+                    (job_id, project_id, request_id, digest.hexdigest(), upload['source_name'],
+                     upload['source_size'], now, now))
+                db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                           (project_id, request_id))
+        except Exception:
+            if moved and target.exists():
+                partial = self.upload_directory(project_id, request_id)
+                partial.mkdir(parents=True, exist_ok=True, mode=0o700)
+                os.replace(target, partial / 'source.part')
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        shutil.rmtree(self.upload_directory(project_id, request_id), ignore_errors=True)
+        self.wake.set()
+        return self.row(job_id, project_id)
+
     def register_routes(self):
         app = self.app
+        @app.post('/api/projects/<project_id>/media/upload/<request_id>')
+        def begin_video_upload(project_id, request_id):
+            self.sessions.project(project_id)
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
+                raise self.Error('A valid requestId is required.')
+            if not self.capability()['ready']:
+                raise self.Error('Update FUPCJ Server processor to install its video tools.', 503)
+            payload = request.get_json(silent=True) or {}
+            name = safe_name(payload.get('name', ''))
+            raw_size = payload.get('size')
+            if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size <= 0:
+                raise self.Error('A valid video size is required.')
+            size = int(raw_size)
+            if size > UPLOAD_LIMIT:
+                raise self.Error('Video uploads exceed 5 GB. Choose a smaller video.', 413)
+            if Path(name).suffix.lower() not in EXTENSIONS:
+                raise self.Error('Choose a video file such as MP4, MOV, WebM or MKV.')
+            with self.upload_lock:
+                self.sweep_uploads()
+                with self.db() as db:
+                    accepted = db.execute('SELECT * FROM uploaded_media WHERE project_id=? AND request_id=?',
+                                          (project_id, request_id)).fetchone()
+                    if accepted is not None:
+                        result = self.snapshot(dict(accepted))
+                        result.update(accepted=True, receivedBytes=accepted['source_size'],
+                                      totalBytes=accepted['source_size'], chunkBytes=UPLOAD_CHUNK_BYTES)
+                        return jsonify(result)
+                    current = db.execute('SELECT * FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                         (project_id, request_id)).fetchone()
+                    if current is not None and (current['source_name'] != name or current['source_size'] != size):
+                        raise self.Error('This upload belongs to a different video. Start a new import.', 409)
+                    if current is None:
+                        self.check_capacity(db, project_id)
+                        now = time.time()
+                        db.execute('''INSERT INTO uploaded_media_uploads
+                            (project_id,request_id,source_name,source_size,received_size,created_at,updated_at)
+                            VALUES(?,?,?,?,0,?,?)''', (project_id, request_id, name, size, now, now))
+                        current = db.execute('SELECT * FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                             (project_id, request_id)).fetchone()
+                directory = self.upload_directory(project_id, request_id)
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                source = directory / 'source.part'
+                source.touch(exist_ok=True)
+                received = source.stat().st_size
+                if received > size:
+                    with self.db() as db:
+                        db.execute('DELETE FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                   (project_id, request_id))
+                    shutil.rmtree(directory, ignore_errors=True)
+                    raise self.Error('The saved partial upload is invalid. Start a new import.', 409)
+                if received != current['received_size']:
+                    with self.db() as db:
+                        db.execute('UPDATE uploaded_media_uploads SET received_size=?,updated_at=? WHERE project_id=? AND request_id=?',
+                                   (received, time.time(), project_id, request_id))
+                remaining = size - received
+                reserve = DISK_RESERVE + remaining + PREVIEW_LIMIT + RESULT_LIMIT + 8 * AUDIO_LIMIT
+                if shutil.disk_usage(self.root).free < reserve:
+                    needed = max(1, math.ceil(reserve / (1024 ** 3)))
+                    raise self.Error(f'Free at least {needed} GB on FUPCJ Server to finish this video upload.', 507)
+                return jsonify(accepted=False, requestId=request_id, sourceName=name, receivedBytes=received,
+                               totalBytes=size, chunkBytes=UPLOAD_CHUNK_BYTES), 202
+
+        @app.put('/api/projects/<project_id>/media/upload/<request_id>')
+        def upload_video_chunk(project_id, request_id):
+            self.sessions.project(project_id)
+            request.max_content_length = UPLOAD_CHUNK_BYTES + 1024
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
+                raise self.Error('A valid requestId is required.')
+            try:
+                offset = int(request.args.get('offset', ''))
+            except ValueError:
+                raise self.Error('A valid upload offset is required.')
+            if offset < 0:
+                raise self.Error('A valid upload offset is required.')
+            length = request.content_length
+            if length is None or length <= 0 or length > UPLOAD_CHUNK_BYTES:
+                raise self.Error('The video upload chunk is invalid.', 400)
+            with self.upload_lock:
+                with self.db() as db:
+                    accepted = db.execute('SELECT * FROM uploaded_media WHERE project_id=? AND request_id=?',
+                                          (project_id, request_id)).fetchone()
+                    if accepted is not None:
+                        result = self.snapshot(dict(accepted))
+                        result.update(accepted=True, receivedBytes=accepted['source_size'],
+                                      totalBytes=accepted['source_size'], chunkBytes=UPLOAD_CHUNK_BYTES)
+                        return jsonify(result)
+                    row = db.execute('SELECT * FROM uploaded_media_uploads WHERE project_id=? AND request_id=?',
+                                     (project_id, request_id)).fetchone()
+                if row is None:
+                    raise self.Error('This partial video upload is unavailable. Start it again.', 404)
+                upload = dict(row)
+                source = self.upload_directory(project_id, request_id) / 'source.part'
+                try:
+                    received = source.stat().st_size
+                except FileNotFoundError:
+                    raise self.Error('This partial video upload is unavailable. Start it again.', 404)
+                if offset != received:
+                    raise self.Error(f'Upload offset changed; resume at byte {received}.', 409, 'VISION_UPLOAD_OFFSET')
+                if received + length > upload['source_size']:
+                    raise self.Error('The video upload chunk exceeds the declared file size.', 400)
+                remaining = upload['source_size'] - received
+                reserve = DISK_RESERVE + remaining + PREVIEW_LIMIT + RESULT_LIMIT + 8 * AUDIO_LIMIT
+                if shutil.disk_usage(self.root).free < reserve:
+                    needed = max(1, math.ceil(reserve / (1024 ** 3)))
+                    raise self.Error(f'Free at least {needed} GB on FUPCJ Server to finish this video upload.', 507)
+                written = 0
+                try:
+                    with source.open('ab') as target:
+                        while written < length:
+                            chunk = request.stream.read(min(1024 * 1024, length - written))
+                            if not chunk:
+                                break
+                            target.write(chunk)
+                            written += len(chunk)
+                        target.flush()
+                        os.fsync(target.fileno())
+                    if written != length:
+                        with source.open('r+b') as target:
+                            target.truncate(received)
+                            target.flush()
+                            os.fsync(target.fileno())
+                        raise self.Error('The video upload ended before the chunk was complete.', 400)
+                except Exception:
+                    if source.exists() and source.stat().st_size > received:
+                        with source.open('r+b') as target:
+                            target.truncate(received)
+                    raise
+                received += written
+                with self.db() as db:
+                    db.execute('UPDATE uploaded_media_uploads SET received_size=?,updated_at=? WHERE project_id=? AND request_id=?',
+                               (received, time.time(), project_id, request_id))
+                if received == upload['source_size']:
+                    accepted = self.finalize_upload(project_id, request_id, upload, source)
+                    result = self.snapshot(accepted)
+                    result.update(accepted=True, receivedBytes=received, totalBytes=received,
+                                  chunkBytes=UPLOAD_CHUNK_BYTES)
+                    return jsonify(result), 202
+                return jsonify(accepted=False, requestId=request_id, receivedBytes=received,
+                               totalBytes=upload['source_size'], chunkBytes=UPLOAD_CHUNK_BYTES), 202
+
         @app.post('/api/projects/<project_id>/media')
         def upload_video(project_id):
             self.sessions.project(project_id)
@@ -304,22 +548,27 @@ class UploadedMedia:
 
     def check_capacity(self, db, project_id):
         rows = db.execute('SELECT project_id,status,output_size FROM uploaded_media').fetchall()
-        if sum(row['status'] in ACTIVE for row in rows) >= MAX_QUEUED:
+        uploads = db.execute('SELECT project_id FROM uploaded_media_uploads').fetchall()
+        if sum(row['status'] in ACTIVE for row in rows) + len(uploads) >= MAX_QUEUED:
             raise self.Error('FUPCJ Server video queue is full. Wait for a video to finish.', 429)
         def weight(row):
             return JOB_RESERVE if row['status'] in ACTIVE else row['output_size']
-        if sum(weight(row) for row in rows) + JOB_RESERVE > STORAGE_LIMIT:
+        reserved = len(uploads) * JOB_RESERVE
+        if sum(weight(row) for row in rows) + reserved + JOB_RESERVE > STORAGE_LIMIT:
             raise self.Error('FUPCJ Server video storage is full. Remove saved video previews before adding more.', 507)
-        if sum(weight(row) for row in rows if row['project_id'] == project_id) + JOB_RESERVE > PROJECT_LIMIT:
+        project_reserved = sum(row['project_id'] == project_id for row in uploads) * JOB_RESERVE
+        if sum(weight(row) for row in rows if row['project_id'] == project_id) + project_reserved + JOB_RESERVE > PROJECT_LIMIT:
             raise self.Error('This project has reached its video storage limit. Remove a saved preview before adding more.', 507)
 
     def recover(self):
-        """Startup only: resume accepted inputs, discard abandoned partial files."""
+        """Startup only: resume accepted jobs and preserve recent resumable uploads."""
+        with self.upload_lock:
+            self.sweep_uploads()
         with self.db() as db:
             rows = [dict(row) for row in db.execute('SELECT * FROM uploaded_media')]
         known = {row['id'] for row in rows}
         for directory in self.root.iterdir():
-            if directory.is_dir() and directory.name not in known:
+            if directory.is_dir() and directory.name != '.uploads' and directory.name not in known:
                 shutil.rmtree(directory, ignore_errors=True)
         for row in rows:
             directory = self.root / row['id']
