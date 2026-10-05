@@ -326,11 +326,16 @@ The installer verifies the Tailscale MSI checksum/signature and Python executabl
 
 ### Uploaded video workspace previews
 
-After updating the FUPCJ Server, Vision can send an uploaded video directly to
-`POST /api/projects/<project-id>/media` as multipart `file` and `requestId`.
-It requires both the installation bearer and `X-Vision-Project-Key`, and the
-project must already be saved. A repeated request ID with identical bytes
-returns the existing receipt; a different file returns a conflict.
+After updating the FUPCJ Server, Vision uploads videos with a resumable transfer.
+It starts or resumes with `POST /api/projects/<project-id>/media/upload/<requestId>`
+and JSON `name`/`size`, then sends the source in 16 MiB
+`PUT /api/projects/<project-id>/media/upload/<requestId>?offset=<bytes>` chunks.
+The server returns `receivedBytes` after every chunk, so Vision can show real
+upload progress and resume from the last durable byte after a connection loss,
+page reload, or FUPCJ Server restart. The original multipart
+`POST /api/projects/<project-id>/media` endpoint remains for older clients.
+All routes require the installation bearer and `X-Vision-Project-Key`, and the
+project must already be saved.
 
 The FUPCJ Server retains accepted jobs across browser disconnects and resumes them after
 Windows restarts. One low-priority FFmpeg worker shares a processing slot with
@@ -353,8 +358,9 @@ splitting a video in the browser.
 
 Uploads are limited to 5 GB and two hours. Output is bounded to a 128 MB MP4,
 20 MB snapshot/result JSON, and up to eight 4 MB audio sections. At most three
-video jobs may wait or process at once. Storage reserves cover unfinished jobs:
-2 GB per project, 10 GB overall, and at least 1 GB left free on the FUPCJ Server. Full
+video jobs or partial uploads may wait or process at once. Storage reserves cover
+unfinished work: 16 GB per project, 20 GB overall, and at least 1 GB left free on
+the FUPCJ Server in addition to the remaining source and bounded outputs. Full
 storage returns an explicit error instead of silently deleting saved previews.
 `DELETE /media/<job-id>` cancels work and removes its media artifacts while
 retaining the receipt. Completed media stays available until explicitly removed;
@@ -367,11 +373,13 @@ bounds subprocess output/time, and kills Windows child processes if the server
 task stops. Interrupted inputs are retried up to three attempts; cancelled,
 failed, and orphaned temporary files are cleaned on startup.
 
-To recover an upload whose POST reply was lost, save its `requestId` in the
-project before uploading, then call
-`GET /api/projects/<project-id>/media/request/<requestId>`. It returns the same
-status snapshot, or 404 if that project has no accepted receipt. Recovery does
-not need the original browser File and does not submit duplicate processing.
+Partial resumable uploads are retained for 24 hours. Starting the same
+`requestId` with the same file name and size returns the durable
+`receivedBytes` offset; Vision then continues with the remaining chunks. Once
+the complete source has been accepted, call
+`GET /api/projects/<project-id>/media/request/<requestId>` to recover its job
+receipt. Accepted processing no longer needs the original browser File and does
+not submit duplicate work.
 `GET /api/projects/<project-id>/media` lists project-owned receipts in pages of
 50, newest first, with `items` and `nextCursor`. Pass the returned job ID as
 `?cursor=<id>` for the next page. Inventory items include Unix-second `createdAt`,
