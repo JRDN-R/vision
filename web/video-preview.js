@@ -2,7 +2,7 @@
 // Saved nodes hold a receipt and lightweight preview metadata, never a bearer or project key.
 const pcVideoUploads=new Map(),pcVideoWorkers=new Map(),pcVideoPlayers=new Map(),pcVideoRetryAt=new Map();
 let pcVideoTimer=null;
-const PC_VIDEO_UPLOAD_LIMIT=5*1024*1024*1024,PC_VIDEO_PREVIEW_LIMIT=128*1024*1024;
+const PC_VIDEO_UPLOAD_LIMIT=5*1024*1024*1024,PC_VIDEO_LEGACY_UPLOAD_LIMIT=100*1024*1024,PC_VIDEO_UPLOAD_CHUNK=16*1024*1024,PC_VIDEO_PREVIEW_LIMIT=128*1024*1024;
 function normalizePCVideo(value){
  if(!value||typeof value!=='object'||!/^[-\w]{8,120}$/.test(value.requestId||''))return null;
  const config=validCloudConfig({kind:'private-pc',backendUrl:value.backendUrl});
@@ -30,8 +30,8 @@ function pcVideoPath(n,suffix=''){
 async function pcVideoRequest(n,suffix='',options={}){
  const controller=new AbortController(),parent=options.signal,abort=()=>controller.abort();
  parent?.addEventListener('abort',abort,{once:true});if(parent?.aborted)abort();
- const timer=setTimeout(abort,options.method==='POST'?6*60*60*1000:options.binary?120000:30000);
- try{const {binary,maxBytes=PC_VIDEO_PREVIEW_LIMIT,...request}=options,response=await projectRequest(pcVideoPath(n,suffix),{...request,signal:controller.signal});if(!response.ok||!binary)return await projectResponse(response);
+ const timeout=Number(options.timeoutMs)||((options.method==='POST'&&options.body instanceof FormData)?6*60*60*1000:options.method==='PUT'?10*60*1000:options.binary?120000:30000),timer=setTimeout(abort,timeout);
+ try{const {binary,maxBytes=PC_VIDEO_PREVIEW_LIMIT,timeoutMs,...request}=options,response=await projectRequest(pcVideoPath(n,suffix),{...request,signal:controller.signal});if(!response.ok||!binary)return await projectResponse(response);
   if(Number(response.headers.get('Content-Length'))>maxBytes)throw new Error('FUPCJ Server file exceeds its download size limit.');
   const reader=response.body?.getReader();if(!reader){const blob=await response.blob();if(blob.size>maxBytes)throw new Error('FUPCJ Server file exceeds its download size limit.');return blob;}
   const parts=[];let bytes=0;try{while(true){const{done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>maxBytes)throw new Error('FUPCJ Server file exceeds its download size limit.');parts.push(value);}return new Blob(parts,{type:response.headers.get('Content-Type')||'application/octet-stream'});}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
@@ -48,6 +48,43 @@ async function pcVideoFirstFrame(n,file,project){
   const data=await new Promise(resolve=>{let done=false;const finish=value=>{if(done)return;done=true;clearTimeout(timer);resolve(value);};const capture=()=>{try{if(!video.videoWidth||!video.videoHeight)return finish(null);const canvas=document.createElement('canvas'),ratio=Math.min(480/video.videoWidth,480/video.videoHeight,1);canvas.width=Math.max(1,Math.round(video.videoWidth*ratio));canvas.height=Math.max(1,Math.round(video.videoHeight*ratio));canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);finish(canvas.toDataURL('image/jpeg',.65));canvas.width=canvas.height=1;}catch{finish(null);}};const timer=setTimeout(()=>finish(null),4000);video.onloadeddata=capture;video.onseeked=capture;video.onerror=()=>finish(null);video.onloadedmetadata=()=>{try{video.currentTime=0;}catch{}};video.src=url;video.load();});
   if(data&&state===project&&state.nodes.includes(n)&&!n.pcVideo?.id)pcVideoSetPoster(n,data,project);
  }finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+}
+function pcVideoUploadPhase(sent,total,started,initial){
+ const percent=total>0?Math.max(0,Math.min(100,100*sent/total)):0,elapsed=Math.max(.001,(performance.now()-started)/1000),rate=Math.max(0,(sent-initial)/elapsed);
+ return 'Uploading to FUPCJ Server · '+percent.toFixed(percent<10?1:0)+'% · '+readableBytes(sent)+' of '+readableBytes(total)+(rate>0?' · '+readableBytes(rate)+'/s':'')+' · keep this page open';
+}
+async function pcVideoBeginResumable(n,file,signal){
+ return pcVideoRequest(n,'/upload/'+encodeURIComponent(n.pcVideo.requestId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size}),signal,timeoutMs:30000});
+}
+async function pcVideoUploadResumable(n,file,health,signal,check){
+ let state=await pcVideoBeginResumable(n,file,signal);check();
+ if(state.accepted&&/^[-\w]{1,120}$/.test(state.id||''))return state;
+ let offset=Number(state.receivedBytes),total=Number(state.totalBytes),chunkBytes=Number(state.chunkBytes)||Number(health.videoMedia?.uploadChunkBytes)||PC_VIDEO_UPLOAD_CHUNK;
+ if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(total)||total!==file.size||offset>total)throw new Error('FUPCJ Server returned an invalid resumable upload state.');
+ chunkBytes=Math.max(1024*1024,Math.min(64*1024*1024,Math.floor(chunkBytes)));
+ const started=performance.now(),initial=offset,show=()=>pcVideoUpdate(n,{status:'uploading',error:'',needsFile:false,progress:total?100*offset/total:0,phase:pcVideoUploadPhase(offset,total,started,initial)},{save:false});
+ show();
+ while(offset<total){
+  check();const end=Math.min(total,offset+chunkBytes),chunk=file.slice(offset,end);let result;
+  try{
+   result=await pcVideoRequest(n,'/upload/'+encodeURIComponent(n.pcVideo.requestId)+'?offset='+offset,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:chunk,signal,timeoutMs:10*60*1000});
+  }catch(error){
+   if(error.status===409&&error.data?.code==='VISION_UPLOAD_OFFSET'){
+    state=await pcVideoBeginResumable(n,file,signal);check();
+    if(state.accepted&&/^[-\w]{1,120}$/.test(state.id||''))return state;
+    const resumed=Number(state.receivedBytes);if(!Number.isSafeInteger(resumed)||resumed<0||resumed>total)throw error;offset=resumed;show();continue;
+   }
+   throw error;
+  }
+  check();
+  if(result.accepted&&/^[-\w]{1,120}$/.test(result.id||'')){offset=total;show();return result;}
+  const next=Number(result.receivedBytes);
+  if(!Number.isSafeInteger(next)||next<=offset||next>end)throw new Error('FUPCJ Server returned an invalid upload offset.');
+  offset=next;show();
+ }
+ const accepted=await pcVideoRequest(n,'/request/'+encodeURIComponent(n.pcVideo.requestId),{signal,timeoutMs:30000});check();
+ if(!/^[-\w]{1,120}$/.test(accepted.id||''))throw new Error('FUPCJ Server did not confirm the completed upload.');
+ return accepted;
 }
 async function importPCVideoFiles(files,location,options={}){
  const provider=options.provider==='gemini'?'gemini':options.provider==='local'?'local':transcriptionProvider(),includeSoundEvents=typeof options.includeSoundEvents==='boolean'?options.includeSoundEvents:soundEventsSelected(provider);
@@ -99,10 +136,15 @@ async function workPCVideo(runtime){
    }else{
     const file=pcVideoUploads.get(requestId),limit=Number(health.videoMedia?.maxUploadBytes)||PC_VIDEO_UPLOAD_LIMIT;
     if(!file){const missing=new Error('FUPCJ Server has no accepted upload for this video. Select the same video again to upload it.');missing.code='VISION_VIDEO_FILE_REQUIRED';throw missing;}if(file.size>limit)throw new Error('This video exceeds FUPCJ Server upload limit of '+Math.round(limit/1048576)+' MB. Choose a smaller copy.');
-    await ensureRemoteProject();check();
-    const form=new FormData();form.append('file',file,file.name);form.append('requestId',requestId);
-    pcVideoUpdate(n,{status:'uploading',phase:'Uploading video · keep this page open until accepted'});
-    const accepted=await pcVideoRequest(n,'',{method:'POST',body:form,signal});check();
+    await ensureRemoteProject();check();let accepted;
+    if(health.videoMedia?.resumableUpload===true){
+     accepted=await pcVideoUploadResumable(n,file,health,signal,check);
+    }else{
+     if(file.size>PC_VIDEO_LEGACY_UPLOAD_LIMIT)throw new Error('Update FUPCJ Server to enable reliable resumable uploads for videos over 100 MB.');
+     const form=new FormData();form.append('file',file,file.name);form.append('requestId',requestId);
+     pcVideoUpdate(n,{status:'uploading',phase:'Uploading video · keep this page open until accepted',progress:0});
+     accepted=await pcVideoRequest(n,'',{method:'POST',body:form,signal});check();
+    }
     if(!/^[-\w]{1,120}$/.test(accepted.id||''))throw new Error('FUPCJ Server did not confirm the upload. Retry with the same video.');
     pcVideoUpdate(n,{id:accepted.id,status:'working',phase:'Accepted by FUPCJ Server · preparing preview',progress:0});pcVideoUploads.delete(requestId);
    }
@@ -187,6 +229,7 @@ function installPCVideoControls(n){
  const el=document.getElementById('node-'+n.id),media=n.pcVideo;if(!el||!media)return;const wrap=el.querySelector('.canvas-wrap');if(!wrap)return;
  let panel=el.querySelector('.pc-video-status');if(!panel){panel=document.createElement('div');panel.className='pc-video-status';panel.setAttribute('aria-live','polite');el.querySelector('.node-files').before(panel);}
  panel.replaceChildren();const text=document.createElement('span');text.textContent=media.status==='error'?media.error||'Video processing stopped.':media.phase||'Waiting for FUPCJ Server';panel.appendChild(text);
+ if(!['complete','error'].includes(media.status)){const progress=document.createElement('progress');progress.className='pc-video-progress';progress.max=100;progress.value=Math.max(0,Math.min(100,Number(media.progress)||0));progress.setAttribute('aria-label',Math.round(progress.value)+'% complete');panel.appendChild(progress);}
  let overlay=wrap.querySelector('.pc-video-overlay');if(!overlay){overlay=document.createElement('div');overlay.className='pc-video-overlay';wrap.appendChild(overlay);}overlay.replaceChildren();
  if(!['complete','error'].includes(media.status)){const spinner=document.createElement('span');spinner.className='pc-video-spinner';spinner.setAttribute('aria-label',media.id?'FUPCJ Server processing video':'Video upload pending');overlay.appendChild(spinner);}
  if(media.preview){const play=document.createElement('button');play.type='button';play.className='pc-video-play';play.textContent='▶ Play preview';play.setAttribute('aria-label','Play '+n.title+' preview');play.hidden=!!pcVideoPlayers.get(n.id)?.video;play.onclick=e=>{e.stopPropagation();void playPCVideo(n,play);};play.onpointerdown=e=>e.stopPropagation();overlay.appendChild(play);}
