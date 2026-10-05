@@ -1,4 +1,4 @@
-// The original upload stays in memory only until FUPCJ Server acknowledges it.
+// Large originals transfer in resumable chunks; the browser keeps the File only until FUPCJ Server accepts it.
 // Saved nodes hold a receipt and lightweight preview metadata, never a bearer or project key.
 const pcVideoUploads=new Map(),pcVideoWorkers=new Map(),pcVideoPlayers=new Map(),pcVideoRetryAt=new Map();
 let pcVideoTimer=null;
