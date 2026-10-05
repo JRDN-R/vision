@@ -298,6 +298,10 @@ class UploadedMedia:
                         raise self.Error('This upload belongs to a different video. Start a new import.', 409)
                     if current is None:
                         self.check_capacity(db, project_id)
+                        reserve = DISK_RESERVE + size + PREVIEW_LIMIT + RESULT_LIMIT + 8 * AUDIO_LIMIT
+                        if shutil.disk_usage(self.root).free < reserve:
+                            needed = max(1, math.ceil(reserve / (1024 ** 3)))
+                            raise self.Error(f'Free at least {needed} GB on FUPCJ Server to finish this video upload.', 507)
                         now = time.time()
                         db.execute('''INSERT INTO uploaded_media_uploads
                             (project_id,request_id,source_name,source_size,received_size,created_at,updated_at)
