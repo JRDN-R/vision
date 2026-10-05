@@ -89,7 +89,7 @@ on the module. Accepted video jobs continue on FUPCJ Server after the browser cl
 reopen the saved project to retrieve the result. Playback needs FUPCJ Server connection.
 The original upload is removed after processing; the compact preview remains
 on FUPCJ Server and is not embedded in project downloads. Initial uploads support
-100 MB and up to two hours; update FUPCJ Server processor before using this feature.
+5 GB and up to two hours; update FUPCJ Server processor before using this feature.
 Videos attached inside an existing module retain the browser-processing path.
 Use **Projects → FUPCJ Server video storage** to remove saved previews, including videos
 whose modules you deleted. Removing a module alone keeps its server files available
