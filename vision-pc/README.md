@@ -351,7 +351,7 @@ with authentication and use an object URL; never put connection or project keys
 in URLs. Audio can go straight into the existing ASR queue without decoding or
 splitting a video in the browser.
 
-Uploads are limited to 100 MB and two hours. Output is bounded to a 128 MB MP4,
+Uploads are limited to 5 GB and two hours. Output is bounded to a 128 MB MP4,
 20 MB snapshot/result JSON, and up to eight 4 MB audio sections. At most three
 video jobs may wait or process at once. Storage reserves cover unfinished jobs:
 2 GB per project, 10 GB overall, and at least 1 GB left free on the FUPCJ Server. Full
