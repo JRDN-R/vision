@@ -181,11 +181,19 @@ class UploadedMediaTests(unittest.TestCase):
         self.assertEqual(self.begin_upload(6, request_id='resume1').status_code, 409)
         self.assertEqual(self.upload_chunk(b'c', offset=3, request_id='resume1').status_code, 409)
         self.assertEqual(self.upload_chunk(b'cdef', offset=2, request_id='resume1').status_code, 400)
+        cancel = self.begin_upload(5, request_id='cancel-partial')
+        self.assertEqual(cancel.status_code, 202)
+        self.assertEqual(self.upload_chunk(b'ab', request_id='cancel-partial').json['receivedBytes'], 2)
+        removed = self.client.delete(self.base+'/media/upload/cancel-partial', headers=self.headers)
+        self.assertEqual(removed.status_code, 200)
+        self.assertTrue(removed.json['removed'])
+        self.assertFalse(self.service.upload_directory('project_video_test1', 'cancel-partial').exists())
         with patch.object(media.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100, 100, 0)):
             failed = self.begin_upload(5, request_id='no-space')
         self.assertEqual(failed.status_code, 507)
         with server.connect_db() as db:
             self.assertIsNone(db.execute('SELECT 1 FROM uploaded_media_uploads WHERE request_id=?', ('no-space',)).fetchone())
+            self.assertIsNone(db.execute('SELECT 1 FROM uploaded_media_uploads WHERE request_id=?', ('cancel-partial',)).fetchone())
 
     def test_limits_queue_reservations_and_no_leftover_files(self):
         self.assertEqual(self.submit(content=b'').status_code, 400)
