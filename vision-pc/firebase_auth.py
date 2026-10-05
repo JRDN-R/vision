@@ -1,6 +1,6 @@
 """Verify Firebase ID tokens with Google's public signing certificates.
 
-Only authentication uses Google: project content and processing stay on the PC.
+Only Firebase authentication is used here: project content and processing stay on the PC.
 No service account or private Google credential is needed. Like ordinary Firebase
 ID-token verification, this validates signature/expiry, not server-side revocation.
 """
@@ -87,7 +87,7 @@ class FirebaseIdentity:
             if not isinstance(uid, str) or not 1 <= len(uid) <= 128:
                 raise InvalidIdentity()
             firebase = claims.get('firebase')
-            if not isinstance(firebase, dict) or firebase.get('sign_in_provider') != 'google.com':
+            if not isinstance(firebase, dict) or firebase.get('sign_in_provider') not in ('google.com', 'password'):
                 raise InvalidIdentity()
             return claims
         except jwt.PyJWTError:

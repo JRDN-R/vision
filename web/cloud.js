@@ -20,7 +20,7 @@ function openCloudSettings(message=''){
  $('cloudConfigInput').value=cloudConfig?JSON.stringify(cloudConfig,null,2):'';$('cloudStatus').textContent=message||(cloudAuth?(cloudConfig?.kind==='private-pc'?'FUPCJ Server configured.':'Signed in as '+cloudAuth.email):'Connect Vision to FUPCJ Server or cloud service.');$('cloudEmail').value=cloudAuth?.email||'';$('cloudPassword').value='';$('cloudAccessToken').value=cloudAuth?.accessToken||'';$('cloudRemember').checked=cloudAuth?.remember!==false;$('cloudConfigFields').open=!cloudConfig;$('cloudSignOut').hidden=!cloudAuth;updateConnectionFields();if(!$('cloudDialog').open)$('cloudDialog').showModal();
 }
 function saveCloudConfig(){
- if(cloudAuth?.kind==='firebase-google'||typeof accountFirebase!=='undefined'&&accountFirebase?.currentUser)throw new Error('Sign out of your Google account before changing the processor connection.');
+ if(cloudAuth?.kind==='firebase-google'||typeof accountFirebase!=='undefined'&&accountFirebase?.currentUser)throw new Error('Sign out of your Vision account before changing the processor connection.');
  let value,next;try{value=parseConnectionInput($('cloudConfigInput').value);next=validCloudConfig(value);}catch{}if(!next)throw new Error('Import a valid Vision connection file or cloud configuration.');
  if(value.accessToken)$('cloudAccessToken').value=String(value.accessToken);
  if(cloudConfig?.backendUrl!==next.backendUrl||cloudConfig?.kind!==next.kind||cloudConfig?.firebaseApiKey!==next.firebaseApiKey){cloudAuth=null;saveCloudSession();}cloudConfig=next;try{localStorage.setItem('vision-cloud-config',JSON.stringify(next));}catch{}$('cloudConfigInput').value=JSON.stringify(next,null,2);updateConnectionFields();return next;
@@ -45,9 +45,9 @@ async function ensureCloudSession(){
  if(typeof accountReady!=='undefined')await accountReady;
  if(typeof accountTransition!=='undefined')await accountTransition;
  if(cloudAuth?.kind==='trial'){if(!trialActive())throw new Error('Your trial has ended. Sign in with Google.');return cloudAuth.accessToken;}
- if(typeof accountSignedIn==='function'&&!accountSignedIn()){openAccountDialog('Sign in with Google to use Vision.');throw new Error('Google sign-in is required.');}
+ if(typeof accountSignedIn==='function'&&!accountSignedIn()){openAccountDialog('Sign in to use Vision.');throw new Error('Account sign-in is required.');}
  if(cloudAuth?.kind==='firebase-google')return accountIdToken();
- if(typeof accountUsesGoogle==='function'&&accountUsesGoogle()){openAccountDialog('Sign in with Google to reconnect your projects.');throw new Error('Sign in with Google to reconnect.');}
+ if(typeof accountUsesGoogle==='function'&&accountUsesGoogle()){openAccountDialog('Sign in to reconnect your projects.');throw new Error('Sign in to reconnect.');}
  if(!cloudConfig||!cloudAuth){openCloudSettings();throw new Error('Connect your processor, then try again.');}
  if(cloudConfig.kind==='private-pc'){if(!cloudAuth.accessToken){openCloudSettings();throw new Error('Import FUPCJ Server connection file.');}return cloudAuth.accessToken;}
  if(cloudAuth.expiresAt>Date.now()+60000)return cloudAuth.idToken;

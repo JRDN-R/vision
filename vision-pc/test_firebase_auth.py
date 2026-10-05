@@ -66,11 +66,15 @@ class FirebaseTests(unittest.TestCase):
 
     def test_real_signature_and_required_claims(self):
         self.assertEqual(self.identity.verify(self.token())['sub'], 'alice')
+        password = self.token(firebase={'sign_in_provider': 'password'})
+        self.assertEqual(self.identity.verify(password)['sub'], 'alice')
+        self.assertEqual(self.client.get('/api/health', headers={'Authorization': 'Bearer '+password,
+                                                                 'Origin': 'https://jrdn-r.github.io'}).status_code, 200)
         invalid = [self.token(aud='another-project'), self.token(iss='https://securetoken.google.com/wrong'),
                    self.token(exp=int(time.time())-1), self.token(iat=int(time.time())+60),
                    self.token(auth_time=int(time.time())+60), self.token(auth_time='123'),
                    self.token(auth_time=float('nan')), self.token(uid=''),
-                   self.token(firebase={'sign_in_provider': 'password'}),
+                   self.token(firebase={'sign_in_provider': 'facebook.com'}),
                    jwt.encode({'sub': 'alice'}, 's'*32, algorithm='HS256', headers={'kid': 'test'}),
                    jwt.encode(jwt.decode(self.token(), options={'verify_signature': False}), self.other_key,
                               algorithm='RS256', headers={'kid': 'test'})]

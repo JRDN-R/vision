@@ -26,15 +26,15 @@ async function trialStart({resume=false}={}){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
  try{
   const receipt=trialRead()||{deviceId:projectRandom(32)};
-  if(receipt.consumed)throw new Error('Your trial has been used. Sign in with Google to continue.');
-  if(!trialWrite({...receipt,started:true}))throw new Error('Allow site storage to use the one-time trial, or sign in with Google.');
+  if(receipt.consumed)throw new Error('Your trial has been used. Sign in to continue.');
+  if(!trialWrite({...receipt,started:true}))throw new Error('Allow site storage to use the one-time trial, or sign in.');
   const response=await fetch(ACCOUNT_PC+'/api/trial/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId:receipt.deviceId}),credentials:'omit',signal:controller.signal});
-  let value;try{value=await response.json();}catch{throw new Error('Update FUPCJ Server to enable five-minute trials. Google sign-in is still available.');}
-  if(!response.ok){if(['trial-used','trial-expired'].includes(value.code))trialWrite({...receipt,started:true,consumed:true});throw new Error(response.status===404?'Update FUPCJ Server to enable five-minute trials. Google sign-in is still available.':value.error||'The trial could not start.');}
+  let value;try{value=await response.json();}catch{throw new Error('Update FUPCJ Server to enable five-minute trials. Account sign-in is still available.');}
+  if(!response.ok){if(['trial-used','trial-expired'].includes(value.code))trialWrite({...receipt,started:true,consumed:true});throw new Error(response.status===404?'Update FUPCJ Server to enable five-minute trials. Account sign-in is still available.':value.error||'The trial could not start.');}
   if(!/^[a-f0-9]{24}$/.test(value.id||'')||!/^trial_[a-f0-9]{24}_[a-f0-9]{64}$/.test(value.token||'')||!Number.isFinite(value.expiresAt)||!Number.isFinite(value.serverNow)||!validProjectIdentity(value.project)||value.project.id!=='trial-'+value.id)throw new Error('The server returned an invalid trial session.');
   if(accountSignedIn())return;
   const remaining=Math.max(0,Math.min(300,value.expiresAt-value.serverNow));
-  if(!remaining){trialWrite({...receipt,consumed:true});throw new Error('Your five-minute trial has ended. Sign in with Google.');}
+  if(!remaining){trialWrite({...receipt,consumed:true});throw new Error('Your five-minute trial has ended. Sign in.');}
   accountGateLocked=true;accountAuthEpoch++;accountClearRunKey();
   cloudConfig={kind:'private-pc',backendUrl:ACCOUNT_PC,publicAccess:true};
   cloudAuth={kind:'trial',backendUrl:ACCOUNT_PC,accessToken:value.token};
@@ -46,10 +46,10 @@ async function trialStart({resume=false}={}){
   clearInterval(trialTimer);trialTimer=setInterval(()=>{if(trialSession&&!trialActive())void trialFinish();else trialPaint();},250);
   accountPaint();$('accountGate').querySelector('dialog[open]')?.close();
   toast(resume?'Trial resumed. The original timer is still running.':'Your five-minute trial has started. Nothing is saved.');
- }catch(error){if(trialSession)await trialFinish({message:''});accountError=error.name==='AbortError'?'FUPCJ Server did not respond. Try again or sign in with Google.':error.message;}
+ }catch(error){if(trialSession)await trialFinish({message:''});accountError=error.name==='AbortError'?'FUPCJ Server did not respond. Try again or sign in.':error.message;}
  finally{clearTimeout(timer);trialStarting=false;accountPaint();}
 }
-function trialFinish({notify=true,message='Your five-minute trial has ended. Sign in with Google to continue.'}={}){
+function trialFinish({notify=true,message='Your five-minute trial has ended. Sign in to continue.'}={}){
  if(trialFinishing)return trialFinishing;
  if(!trialSession&&cloudAuth?.kind!=='trial')return Promise.resolve();
  const old=trialSession;trialSession=null;clearInterval(trialTimer);
@@ -65,7 +65,7 @@ function trialFinish({notify=true,message='Your five-minute trial has ended. Sig
  })().finally(()=>{trialFinishing=null;});return trialFinishing;
 }
 async function trialFetch(path,options={}){
- if(!trialActive()){void trialFinish();throw new Error('Your trial has ended. Sign in with Google.');}
+ if(!trialActive()){void trialFinish();throw new Error('Your trial has ended. Sign in.');}
  const session=trialSession,epoch=accountAuthEpoch,controller=new AbortController();trialRequests.add(controller);
  const abort=()=>controller.abort();if(options.signal?.aborted)abort();else options.signal?.addEventListener('abort',abort,{once:true});
  const deadline=setTimeout(()=>{abort();options.signal?.removeEventListener('abort',abort);trialRequests.delete(controller);},Math.max(0,session.until-performance.now()));
@@ -81,7 +81,7 @@ async function trialFetch(path,options={}){
  }
 }
 $('accountGateTrial').onclick=()=>void trialStart();
-$('trialSignIn').onclick=()=>void accountGoogleSignIn();
+$('trialSignIn').onclick=()=>openAccountDialog('Sign in to keep using your saved Vision account.');
 $('whyVisionButton').onclick=()=>{const modal=$('whyVisionDialog');if(!modal.open)modal.showModal();};
 $('whyVisionClose').onclick=()=>$('whyVisionDialog').close();
 $('whyVisionDone').onclick=()=>$('whyVisionDialog').close();

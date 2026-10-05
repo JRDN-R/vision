@@ -10,6 +10,7 @@ const DRIVE_EXPORTS={
 };
 let driveCredential=null,driveRuntime=null,drivePicker=null,drivePickerLoading=null,driveDestination=null;
 let youtubeSearchRuntime=null,youtubeSearchQuery='',youtubeSearchNext='',youtubeSearchCache=new Map();
+function googleAccountLinked(){return !!accountFirebase?.currentUser?.providerData?.some(item=>item.providerId==='google.com');}
 
 function googleSourceError(data,service,status){
  const reasons=[...(data?.error?.errors||[]).map(e=>e.reason),...(data?.error?.details||[]).map(e=>e.reason)].join(' ');
@@ -63,6 +64,7 @@ function cancelGoogleSources(){
 
 async function driveAccessToken(run){
  assertDriveCurrent(run);
+ if(!googleAccountLinked())throw new Error('Google Drive requires Google sign-in. Sign out, then sign in with Google to use Drive.');
  if(driveCredential?.uid===run.uid&&driveCredential.epoch===run.epoch&&driveCredential.expiresAt>Date.now())return driveCredential.token;
  // Reauthenticate the current user: selecting a different Google account must
  // never switch the Vision account or import another person's Drive files.
@@ -125,7 +127,8 @@ async function downloadDriveFile(doc,token,run,remaining){
 }
 
 function openDriveDialog(targetId=''){
- if(!accountSignedIn()){openAccountDialog('Sign in with Google to choose Drive files.');return;}
+ if(!accountSignedIn()){openAccountDialog('Sign in to choose Drive files.');return;}
+ if(!googleAccountLinked()){toast('Google Drive requires Google sign-in. Sign out, then sign in with Google to use Drive.');return;}
  if(busy||ioBusy||boardImportRunning||driveRuntime){toast('Finish the current import first.');return;}
  const target=targetId?nodeById(targetId):null,context=boardImportContext();
  if(!context)return;if(targetId&&!target){toast('Select a module to attach Drive files.');return;}

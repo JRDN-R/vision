@@ -201,20 +201,20 @@ def authorize():
                                  (diagnostic_project.group(1) == '/transcriptions' and request.method == 'POST') or
                                  (re.fullmatch(r'/transcriptions/[0-9a-f]{24}', diagnostic_project.group(1) or '') and request.method in ('GET', 'DELETE')))))
             if not (secret and local and diagnostic_route and hmac.compare_digest(secret.encode(), supplied.encode())):
-                raise APIError('Sign in with Google to use FUPCJ Server.', 401)
+                raise APIError('Sign in to use FUPCJ Server.', 401)
         g.uid, g.auth_kind = 'installation-owner', 'private-pc'
         return
     if identity and token:
         try:
             claims = identity.verify(token)
         except IdentityUnavailable:
-            raise APIError('Google sign-in verification is temporarily unavailable on FUPCJ Server. Try again.', 503)
+            raise APIError('Account sign-in verification is temporarily unavailable on FUPCJ Server. Try again.', 503)
         except InvalidIdentity:
-            raise APIError('Your Google sign-in has expired or is invalid. Sign in again.', 401)
+            raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
         g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
         app.config['AUDIT_LOGS'].identity(g.uid, claims)
         return
-    raise APIError('Sign in with Google or connect this device to your Vision processing server first.', 401)
+    raise APIError('Sign in or connect this device to your Vision processing server first.', 401)
 
 
 @app.after_request
@@ -233,7 +233,7 @@ def cors(response):
                         trials.inflight.pop(ident, None)
         if time.time() >= deadline:
             response.close()
-            response = jsonify(error='Your five-minute trial has ended. Sign in with Google.', code='trial-expired')
+            response = jsonify(error='Your five-minute trial has ended. Sign in.', code='trial-expired')
             response.status_code = 403
         elif response.is_streamed:
             original = response.response
