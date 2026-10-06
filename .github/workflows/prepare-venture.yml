@@ -1,0 +1,140 @@
+name: Prepare and verify Vision Venture
+on:
+  push:
+    branches: [feature/vision-venture]
+    paths: ['.github/workflows/prepare-venture.yml']
+permissions:
+  contents: write
+concurrency:
+  group: prepare-vision-venture
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/vision-venture
+      - name: Restore and verify reviewed source patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, subprocess
+          shas = ['36fe070c2d8d2ef77c270631d4cbd7f7da1db5a0', 'b631b4d3668c4e51ea2df18c9e641e479f7a95a4', '31dc08c297632ae263c34daa0f59e42f5459ffdc', 'debfeaa2b98aa7ac12f3a9407a5e26b9b220484f']
+          data = bytearray()
+          for sha in shas:
+              obj = json.loads(subprocess.check_output(['gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs/{sha}']))
+              chunk = base64.b64decode(obj['content'])
+              assert hashlib.sha1(b'blob ' + str(len(chunk)).encode() + b'\0' + chunk).hexdigest() == sha
+              data.extend(chunk)
+          assert hashlib.sha256(data).hexdigest() == 'c9834453c2ca2f78882f4a5b80d2123123d91c368ac8f2287e8334ff61df3585'
+          pathlib.Path('/tmp/venture.patch').write_bytes(lzma.decompress(data))
+          PY
+          if [ ! -f vision-pc/venture.py ]; then
+            git apply --check /tmp/venture.patch
+            git apply /tmp/venture.patch
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add README.md tests/venture-smoke.py vision-pc web
+            git commit -m 'Implement Vision Venture workspace, durable conversations, files and estimated funding'
+            git push origin HEAD:feature/vision-venture
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install verification dependencies
+        run: |
+          python -m pip install -r vision-pc/requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          mkdir -p /tmp/venture-logs /tmp/venture-wheels
+          python -m pip download 'yt-dlp[default]' -d /tmp/venture-wheels
+      - name: Full server regression suite
+        id: server
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m unittest discover -s vision-pc -p 'test_*.py' -v 2>&1 | tee /tmp/venture-logs/server.txt
+      - name: JavaScript regression suite
+        id: javascript
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          for test in tests/*.test.cjs; do node "$test" || exit $?; done 2>&1 | tee /tmp/venture-logs/javascript.txt
+      - name: Build portable application
+        id: build
+        run: |
+          set -o pipefail
+          python web/build.py 2>&1 | tee /tmp/venture-logs/build.txt
+      - name: Hosted browser regression suite
+        id: hosted
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tests/run-local-smoke.py 2>&1 | tee /tmp/venture-logs/hosted.txt
+      - name: Literal local-file browser suite
+        id: localfile
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          VISION_TEST_FILE=1 python tests/run-local-smoke.py 2>&1 | tee /tmp/venture-logs/local-file.txt
+      - name: Venture mobile and desktop browser suite
+        id: venture
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tests/venture-smoke.py 2>&1 | tee /tmp/venture-logs/venture.txt
+      - name: Record exact verification outcomes and source
+        if: always()
+        env:
+          SERVER: ${{ steps.server.outcome }}
+          JAVASCRIPT: ${{ steps.javascript.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          HOSTED: ${{ steps.hosted.outcome }}
+          LOCALFILE: ${{ steps.localfile.outcome }}
+          VENTURE: ${{ steps.venture.outcome }}
+        run: |
+          mkdir -p /tmp/venture-logs
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          out = {k: os.environ.get(k, '') for k in ('SERVER','JAVASCRIPT','BUILD','HOSTED','LOCALFILE','VENTURE')}
+          out['sourceCommit'] = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          pathlib.Path('/tmp/venture-logs/outcomes.json').write_text(json.dumps(out, indent=2))
+          PY
+          tar --exclude=.git -czf /tmp/venture-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Venture-complete-verification
+          path: |
+            /tmp/venture-logs/
+            /tmp/venture-source.tar.gz
+            tests/venture-screenshots/
+            Vision.html
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Venture-test-wheels
+          path: /tmp/venture-wheels/
+          retention-days: 3
+      - name: Require all verification suites to pass
+        if: always()
+        env:
+          SERVER: ${{ steps.server.outcome }}
+          JAVASCRIPT: ${{ steps.javascript.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          HOSTED: ${{ steps.hosted.outcome }}
+          LOCALFILE: ${{ steps.localfile.outcome }}
+          VENTURE: ${{ steps.venture.outcome }}
+        run: |
+          python - <<'PY'
+          import os
+          failed = [k for k in ('SERVER','JAVASCRIPT','BUILD','HOSTED','LOCALFILE','VENTURE') if os.environ.get(k) != 'success']
+          if failed: raise SystemExit('Verification requires attention: ' + ', '.join(failed))
+          print('All server, JavaScript, hosted, local-file, and Venture suites passed.')
+          PY
