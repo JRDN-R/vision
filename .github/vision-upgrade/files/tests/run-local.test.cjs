@@ -1,0 +1,15 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('web/console.js','utf8').split('// Console UI.')[0];
+const tools=fs.readFileSync('web/run-tools.js','utf8').split('let consolePreviewURL=')[0];
+const context={console,escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))};vm.createContext(context);vm.runInContext(source+'\n'+tools,context);
+const run=code=>vm.runInContext(code,context);
+assert.deepEqual(JSON.parse(run('JSON.stringify(normalizeRunOptions())')),{mode:'auto',effort:'auto',verbosity:'auto',webSearch:false,codeInterpreter:true});
+run(`r=normalizeConsoleRun({runId:'r',status:'completed',runOptions:{mode:'pro',effort:'max',verbosity:'high',webSearch:true,codeInterpreter:true},artifacts:[{id:'a',name:'Report one.html',ready:true}],citations:[{url:'https://example.com',title:'Research'},{url:'javascript:alert(1)'}]})`);
+assert.equal(run('r.runOptions.mode'),'pro');assert.equal(run('normalizeConsoleSession({runs:[r]}).runOptions.effort'),'max');assert.equal(run('r.citations.length'),1);
+const html=run('consoleMarkdown("[Open result](sandbox:/mnt/data/Report%20one.html)",r,0)');assert.match(html,/data-console-action="preview"/);assert.match(html,/data-artifact="0"/);assert.doesNotMatch(html,/href="sandbox:/);
+assert.match(run('consoleMarkdown("[Missing](sandbox:/mnt/data/nope.html)",r,0)'),/not available/);
+assert.equal(run('consoleArtifactIndex("sandbox:/mnt/data/Report%20one.html",r)'),0);
+run('r.artifacts.push({...r.artifacts[0],id:"b"})');assert.equal(run('consoleArtifactIndex("sandbox:/mnt/data/Report%20one.html",r)'),-1,'ambiguous names never resolve to an arbitrary file');
+assert.doesNotMatch(run('consoleMarkdown("<img src=x onerror=alert(1)>",r,0)'),/<img/);
+console.log('Run settings persistence, sandbox-link routing, ambiguous-file protection and citation sanitization passed.');
