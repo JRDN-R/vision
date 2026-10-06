@@ -9,12 +9,18 @@ current board to a request; it is off initially.
 ## Activate on the existing FUPCJ computer
 
 Back up `C:\ProgramData\VisionPC\data` before updating, including the SQLite
-files. Run the existing updater in **Windows PowerShell as Administrator**, outside
-an important active job:
+files. In **Windows PowerShell as Administrator**, outside an important active job:
 
 ```powershell
-& "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action Update
+$VentureUpdate = Join-Path $env:TEMP 'Update-Venture.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Update-Venture.ps1' -OutFile $VentureUpdate
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VentureUpdate
 ```
+
+The wrapper first downloads the current updater, then pins all server downloads
+to one GitHub commit. Do not rely on a pre-Venture copy of `Setup-Vision-PC.ps1`:
+its file manifest may omit the new Venture modules. The existing updater still
+handles staged activation, rollback and preservation of data/configuration.
 
 Refresh the hosted page, or download and reopen the updated local HTML. The page
 checks the server's `ventureV1` capability and shows an update message instead of
@@ -108,10 +114,11 @@ still performs reasoning and code execution in OpenAI's environment.
 
 Current bounds include 20 chat attachments, 128 MiB per upload, 100 MiB retained
 per generated artifact, bounded ZIP expansion (2,000 entries/256 MiB/ratio 200),
-32-megapixel image inspection, up to 120 video frames and two hours of media.
-Existing document extractor limits still apply. These are practical safeguards,
-not a claim to understand every file format perfectly. Password-protected,
-damaged, proprietary and oversized inputs can need conversion or a smaller file.
+32-megapixel image inspection, up to 120 video frames, two-hour videos and
+eight-hour audio. Existing document extractor limits still apply. These are
+practical safeguards, not a claim to understand every file format perfectly.
+Password-protected, damaged, proprietary and oversized inputs can need conversion
+or a smaller file.
 
 Normal continuation uses the saved upstream response chain. After an expired
 response, local rehydration is bounded to 100 prior responses and 64 original
