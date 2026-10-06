@@ -1,0 +1,99 @@
+name: Publish Run and local Vision upgrade
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/vision-upgrade/**'
+      - '.github/workflows/publish-run-local.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: vision-portable-build
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply exact reviewed source changes
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          stage = Path('.github/vision-upgrade')
+          digest = lambda b: hashlib.sha256(b).hexdigest()
+          pending = {}
+          for source in sorted(stage.glob('*.json')):
+              for patch in json.loads(source.read_text()):
+                  path = Path(patch['path'])
+                  assert '..' not in path.parts and not path.is_absolute()
+                  old = path.read_bytes()
+                  assert digest(old) == patch['before'], 'Source changed before upgrade: ' + str(path)
+                  text = old.decode('utf-8')
+                  previous = len(text) + 1
+                  for start, end, replacement in reversed(patch['edits']):
+                      assert 0 <= start <= end < previous
+                      text = text[:start] + replacement + text[end:]
+                      previous = start + 1
+                  output = text.encode('utf-8')
+                  assert digest(output) == patch['after'], 'Transfer verification failed: ' + str(path)
+                  pending[path] = output
+          expected = {
+              'web/run-tools.js': '425ec8c2572ad34eb16cb6627424ec322ac3246cf7541db55e15a96775375cda',
+              'web/run-tools.css': 'b1afa004a36abc77d885e88e7959ffa45cf40e535923c1e51b08c5ebc7cc95f2',
+              'web/local-app.js': '91f54a39198847559d6d2674f8ec9140331ae1ef35120be6d50a1678668430fd',
+              'tests/run-local.test.cjs': '48ad7586344eeb19ac67a6b6aee15b4f665509851afe7fba89752944fcbbe65c',
+              'tests/run-local-smoke.py': '7160ccd4e409c94ca918a51f527ca21a996ae0493cc85cd7755781273392671f'
+          }
+          for name, sha in expected.items():
+              path = Path(name)
+              assert not path.exists(), 'New path already exists: ' + name
+              data = (stage/'files'/name).read_bytes()
+              assert digest(data) == sha, 'Transfer verification failed: ' + name
+              pending[path] = data
+          for path, data in pending.items():
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(data)
+              print('Verified:', path)
+          PY
+      - name: Install test dependencies
+        run: |
+          python -m pip install -r vision-pc/requirements.txt playwright
+          python -m playwright install --with-deps chromium
+      - name: Check JavaScript regressions
+        run: |
+          node tests/run-local.test.cjs
+          node tests/account-auth.test.cjs
+          node tests/chat-state.test.cjs
+      - name: Check server settings and durable sessions
+        run: python -m unittest discover -s vision-pc -p test_sessions.py -v
+      - name: Build and test literal local HTML
+        run: |
+          python web/build.py
+          VISION_TEST_FILE=1 python tests/run-local-smoke.py
+      - name: Commit verified source and remove transfer scaffolding
+        run: |
+          rm -rf .github/vision-upgrade
+          rm .github/workflows/publish-run-local.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md Vision.html index.html local-signin.html web tests vision-pc .github
+          git commit -m 'Add configurable AI runs, in-page files, and fully bundled local Vision'
+          git push origin HEAD:main
+      - name: Publish downloadable build and GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-portable.yml --ref main
