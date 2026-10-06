@@ -22,10 +22,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Vendor Firebase login runtime
+        run: |
+          if [ ! -s web/vendor/firebase.js ]; then
+            mkdir -p web/vendor
+            npm install --prefix /tmp/vision-deps --no-audit --no-fund firebase@12.19.0 esbuild@0.25.10
+            printf "import * as app from 'firebase/app'; import * as auth from 'firebase/auth'; window.VisionFirebaseSDK={app,auth};\n" > /tmp/vision-deps/firebase-entry.js
+            /tmp/vision-deps/node_modules/.bin/esbuild /tmp/vision-deps/firebase-entry.js --bundle --format=iife --minify --legal-comments=inline --outfile=web/vendor/firebase.js
+          fi
       - name: Rebuild the portable app from source
         run: python3 web/build.py
       - name: Package reproducible source
-        run: git archive --format=tar.gz HEAD > /tmp/vision-source.tar.gz
+        run: tar --exclude=.git -czf /tmp/vision-source.tar.gz .
       - name: Upload portable build
         id: portable
         uses: actions/upload-artifact@v4
@@ -56,10 +67,10 @@ jobs:
       - name: Save the generated HTML
         shell: bash
         run: |
-          if ! git diff --quiet -- Vision.html index.html || [ -n "$(git status --porcelain -- portable-manifest.json)" ]; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add Vision.html index.html portable-manifest.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Vision.html index.html portable-manifest.json web/vendor
+          if ! git diff --cached --quiet; then
             git commit -m 'Build portable Vision from current sources'
             git push origin HEAD:main
           fi
