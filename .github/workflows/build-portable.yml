@@ -27,24 +27,39 @@ jobs:
       - name: Package reproducible source
         run: git archive --format=tar.gz HEAD > /tmp/vision-source.tar.gz
       - name: Upload portable build
+        id: portable
         uses: actions/upload-artifact@v4
         with:
           name: Vision-portable
           path: Vision.html
           retention-days: 14
       - name: Upload matching source
+        id: source
         uses: actions/upload-artifact@v4
         with:
           name: Vision-source
           path: /tmp/vision-source.tar.gz
           retention-days: 3
+      - name: Write build manifest
+        env:
+          PORTABLE_ARTIFACT_ID: ${{ steps.portable.outputs.artifact-id }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.artifact-id }}
+        run: |
+          python3 - <<'PY'
+          import os, re, json, hashlib, datetime
+          from pathlib import Path
+          data = Path('Vision.html').read_bytes()
+          version = re.search(rb'<meta name="vision-version" content="([^"]+)"', data)[1].decode()
+          manifest = {'version': version, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data), 'file': 'Vision.html', 'sourceCommit': os.environ['GITHUB_SHA'], 'builtAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'runId': os.environ['GITHUB_RUN_ID'], 'portableArtifactId': os.environ['PORTABLE_ARTIFACT_ID'], 'sourceArtifactId': os.environ['SOURCE_ARTIFACT_ID']}
+          Path('portable-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
       - name: Save the generated HTML
         shell: bash
         run: |
-          if ! git diff --quiet -- Vision.html index.html; then
+          if ! git diff --quiet -- Vision.html index.html || [ -n "$(git status --porcelain -- portable-manifest.json)" ]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add Vision.html index.html
+            git add Vision.html index.html portable-manifest.json
             git commit -m 'Build portable Vision from current sources'
             git push origin HEAD:main
           fi
