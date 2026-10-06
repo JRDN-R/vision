@@ -65,10 +65,16 @@ function cancelGoogleSources(){
 async function driveAccessToken(run){
  assertDriveCurrent(run);
  if(!googleAccountLinked())throw new Error('Google Drive requires Google sign-in. Sign out, then sign in with Google to use Drive.');
- if(driveCredential?.uid===run.uid&&driveCredential.epoch===run.epoch&&driveCredential.expiresAt>Date.now())return driveCredential.token;
+ if(location.protocol!=='file:'&&driveCredential?.uid===run.uid&&driveCredential.epoch===run.epoch&&driveCredential.expiresAt>Date.now())return driveCredential.token;
  // Reauthenticate the current user: selecting a different Google account must
  // never switch the Vision account or import another person's Drive files.
- const user=accountFirebase.currentUser,provider=new accountSDK.GoogleAuthProvider();
+ const user=accountFirebase.currentUser;
+ if(location.protocol==='file:'){
+  const credential=await localGoogleConnect('drive',user.email);assertDriveCurrent(run);
+  await accountSDK.reauthenticateWithCredential(user,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken));assertDriveCurrent(run);
+  run.localDriveDocs=credential.docs||[];return credential.accessToken;
+ }
+ const provider=new accountSDK.GoogleAuthProvider();
  provider.addScope(DRIVE_SCOPE);provider.setCustomParameters({login_hint:user.email||'',prompt:'consent'});
  const result=await accountSDK.reauthenticateWithPopup(user,provider);
  assertDriveCurrent(run);
@@ -92,6 +98,7 @@ function loadDrivePicker(){
 }
 
 function chooseDriveDocuments(run,token){
+ if(location.protocol==='file:')return Promise.resolve(run.localDriveDocs||[]);
  return new Promise((resolve,reject)=>{
   const abort=()=>{disposeDrivePicker();reject(new DOMException('Canceled','AbortError'));};
   run.controller.signal.addEventListener('abort',abort,{once:true});

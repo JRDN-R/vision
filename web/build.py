@@ -11,8 +11,8 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css']
 
 
 def without_browser_gemini(source):
@@ -51,7 +51,10 @@ def build():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:
         raise ValueError('Expected one application script placeholder')
-    source = source.replace('{{VISION_APPLICATION}}', script)
+    firebase = (WEB / 'vendor/firebase.js').read_text(encoding='utf-8')
+    if '</script' in firebase.lower():
+        raise ValueError('Firebase bundle contains an unsafe closing script tag')
+    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')

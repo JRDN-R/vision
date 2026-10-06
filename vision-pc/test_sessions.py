@@ -221,5 +221,38 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.service.row(rid)['text'],'Hello world')
 
 
+
+class RunParameterTests(SessionTests):
+    def test_settings_survive_queue_and_map_to_responses(self):
+        opts={'mode':'pro','effort':'max','verbosity':'high','webSearch':True,'codeInterpreter':True}
+        response=self.submit(files=False,runOptions=opts)
+        self.assertEqual(response.status_code,202)
+        self.assertEqual(response.json['runOptions'],opts)
+        row=self.service.row(response.json['runId'])
+        payload=self.service.prepare_payload(row,'sk-not-real')
+        self.assertEqual(payload['reasoning']['mode'],'pro')
+        self.assertEqual(payload['reasoning']['effort'],'max')
+        self.assertEqual(payload['text'],{'verbosity':'high'})
+        self.assertEqual([t['type'] for t in payload['tools']],['code_interpreter','web_search'])
+        self.assertNotIn('do not browse',payload['instructions'])
+        self.assertTrue(self.client.get('/api/health',headers=self.headers).json['capabilities']['runParametersV1'])
+    def test_text_only_disables_container_and_default_fields_are_omitted(self):
+        response=self.submit(files=False,runOptions={'codeInterpreter':False})
+        payload=self.service.prepare_payload(self.service.row(response.json['runId']),'sk-not-real')
+        self.assertNotIn('tools',payload)
+        self.assertNotIn('text',payload)
+        self.assertNotIn('mode',payload.get('reasoning',{}))
+        self.assertNotIn('effort',payload.get('reasoning',{}))
+    def test_rejects_invalid_settings_before_billable_submission(self):
+        for opts in [{'mode':'nonsense'},{'webSearch':'true'},{'effort':'none'},{'arbitraryTool':True},'invalid']:
+            result=self.submit(files=False,runOptions=opts)
+            self.assertEqual(result.status_code,400,result.json)
+        self.assertEqual(self.submit(runOptions={'codeInterpreter':False}).status_code,400)
+    def test_citations_are_retained_for_clickable_sources(self):
+        response=self.submit(files=False);rid=response.json['runId'];terminal=self.terminal()
+        terminal['output'][1]['content'][0]['annotations'].append({'type':'url_citation','url':'https://example.com','title':'Source'})
+        self.service.absorb_response(rid,terminal)
+        self.assertEqual(self.service.snapshot(rid)['citations'],[{'url':'https://example.com','title':'Source'}])
+
 if __name__ == '__main__':
     unittest.main()

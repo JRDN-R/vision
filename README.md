@@ -33,7 +33,7 @@ Existing projects can be imported from a file or this device's previous projects
 then explicitly added to the Google account. Account projects are private to that
 account. Conflicting edits from two devices are shown for review rather than
 silently overwriting the server copy. Download an editable project for an additional
-copy. A downloaded HTML app directs you to the hosted page for Google sign-in.
+copy. The downloaded HTML signs in locally using the bundled Firebase SDK. Google authorization uses a separate secure popup; the workspace does not navigate to the hosted app.
 
 The server desktop's **Vision Logs** folder contains **Users.txt** and one usage
 log per Google account. It records names, Google email addresses, activity times,
@@ -142,3 +142,29 @@ version. Both use the same application. Server service source and tests are in
 The new Standard document installer prepares PDFs, Office files, spreadsheet data,
 image OCR and common text/archive formats on FUPCJ Server while you build a board.
 See [installation, storage and format coverage](vision-pc/DOCUMENTS.md). The larger Docling profile is optional.
+
+## Run settings and local application (1.0.0.14)
+
+Run → Settings accepts an exact OpenAI API model ID, reasoning mode (model default, standard, pro), thinking effort (model default through max), verbosity, web search, and code/files toggles. Settings are saved with the project and each accepted run. Unsupported combinations fail visibly; they are never silently retried with different settings. Model default omits that API parameter. Current GPT-5.6/GPT-6 mode and effort behavior follows the [OpenAI reasoning documentation](https://developers.openai.com/api/docs/guides/reasoning). Output limits include reasoning tokens. API billing is separate from a ChatGPT subscription.
+
+The PC requires this version of `sessions.py` and `server.py`. On the existing FUPCJ Server, open Windows PowerShell as Administrator and run:
+
+```powershell
+& "$env:ProgramData\VisionPC\Setup-Vision-PC.ps1" -Action Update
+```
+
+The existing updater stages files and preserves projects, account credentials, configuration and installed models. The page checks `runParametersV1` before submitting non-default settings to an older PC, so they cannot be silently ignored. Boards/attachments require Code & files; turn off Include board for a text-only request without that tool.
+
+### File workspace
+
+Generated files remain on the authorized project's PC storage. Run's File bag and inline sandbox links open previews in the same page and offer a real download. Only registered files from that response can resolve an inline file link; ambiguous or fabricated paths do not become arbitrary network or filesystem requests. Text and common images preview directly. HTML/SVG previews use an opaque sandbox frame; scripts are off initially and can be enabled explicitly inside the restricted frame. Office/PDF/ZIP and other binary formats are downloadable rather than rendered as untrusted HTML. Web-search citations appear as clickable Sources.
+
+### One-file local app
+
+Download Vision saves `Vision-Local.html`. It includes the UI, CSS, images, media runtimes and Firebase app/auth runtime (`web/vendor/firebase.js`, Firebase 12.19.0, bundled with esbuild 0.25.10). No sibling files, local server or client-side installation is needed. Opening and rendering the interface does not fetch GitHub JavaScript or styles. Authentication, Google/YouTube services, AI, remote PC work and synchronization still need internet. A first sign-in is not an offline operation. Google and the Drive picker use the hosted `local-signin.html` service with a nonce-bound MessageChannel, while the workspace stays local. Email/password works directly in the local app; use a Vision account password, not a Google password.
+
+Local updates check the fixed repository manifest on startup, reconnect and every six hours while open. Downloads are SHA-256/size verified before use. In browsers supporting file access permission, choose the current HTML and enable automatic file updates for that session. Otherwise download and replace the HTML manually. No unauthorized filesystem writes or automatic workspace reloads occur. Reopen the updated HTML after saving to run its new code. Project/cloud synchronization is separate and remains automatic. Downloading the application never packages an API key, login token, password or the current board. Save project exports the board separately.
+
+### Verification
+
+`node tests/run-local.test.cjs` covers settings normalization and registered-file routing. `python tests/run-local-smoke.py` uses Playwright with network stubs to exercise bundled startup, settings, previews, downloads, and sandbox isolation at 390px/1280px widths; `VISION_TEST_FILE=1` checks the literal local file URL. `RunParameterTests` in `vision-pc/test_sessions.py` checks persisted options, outbound Responses fields, opt-out behavior, invalid settings and source citations, with no paid API requests. Live sign-in and the installed Windows PC still require an end-to-end check in the owner's environment.

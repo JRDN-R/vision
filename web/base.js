@@ -905,16 +905,15 @@ function canDownloadDesktopApp(){
 }
 function syncDownloadAppButton(){
   const desktop=canDownloadDesktopApp();
-  $('downloadAppBtn').hidden=true;
+  $('downloadAppBtn').hidden=false;
   if(!desktop&&$('downloadAppDialog').open)$('downloadAppDialog').close();
 }
 function downloadDesktopApp(){
-  if(!canDownloadDesktopApp())return;
-  download(new Blob([downloadedAppSource()],{type:'text/html;charset=utf-8'}),'Vision.html');
+  download(new Blob([downloadedAppSource()],{type:'text/html;charset=utf-8'}),'Vision-Local.html');
   $('downloadAppDialog').close();
-  toast('Vision.html downloaded. Open it in your browser to work locally.');
+  toast('Vision-Local.html downloaded. The interface is local; sign-in and PC services need internet.');
 }
-$('downloadAppBtn').onclick=()=>{if(canDownloadDesktopApp())$('downloadAppDialog').showModal();};
+$('downloadAppBtn').onclick=()=>{$('downloadAppDialog').showModal();};
 $('closeDownloadApp').onclick=$('cancelDownloadApp').onclick=()=>$('downloadAppDialog').close();
 $('confirmDownloadApp').onclick=downloadDesktopApp;
 const downloadDesktopQuery=window.matchMedia('(any-pointer: fine) and (any-hover: hover)');

@@ -290,7 +290,7 @@ def health():
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
                    geminiTranscription=gemini,
-                   capabilities={'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   capabilities={'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):

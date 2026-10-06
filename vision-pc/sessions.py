@@ -73,6 +73,49 @@ def safe_name(value):
     return re.sub(r'[\x00-\x1f\x7f]', '', str(value).replace('\\', '/').rsplit('/', 1)[-1])[:180] or 'file'
 
 
+def normalize_run_options(raw):
+    """Allowlisted Responses settings; never forward arbitrary browser JSON."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError('Run settings must be an object.')
+    choices = {'mode': ('auto', 'standard', 'pro'),
+               'effort': ('auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'),
+               'verbosity': ('auto', 'low', 'medium', 'high')}
+    result = {}
+    if set(raw) - (set(choices) | {'webSearch', 'codeInterpreter'}):
+        raise ValueError('Unknown Run setting. Update Vision and FUPCJ Server together.')
+    for name, allowed in choices.items():
+        value = raw.get(name, 'auto')
+        if value not in allowed:
+            raise ValueError('Invalid ' + name + ' setting.')
+        result[name] = value
+    for name, default in (('webSearch', False), ('codeInterpreter', True)):
+        value = raw.get(name, default)
+        if not isinstance(value, bool):
+            raise ValueError(name + ' must be on or off.')
+        result[name] = value
+    return result
+
+
+def run_response_settings(payload, options):
+    reasoning = dict(payload.get('reasoning', {}))
+    for name in ('mode', 'effort'):
+        if options[name] != 'auto':
+            reasoning[name] = options[name]
+    if reasoning:
+        payload['reasoning'] = reasoning
+    if options['verbosity'] != 'auto':
+        payload['text'] = {'verbosity': options['verbosity']}
+    if options['webSearch']:
+        payload.setdefault('tools', []).append({'type': 'web_search'})
+        payload['include'] = ['web_search_call.action.sources']
+        payload['instructions'] = payload['instructions'].replace(
+            'Treat the supplied content as the exclusive factual source for the requested task; do not browse or invent unavailable facts.',
+            'Use the supplied project as the task context. Web search is enabled; search when useful and cite external factual claims. Never invent unavailable facts.')
+    return payload
+
+
 class Sessions:
     def __init__(self, app, connect_db, api_error, instructions):
         self.app, self.db, self.Error, self.instructions = app, connect_db, api_error, instructions
@@ -111,6 +154,8 @@ class Sessions:
                     updated_at REAL NOT NULL);
             ''')
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
+            if 'run_options_json' not in columns:
+                db.execute("ALTER TABLE project_runs ADD COLUMN run_options_json TEXT NOT NULL DEFAULT '{}'")
             if 'project_prompt' not in columns:
                 db.execute("ALTER TABLE project_runs ADD COLUMN project_prompt TEXT NOT NULL DEFAULT ''")
             columns = {r[1] for r in db.execute('PRAGMA table_info(projects)')}
@@ -169,7 +214,10 @@ class Sessions:
         with self.db() as db:
             files = db.execute('SELECT * FROM run_artifacts WHERE run_id=? ORDER BY rowid', (value['id'],)).fetchall()
         status = value['status']
-        return dict(runId=value['id'], projectId=value['project_id'], clientRequestId=value['client_id'],
+        response = json.loads(value.get('response_json') or '{}')
+        citations = [a for item in response.get('output', []) for c in item.get('content', []) for a in c.get('annotations', []) if a.get('type') == 'url_citation' and re.match(r'^https?://', str(a.get('url', '')))]
+        return dict(runOptions=normalize_run_options(json.loads(value.get('run_options_json') or '{}')), maxOutputTokens=value['max_tokens'],
+                    citations=[dict(url=a['url'], title=str(a.get('title') or a['url'])[:300]) for a in citations[:100]],runId=value['id'], projectId=value['project_id'], clientRequestId=value['client_id'],
                     status=status if status in TERMINAL or status == 'queued' else 'in_progress', phase=value['phase'],
                     text=value['text'], message=value['message'], model=value['model'], projectPrompt=value['project_prompt'],
                     responseId=value['response_id'], previousRunId=value['previous_id'], sequence=value['sequence'],
@@ -329,6 +377,13 @@ class Sessions:
             model = options.get('model') or 'gpt-6-astra'
             if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', model):
                 raise self.Error('Choose a valid model.')
+            try:
+                run_options = normalize_run_options(options.get('runOptions'))
+            except ValueError as error:
+                raise self.Error(str(error))
+            if ((model.startswith('gpt-6-astra') and run_options['effort'] == 'none') or
+                (model.startswith('gpt-6.1-sol') and run_options['effort'] in ('none', 'minimal'))):
+                raise self.Error('This model does not support the selected thinking effort. Choose Model default or a higher effort.')
             message = str(options.get('message') or '')[:50000]
             try:
                 limit = min(64000, max(512, int(options.get('maxOutputTokens', 16000))))
@@ -342,6 +397,8 @@ class Sessions:
             uploads = []
             for field in ('file', 'archive', 'attachments', 'attachments[]'):
                 uploads.extend(request.files.getlist(field))
+            if uploads and not run_options['codeInterpreter']:
+                raise self.Error('Enable Code & files to send a board or attachments.')
             if len(uploads) > 20:
                 raise self.Error('Attach up to 20 files per message.')
             if not uploads and not message.strip():
@@ -381,6 +438,7 @@ class Sessions:
                     db.execute('''INSERT INTO project_runs(id,project_id,client_id,status,phase,message,model,max_tokens,previous_id,key_cipher,inputs_json,project_prompt,created_at,updated_at)
                         VALUES(?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?,?,?,?,?)''',
                         (run_id, project_id, client_id, message, model, limit, previous, cipher, json.dumps(inputs), str(options.get('projectPrompt') or '')[:250000], now, now))
+                    db.execute('UPDATE project_runs SET run_options_json=? WHERE id=?', (json.dumps(run_options), run_id))
             except Exception:
                 import shutil
                 shutil.rmtree(directory, ignore_errors=True)
@@ -491,11 +549,12 @@ class Sessions:
         return list(reversed(values))
 
     def prepare_payload(self, row, key):
+        options = normalize_run_options(json.loads(row.get('run_options_json') or '{}'))
         chain = self.lineage(row)
         previous = next((item for item in reversed(chain[:-1]) if item['response_id'] and item['status'] in ('completed', 'incomplete')), None)
         files = json.loads(row['inputs_json'])
         container = None
-        if previous and previous['container_id']:
+        if options['codeInterpreter'] and previous and previous['container_id']:
             try:
                 candidate = self.call_json(key, 'GET', '/containers/'+previous['container_id'])
                 if candidate.get('status') == 'active':
@@ -503,13 +562,15 @@ class Sessions:
             except UpstreamFailure as error:
                 if error.status not in (404, 410):
                     raise
-        if not container:
+        if options['codeInterpreter'] and not container:
             files = []
             for item in chain:
                 files.extend(json.loads(item['inputs_json']))
                 with self.db() as db:
                     artifacts = db.execute('SELECT * FROM run_artifacts WHERE run_id=? AND path IS NOT NULL', (item['id'],)).fetchall()
                 files.extend(dict(path=f['path'], name=f['name'], mime=f['mime'], size=f['size']) for f in artifacts)
+        if not options['codeInterpreter']:
+            files = []
         uploaded, seen = [], set()
         for file in files:
             if file['path'] in seen:
@@ -525,6 +586,9 @@ class Sessions:
         payload = dict(model=row['model'], instructions=self.instructions,
                        input=message, background=True, stream=True, store=True, max_output_tokens=row['max_tokens'],
                        tools=[dict(type='code_interpreter', container=container or dict(type='auto', memory_limit='1g', file_ids=uploaded))])
+        if not options['codeInterpreter']:
+            payload.pop('tools', None)
+            payload['instructions'] = 'Answer the user using the conversation context. Code execution and file access are disabled for this turn. Do not claim to open files or create downloadable artifacts. Use readable Markdown and qualify material uncertainty.'
         if files:
             payload['tool_choice'] = 'required'
         if previous and previous['response_id']:
@@ -545,7 +609,7 @@ class Sessions:
             payload['input'] = history + [dict(role='user', content=message)]
         if re.match(r'^(gpt-[56](?:[.-]|$)|o[134](?:[.-]|$))', row['model']):
             payload['reasoning'] = {'summary': 'auto'}
-        return payload
+        return run_response_settings(payload, options)
 
     def absorb_response(self, run_id, response, replace_text=True):
         fields = {}
@@ -601,6 +665,8 @@ class Sessions:
                     pending_text = self.row(run_id)['text']
                 elif 'code_interpreter_call' in kind:
                     self.update(run_id, text=pending_text, upstream_sequence=cursor, phase='Running code' if kind.endswith('.in_progress') or kind.endswith('.interpreting') else 'Working with files')
+                elif 'web_search_call' in kind:
+                    self.update(run_id, text=pending_text, upstream_sequence=cursor, phase='Searching the web')
                 elif 'reasoning' in kind and kind.endswith('.added'):
                     self.update(run_id, text=pending_text, upstream_sequence=cursor, phase='Thinking')
                 if self.stop.is_set() or self.row(run_id)['cancel_requested']:

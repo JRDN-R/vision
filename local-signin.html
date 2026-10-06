@@ -24,10 +24,10 @@ const params=new URLSearchParams(location.hash.slice(1)),state=params.get('state
 const openerWindow=window.opener,button=document.getElementById('connect'),status=document.getElementById('status');
 let port=null,expired=false,finished=false,readyTimer=null,deadline=null,bridgeAuth=null,bridgeSDK=null;
 history.replaceState(null,'',location.pathname);
-const valid=location.origin==='https://jrdn-r.github.io'&&openerWindow&&/^[a-f0-9]{64}$/.test(state||'')&&['signin','drive'].includes(mode)&&/^[^\s@]+@gmail\.com$/i.test(email||'');
+const valid=location.origin==='https://jrdn-r.github.io'&&openerWindow&&/^[a-f0-9]{64}$/.test(state||'')&&['signin','drive'].includes(mode)&&(!email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))&&(mode!=='drive'||!!email);
 if(!valid){status.textContent='Open this connection window from Vision-Local.html on your PC.';}
 else{
- document.getElementById('identity').textContent=email;
+ document.getElementById('identity').textContent=email||'Choose your Google account';
  if(mode==='drive'){document.getElementById('detail').textContent='Connect the same Google account, then choose the Drive files to add to your local board.';button.textContent='Connect Google Drive';}
  const handle=async event=>{
   if(expired||port||event.source!==openerWindow||event.origin!=='null'||event.data?.type!=='vision-local-connect'||event.data.state!==state||event.ports.length!==1)return;
@@ -37,7 +37,7 @@ else{
    const [appSDK,authSDK]=await Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js')]);
    bridgeSDK=authSDK;bridgeAuth=authSDK.getAuth(appSDK.initializeApp(config,'vision-local-bridge'));
    await authSDK.setPersistence(bridgeAuth,authSDK.inMemoryPersistence);
-   if(expired)return;button.disabled=false;status.textContent='Ready. Continue with Google to connect '+email+'.';
+   if(expired)return;button.disabled=false;status.textContent='Ready. Continue with Google'+(email?' to connect '+email:'')+'.';
   }catch(error){status.textContent='Google sign-in could not load. Close this window and reconnect from local Vision.';}
  };
  window.addEventListener('message',handle);
@@ -48,12 +48,12 @@ else{
   if(!port||expired||finished)return;button.disabled=true;status.textContent='Loading Google sign-in…';
   try{
    const authSDK=bridgeSDK,auth=bridgeAuth;
-   const provider=new authSDK.GoogleAuthProvider();provider.setCustomParameters({login_hint:email});
+   const provider=new authSDK.GoogleAuthProvider();provider.setCustomParameters(email?{login_hint:email}:{prompt:'select_account'});
    if(mode==='drive'){provider.addScope('https://www.googleapis.com/auth/drive.file');provider.setCustomParameters({login_hint:email,prompt:'consent'});}
    status.textContent='Complete Google sign-in in the popup.';
    const result=await authSDK.signInWithPopup(auth,provider);
    if(expired)return;
-   if(result.user.email?.toLowerCase()!==email.toLowerCase()){await authSDK.signOut(auth);throw new Error('Choose '+email+' to connect this local Vision file.');}
+   if(email&&result.user.email?.toLowerCase()!==email.toLowerCase()){await authSDK.signOut(auth);throw new Error('Choose '+email+' to connect this local Vision file.');}
    const credential=authSDK.GoogleAuthProvider.credentialFromResult(result);
    if(!credential?.idToken||!credential?.accessToken)throw new Error('Google did not return a complete credential. Please retry.');
    const docs=mode==='drive'?await pickFiles(credential.accessToken):[];

@@ -64,11 +64,12 @@ async function cloudFetch(path,options={}){
  try{const response=await fetch(backendUrl+'/api'+path,{...options,headers,credentials:'omit'});if(typeof accountAuthEpoch!=='undefined'&&authAtStart!==accountAuthEpoch)throw new Error('The signed-in account changed. Try again.');return response;}catch(error){if(error.name==='AbortError'||/account changed/.test(error.message))throw error;const failure=new Error(cloudConfig.kind==='private-pc'?pcConnectionFailure():'Processing server unavailable. Check your internet connection.');failure.code='VISION_SERVER_UNAVAILABLE';failure.retryable=true;throw failure;}
 }
 function downloadedAppSource(){
- const privateConnection=cloudAuth?.kind!=='trial'&&cloudConfig?.kind==='private-pc'&&cloudAuth?.backendUrl===cloudConfig.backendUrl?validPrivateConnection({...cloudConfig,accessToken:cloudAuth.accessToken}):null;
- const portable=privateConnection?{kind:privateConnection.kind,backendUrl:privateConnection.backendUrl,accessToken:privateConnection.accessToken,...(privateConnection.publicAccess===true?{publicAccess:true}:{})}:cloudConfig||{};
+ // Never export a runtime access token, Firebase session, password, or API key.
+ const portable=cloudConfig?.kind==='private-pc'?{kind:'private-pc',backendUrl:cloudConfig.backendUrl,publicAccess:cloudConfig.publicAccess===true}:{};
  const safe=JSON.stringify(portable).replace(/</g,'\\u003c');
  return APP_SOURCE.replace(/(<script id="visionCloudConfig" type="application\/json">)[\s\S]*?(<\/script>)/,(_match,start,end)=>start+safe+end);
 }
+
 const cloudReachabilityCheck=document.createElement('details');cloudReachabilityCheck.id='cloudReachabilityCheck';cloudReachabilityCheck.hidden=true;cloudReachabilityCheck.innerHTML='<summary>Check this device’s connection</summary><p><a id="cloudReachabilityLink" target="_blank" rel="noopener noreferrer">Open processor connection check ↗</a></p><p class="mini-note">A server status response means the address is reachable. A blocked page or connection error means this device cannot reach it. If FUPCJ Server works on another device, compare the networks and browser settings.</p>';$('cloudStatus').after(cloudReachabilityCheck);
 $('openCloudSettings').onclick=()=>openCloudSettings();$('youtubeCloudSettings').onclick=()=>openCloudSettings();
 $('closeCloudSettings').onclick=()=>$('cloudDialog').close();$('cloudSignIn').onclick=cloudSignIn;
