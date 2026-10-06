@@ -101,6 +101,8 @@ def configure(config_path, migrate_gemini=False):
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
     documents.initialize(config)
+    sessions.venture.documents = documents
+    sessions.venture.transcription = transcriptions
     app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
     app.config['TRIALS'] = trials
     trials.initialize()
@@ -212,6 +214,7 @@ def authorize():
         except InvalidIdentity:
             raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
         g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
+        g.identity_claims = claims
         app.config['AUDIT_LOGS'].identity(g.uid, claims)
         return
     raise APIError('Sign in or connect this device to your Vision processing server first.', 401)
@@ -249,7 +252,7 @@ def cors(response):
                     release_trial()
             response.response = trial_chunks()
         response.call_on_close(release_trial)
-    if getattr(g, 'auth_kind', None) == 'firebase-google' and request.method in ('POST', 'PUT', 'DELETE'):
+    if getattr(g, 'auth_kind', None) == 'firebase-google' and request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
         app.config['AUDIT_LOGS'].request_event(g.uid, request, response.status_code,
                                               time.monotonic() - g.request_started)
     origin = request.headers.get('Origin')
@@ -258,7 +261,7 @@ def cors(response):
         response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
         response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, PATCH, DELETE, OPTIONS'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type'
         if request.headers.get('Access-Control-Request-Private-Network') == 'true':
             response.headers['Access-Control-Allow-Private-Network'] = 'true'
@@ -290,7 +293,7 @@ def health():
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
                    geminiTranscription=gemini,
-                   capabilities={'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   capabilities={'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):

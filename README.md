@@ -7,6 +7,20 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+## Vision Venture (1.0.0.15)
+
+**Venture** is the new account-owned conversation workspace: a near-black interface
+with Vision green, a history drawer, automatic local titles and renaming, persistent
+files, copy/retry actions, model/settings controls and an estimated funding meter.
+The board stays separate. Accepted jobs continue on FUPCJ Server after the browser
+closes, and files are retained in per-user/per-conversation recovery folders.
+
+Update the existing Windows processor before opening Venture. See
+[activation, storage, funding estimates and verification](vision-pc/VENTURE.md).
+The meter needs manual calibration; it does not read OpenAI's prepaid balance.
+Document/media preparation reuses installed local tools, and automatic titles use
+a free local text heuristic rather than downloading another language model.
+
 ## Projects and conversations
 
 The connected Windows FUPCJ Server can save projects and run the OpenAI Responses
