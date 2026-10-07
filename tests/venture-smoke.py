@@ -71,6 +71,9 @@ def run():
                 p.locator('[data-conversation="v-test-conversation-001"]').first.click();p.wait_for_timeout(200)
                 assert 'Your inspection report' in p.locator('#ventureTurns').inner_text()
                 assert p.evaluate('testState().board')=='Unchanged board'
+                assert p.evaluate('testState().settings.runOptions.webSearch') is True
+                assert p.evaluate('testState().settings.runOptions.codeInterpreter') is True
+                assert p.evaluate('testState().settings.memoryEnabled') is True
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed automatically'
