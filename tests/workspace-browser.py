@@ -85,7 +85,8 @@ def main():
     assert not p.evaluate('!!window.hacked');p.locator('#consolePreviewClose').click()
     p.screenshot(path=str(ROOT/'tests/venture-screenshots'/f'sources-{width}.png'))
     p.locator('#workspaceSourcesClose').click()
-    assert p.evaluate("ventureSettings({model:'gpt-4.1',runOptions:{mode:'pro',effort:'max',verbosity:'high'}}).runOptions")==dict(mode='auto',effort='auto',verbosity='auto',webSearch=False,codeInterpreter=True)
+    assert p.evaluate("ventureSettings({model:'gpt-4.1',runOptions:{mode:'pro',effort:'max',verbosity:'high'}}).runOptions")==dict(mode='auto',effort='auto',verbosity='auto',webSearch=True,codeInterpreter=True)
+    assert p.evaluate("ventureSettings({model:'gpt-4.1',runOptions:{webSearch:false}}).runOptions.webSearch") is False
     # Parameter controls hide for non-reasoning models and retain supported maxima.
     p.evaluate("venture.settings.model='gpt-4.1';ventureNormalizeParameterChoice();venturePaintSettings();ventureTogglePopover('settings')")
     assert p.locator('#ventureEffort').is_hidden();assert p.locator('#ventureVerbosity').is_hidden();assert p.locator('#ventureProRow').is_hidden()
