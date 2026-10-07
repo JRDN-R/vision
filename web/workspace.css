@@ -1,7 +1,6 @@
-/* Fixed Material Symbols are masks so existing account/status text updates cannot erase them. */
-.top-actions .workspace-nav-icon{width:44px;height:44px;min-width:44px;padding:10px;position:relative;font-size:0;display:inline-flex;justify-content:center;align-items:center}
-.top-actions .workspace-nav-icon>*{display:none}
-.top-actions .workspace-nav-icon:before{content:"";display:block;width:24px;height:24px;background:currentColor;mask:var(--workspace-icon) center/24px no-repeat;-webkit-mask:var(--workspace-icon) center/24px no-repeat}
+/* Material Symbols Outlined as inline SVGs, without masking or text-size tricks. */
+#appHeader .top-actions button.workspace-nav-icon{display:inline-flex;flex:0 0 44px;align-items:center;justify-content:center;box-sizing:border-box;position:relative;width:44px;min-width:44px;max-width:44px;height:44px;min-height:44px;padding:10px}
+#appHeader .top-actions button.workspace-nav-icon>svg.workspace-nav-svg{display:block;width:24px;height:24px;flex:0 0 24px;fill:currentColor;pointer-events:none}
 .workspace-nav-icon:hover:after,.workspace-nav-icon:focus-visible:after{content:attr(aria-label);position:absolute;top:calc(100% + 8px);z-index:400;left:50%;transform:translateX(-50%);font:12px/1.4 system-ui;background:#171c19;color:#f3f6f1;border:1px solid #596258;border-radius:6px;padding:5px 8px;white-space:nowrap;pointer-events:none}
 .workspace-dialog{color:#edf2e9;background:#101411;border:1px solid #3d473e;border-radius:16px;width:min(720px,calc(100vw - 24px));max-height:85dvh;overflow:auto;padding:24px;box-sizing:border-box}
 .workspace-dialog::backdrop{background:#000a}
