@@ -71,9 +71,24 @@ def run():
                 p.locator('[data-conversation="v-test-conversation-001"]').first.click();p.wait_for_timeout(200)
                 assert 'Your inspection report' in p.locator('#ventureTurns').inner_text()
                 assert p.evaluate('testState().board')=='Unchanged board'
+                assert p.evaluate('testState().settings.runOptions.webSearch') is True
+                assert p.evaluate('testState().settings.runOptions.codeInterpreter') is True
+                assert p.evaluate('testState().settings.memoryEnabled') is True
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed automatically'
+                # The settings dialog should fit an actual mobile Safari viewport.
+                assert not p.locator('#ventureSettings').get_by_text('Set your course').count()
+                assert p.locator('.venture-feature-grid label').count()==3
+                assert p.evaluate('ventureSettings().memoryEnabled') is True
+                assert p.evaluate('ventureSettings().runOptions.webSearch') is True
+                assert p.evaluate('ventureSettings().runOptions.codeInterpreter') is True
+                if width<761:
+                    p.set_viewport_size({'width':width,'height':640})
+                    metrics=p.locator('#ventureSettings').evaluate('(el)=>({scroll:el.scrollHeight,client:el.clientHeight,width:el.scrollWidth,inner:el.clientWidth})')
+                    assert metrics['scroll']<=metrics['client']+1, f'Mobile settings require vertical scrolling: {metrics}'
+                    assert metrics['width']<=metrics['inner']+1, f'Mobile settings overflow horizontally: {metrics}'
+                    p.set_viewport_size({'width':width,'height':844})
                 p.locator('#ventureModel').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed while choosing a model'
                 assert p.locator('input#ventureModel').count()==0

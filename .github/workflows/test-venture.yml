@@ -39,6 +39,7 @@ jobs:
         run: |
           set -o pipefail
           python web/build.py 2>&1 | tee tests/venture-logs/build.txt
+          python tests/versioning-smoke.py
       - name: Browser-independent JavaScript checks
         run: |
           set -o pipefail
