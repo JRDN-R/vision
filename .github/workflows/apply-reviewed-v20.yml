@@ -1,0 +1,52 @@
+name: Apply reviewed v20 source
+on:
+  push:
+    branches: [release/v20-auto-dictation]
+    paths: ['maintenance/v20-apply.json']
+permissions:
+  contents: write
+concurrency:
+  group: apply-reviewed-v20
+  cancel-in-progress: false
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify baseline and apply readable source patches atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/release/v20-auto-dictation
+          python3 - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          manifest = json.loads(Path('maintenance/v20-apply.json').read_text())
+          base = '323acea644320143e38ee1b8349013478e6fe174'
+          assert manifest['base'] == base
+          expected = manifest['files']
+          for name in expected:
+              assert name.startswith(('web/', 'vision-pc/', 'tests/', '.github/workflows/')) and '..' not in Path(name).parts
+              old = subprocess.run(['git','show',base+':'+name], capture_output=True)
+              if old.returncode == 0:
+                  assert Path(name).read_bytes() == old.stdout, 'Baseline changed: '+name
+              else:
+                  assert not Path(name).exists(), 'New path already exists: '+name
+          for name, digest in manifest['patches'].items():
+              assert name in ('maintenance/v20-source-1.patch','maintenance/v20-source-2.patch','maintenance/v20-source-3.patch')
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, 'Patch checksum: '+name
+              subprocess.run(['git','apply','--check','--unidiff-zero',name],check=True)
+              subprocess.run(['git','apply','--index','--unidiff-zero',name],check=True)
+          changed = set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert changed == set(expected), 'Unexpected changed paths'
+          for name,digest in expected.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, 'Source checksum: '+name
+          PY
+          git rm .github/workflows/apply-reviewed-v20.yml maintenance/v20-apply.json maintenance/v20-source-1.patch maintenance/v20-source-2.patch maintenance/v20-source-3.patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Release v20 workspace updates and automatic Gemini to PC dictation recovery'
+          git push origin HEAD:release/v20-auto-dictation
