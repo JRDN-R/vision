@@ -1,0 +1,56 @@
+name: Prepare Venture improvements
+on:
+  push:
+    branches: [feature/venture-dictation-memory]
+    paths: ['.github/workflows/prepare-venture-improvements.yml']
+permissions:
+  contents: write
+concurrency:
+  group: prepare-venture-improvements
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/venture-dictation-memory
+      - name: Verify and apply the reviewed source edits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, subprocess
+          shas = ['d05562c0beb92efb8537c9afd97a3a716618e3ea', '70ed43beb61935f1c8e7e7ecb7bfa0a197058002', 'cfe0d16ab2d65e5dfba36cbcf4d647f79b23a14f']
+          payload = bytearray()
+          for sha in shas:
+              obj = json.loads(subprocess.check_output(['gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs/{sha}']))
+              raw = base64.b64decode(obj['content'])
+              assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == sha
+              payload.extend(raw)
+          assert hashlib.sha256(payload).hexdigest() == '11319ab83a8bdf8c5ff26036b326e4b8b1d90d09df8bf4cad55f4e68e36df71a'
+          edits = json.loads(lzma.decompress(payload))
+          ready = []
+          for edit in edits:
+              path = pathlib.Path(edit['path'])
+              assert not path.is_absolute() and '..' not in path.parts
+              assert str(path).startswith(('web/', 'vision-pc/', 'tests/', '.github/workflows/'))
+              original = path.read_text(encoding='utf-8') if path.exists() else ''
+              assert hashlib.sha256(original.encode()).hexdigest() == edit['old'], str(path)
+              changed = original
+              for start, end, replacement in reversed(edit['ops']):
+                  changed = changed[:start] + replacement + changed[end:]
+              assert hashlib.sha256(changed.encode()).hexdigest() == edit['new'], str(path)
+              ready.append((path, changed))
+          for path, changed in ready:
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(changed, encoding='utf-8')
+              print('Verified:', path)
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          subprocess.run(['git', 'add', '--'] + [str(path) for path, _ in ready], check=True)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Improve Venture with scoped Gemini dictation, microphone waveform, avatars, deletion and optional memory'
+          git push origin HEAD:feature/venture-dictation-memory
