@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feature/venture-dictation-memory
-      - name: Verify and apply the reviewed source edits
+      - name: Verify and apply the reviewed application edits
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -33,9 +33,12 @@ jobs:
           edits = json.loads(lzma.decompress(payload))
           ready = []
           for edit in edits:
+              # Workflow edits are applied using the authorized connector instead.
+              if edit['path'].startswith('.github/'):
+                  continue
               path = pathlib.Path(edit['path'])
               assert not path.is_absolute() and '..' not in path.parts
-              assert str(path).startswith(('web/', 'vision-pc/', 'tests/', '.github/workflows/'))
+              assert str(path).startswith(('web/', 'vision-pc/', 'tests/'))
               original = path.read_text(encoding='utf-8') if path.exists() else ''
               assert hashlib.sha256(original.encode()).hexdigest() == edit['old'], str(path)
               changed = original
