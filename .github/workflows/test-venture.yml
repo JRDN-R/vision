@@ -61,6 +61,8 @@ jobs:
           set -o pipefail
           python tests/workspace-unit.py 2>&1 | tee tests/venture-logs/workspace-unit.txt
           python tests/workspace-browser.py 2>&1 | tee tests/venture-logs/workspace-browser.txt
+          python tests/workspace-chevron.py 2>&1 | tee tests/venture-logs/workspace-chevron.txt
+          python tests/workspace-switch-layout.py 2>&1 | tee tests/venture-logs/workspace-switch-layout.txt
           python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt
       - name: Hosted microphone and server integration
         run: |

@@ -11,7 +11,10 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('venture_fixture',ROOT/'tests/venture-smoke.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 extra='''<header id="appHeader"><div class="top-actions"><button id="accountButton">Account</button><button id="newBtn">New</button><button id="openBtn">Projects</button><button id="saveBtn">Save project</button><button id="exportBtn">Export</button></div></header><button id="mobileHeaderToggle" hidden></button><button id="headerReveal" hidden></button><dialog id="accountDialog"></dialog><div id="accountGateSignIn">Sign in</div>'''
-fixture=mod.fixture.replace('<body>','<body>'+extra).replace('</style>','\n'+(ROOT/'web/workspace.css').read_text()+'</style>',1).replace('</script></body>', '\n'+(ROOT/'web/workspace.js').read_text().replace('location.search',"window.fixtureQuery || ''")+'</script></body>')
+chevrons={d:json.loads((ROOT/'web/animations'/f'circle-chevron-{d}-gradient-shift.json').read_text()) for d in ('right','left')}
+player=(ROOT/'web/vendor/lottie_svg.min.js').read_text()+'\n'+(ROOT/'web/workspace-chevron.js').read_text().replace('/* VISION_CHEVRONS */ {}',json.dumps(chevrons))
+fixture=mod.fixture.replace('<body>','<body>'+extra).replace('</style>','\n'+(ROOT/'web/workspace.css').read_text()+'</style>',1).replace('<script>','<script>'+player+'\n',1).replace('</script></body>', '\n'+(ROOT/'web/workspace.js').read_text().replace('location.search',"window.fixtureQuery || ''")+'</script></body>')
+
 CID='v-test-conversation-001'
 settings=mod.settings
 run=dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create a report.',text='Saved report.',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)
@@ -52,12 +55,11 @@ def main():
     p.route('**/*',lambda route:route.fulfill(body=fixture,content_type='text/html') if route.request.url.startswith('http://127.0.0.1/') else route.abort())
     p.set_content(fixture.replace('<script>', '<script>window.fixtureQuery="?view=venture";',1));p.wait_for_function('venture.open && venture.ready')
     assert p.locator('#visionVenture').is_visible()
+    assert p.locator('#workspaceSwipeNotice').count()==0
     if width==390:
-     assert p.locator('#workspaceSwipeNotice').is_visible();p.keyboard.press('Escape');assert p.locator('#workspaceSwipeNotice').is_visible()
-     p.locator('#workspaceSwipeOK').click();p.wait_for_function('workspace.prefs.swipeNoticeVersion===1')
-     assert prefs['swipeNoticeVersion']==1
+     assert p.locator('#workspaceSwitchButton').is_visible()
      assert p.locator('#ventureBack').is_hidden();assert p.locator('#runProjectBtn').is_hidden()
-    else:assert p.locator('#workspaceSwipeNotice').is_hidden()
+    else:assert p.locator('#workspaceSwitchButton').is_hidden()
     assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
     assert p.locator('#accountButton > svg.workspace-nav-svg > path').count()==1
     assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].length===5")
@@ -162,34 +164,39 @@ def main():
     assert p.locator('#ventureAutoModel').is_disabled();assert not p.locator('#ventureAutoModel').is_checked()
     assert p.locator('#ventureAutoModelHelp').inner_text()=='Coming soon'
     p.locator('#ventureSettingsClose').click()
-    p.evaluate('workspaceSave({launchView:"venture"})');assert prefs['launchView']=='venture';assert prefs['swipeNoticeVersion']==(1 if width==390 else 0)
+    p.evaluate('workspaceSave({launchView:"venture"})');assert prefs['launchView']=='venture';assert prefs['swipeNoticeVersion']==0
     # Synthetic touch events exercise browser listeners; not a physical-iOS claim.
     p.evaluate(r'''window.swipe=(x1,y1,x2,y2)=>{const host=document.body;
       const point=(x,y)=>new Touch({identifier:1,target:host,clientX:x,clientY:y});
       host.dispatchEvent(new TouchEvent('touchstart',{touches:[point(x1,y1)],bubbles:true,cancelable:true}));
       host.dispatchEvent(new TouchEvent('touchend',{touches:[],changedTouches:[point(x2,y2)],bubbles:true,cancelable:true}));};''')
-    p.evaluate('swipe(90,20,240,20)');p.wait_for_timeout(100)
+    p.evaluate('swipe(90,20,240,20)');assert p.evaluate('venture.open'),'Retired swipe changed view'
     if width==390:
-     assert not p.evaluate('venture.open')
-     p.evaluate('swipe(280,400,80,400)');assert not p.evaluate('venture.open'),'Body swipe switched workspaces'
-     p.evaluate('swipe(280,20,80,70)');p.wait_for_timeout(100)
-     assert p.evaluate('venture.open'),'Collapsed header swipe failed'
-     p.evaluate('workspaceSwitch("vision");document.documentElement.classList.add("header-open")')
-     p.evaluate('swipe(280,30,80,30)');p.wait_for_function('venture.open')
-    else:assert p.evaluate('venture.open'),'Desktop swipe must not switch'
+     control=p.locator('#workspaceSwitchButton');before=control.bounding_box()
+     assert before['width']==44 and before['height']==44
+     assert control.get_attribute('aria-label')=='Return to Vision'
+     control.click();assert not p.evaluate('venture.open')
+     assert control.bounding_box()==before,'Switch moved between workspaces'
+     assert control.get_attribute('aria-label')=='Open Venture'
+     p.evaluate('swipe(280,20,80,20)');assert not p.evaluate('venture.open')
+     control.focus();p.keyboard.press('Enter');p.wait_for_function('venture.open')
+     assert control.bounding_box()==before
+     p.locator('#ventureHistoryToggle').click();assert control.is_hidden()
+     p.locator('#ventureHistoryClose').click();assert control.is_visible()
+    else:assert p.locator('#workspaceSwitchButton').is_hidden()
     # Logout clears retained content, Sources, and once-per-account state.
     p.evaluate('workspaceOpenSources()');p.wait_for_timeout(100)
     p.evaluate('testSignOut()');p.wait_for_function('!workspace.uid')
     assert p.locator('#workspaceSources').is_hidden();assert p.locator('#workspaceSourcesList').inner_text()==''
     assert not p.evaluate('ventureRecording');assert not errors,errors
-    checks.append(f'{width}px: startup, icons, notice, Sources/pagination/download/preview, parameter controls, one Gemini attempt, three-attempt local fallback/30s/60s waits, cancellation, audio download, receipt reconciliation, cached insertion, disabled auto-model toggle, swipes, account reset')
+    checks.append(f'{width}px: startup, icons, fixed switch, Sources/pagination/download/preview, parameter controls, one Gemini attempt, three-attempt local fallback/30s/60s waits, cancellation, audio download, receipt reconciliation, cached insertion, disabled auto-model toggle, retired swipes, account reset')
     ctx.close()
    # Explicit Vision URL wins over account preference; no once-acknowledged notice.
    prefs.update(launchView='venture',swipeNoticeVersion=1)
    ctx=browser.new_context(viewport={'width':390,'height':844});p=ctx.new_page();p.expose_function('ventureTestAPI',api)
    p.route('**/*',lambda r:r.fulfill(body=fixture,content_type='text/html') if r.request.url.startswith('http://127.0.0.1/') else r.abort())
    p.set_content(fixture.replace('<script>', '<script>window.fixtureQuery="?view=vision";',1));p.wait_for_function('workspace.sources')
-   assert not p.evaluate('venture.open');assert p.locator('#workspaceSwipeNotice').is_hidden();ctx.close()
-   print('\n'.join(checks));print('Explicit URL precedence and acknowledged notice passed. No paid API calls made.')
+   assert not p.evaluate('venture.open');assert p.locator('#workspaceSwipeNotice').count()==0;ctx.close()
+   print('\n'.join(checks));print('Explicit URL precedence and retired tutorial passed. No paid API calls made.')
   finally:browser.close()
 if __name__=='__main__':main()

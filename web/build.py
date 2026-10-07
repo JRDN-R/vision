@@ -80,7 +80,11 @@ def build():
     firebase = (WEB / 'vendor/firebase.js').read_text(encoding='utf-8')
     if '</script' in firebase.lower():
         raise ValueError('Firebase bundle contains an unsafe closing script tag')
-    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + script)
+    lottie = (WEB / 'vendor/lottie_svg.min.js').read_text(encoding='utf-8')
+    chevrons = {direction: json.loads((WEB / 'animations' / f'circle-chevron-{direction}-gradient-shift.json').read_text())
+                for direction in ('right', 'left')}
+    controller = (WEB / 'workspace-chevron.js').read_text().replace('/* VISION_CHEVRONS */ {}', json.dumps(chevrons, separators=(',', ':')))
+    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')
