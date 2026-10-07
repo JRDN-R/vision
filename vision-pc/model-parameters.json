@@ -1,0 +1,118 @@
+{
+  "checkedAt": "2026-10-07",
+  "appMinimum": 512,
+  "appDefault": 16000,
+  "models": {
+    "gpt-6-astra": {
+      "context": 1050000,
+      "maxOutput": 128000,
+      "efforts": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "pro": true,
+      "verbosity": true,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+    },
+    "gpt-6.1-sol": {
+      "context": 1050000,
+      "maxOutput": 128000,
+      "efforts": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "pro": true,
+      "verbosity": true,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+    },
+    "gpt-6-sol": {
+      "context": 1050000,
+      "maxOutput": 128000,
+      "efforts": [
+        "auto",
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "pro": true,
+      "verbosity": true,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-sol"
+    },
+    "gpt-6-luna": {
+      "context": 1050000,
+      "maxOutput": 128000,
+      "efforts": [
+        "auto",
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "pro": true,
+      "verbosity": true,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna"
+    },
+    "gpt-5.6-terra": {
+      "context": 1050000,
+      "maxOutput": 128000,
+      "efforts": [
+        "auto",
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "pro": true,
+      "verbosity": true,
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+    },
+    "gpt-4.1": {
+      "context": 1047576,
+      "maxOutput": 32768,
+      "efforts": [
+        "auto"
+      ],
+      "pro": false,
+      "verbosity": false,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1"
+    },
+    "gpt-4o": {
+      "context": 128000,
+      "maxOutput": 16384,
+      "efforts": [
+        "auto"
+      ],
+      "pro": false,
+      "verbosity": false,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4o"
+    },
+    "o3": {
+      "context": 200000,
+      "maxOutput": 100000,
+      "efforts": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "pro": false,
+      "verbosity": false,
+      "source": "https://developers.openai.com/api/docs/models/o3"
+    }
+  }
+}

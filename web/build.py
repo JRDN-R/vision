@@ -7,12 +7,13 @@ No credential or embedded runtime is printed by this command.
 from pathlib import Path
 import base64
 import hashlib
+import json
 import re
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'venture.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'venture.js', 'workspace.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css', 'workspace.css']
 
 
 def without_browser_gemini(source):
@@ -47,6 +48,8 @@ def build():
     # Boot only after all optional interfaces and persistence hooks are installed.
     chunks = [re.sub(r'\nrenderAll\(\);\s*$', '\n', part) for part in chunks]
     script = '\n'.join(chunks) + '\nrenderAll();\n})();\n'
+    parameters = json.loads((ROOT / 'vision-pc/model-parameters.json').read_text())
+    script = script.replace('/* VISION_PARAMETERS */ {}', json.dumps(parameters, separators=(',', ':')))
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:

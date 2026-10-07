@@ -1,5 +1,5 @@
 /* Hosted Venture controls: microphone -> authenticated dictation endpoint only.
- * No Gemini credential/provider selector is present in browser code.
+ * No Gemini credential or general-purpose model permission is present in browser code.
  */
 const VENTURE_DICTATION_LIMIT_MS = 180000;
 let ventureRecording = null;
@@ -14,23 +14,31 @@ function ventureBrandIcon() {
  svg.setAttribute('aria-hidden', 'true');
  return svg.outerHTML;
 }
-function ventureDictationBusy() { return !!ventureRecording; }
+function ventureDictationBusy() { return !!ventureRecording && !['failed','awaiting-space'].includes(ventureRecording.phase); }
 function ventureDictationCurrent(recording) {
  return ventureRecording === recording && !recording.cancelled && venture.open &&
    recording.epoch === venture.epoch && recording.selection === venture.selection;
 }
 function ventureRecordingUI(recording, phase) {
  const live = phase === 'recording';
+ const provider = recording?.provider === 'whisper' ? 'PC Whisper' : 'Gemini';
  $('ventureMic').onclick = ventureDictate;
  $('ventureMic').setAttribute('aria-pressed', String(live));
- $('ventureMic').setAttribute('aria-label', live ? 'Stop dictation' : phase === 'processing' ? 'Transcribing with Gemini' : 'Dictate a message');
+ $('ventureMic').setAttribute('aria-label', live ? 'Stop dictation' : phase === 'processing' ? 'Transcribing with ' + provider : 'Dictate a message');
  $('ventureMic').innerHTML = ventureIcon(live ? 'stop' : 'mic');
- $('ventureMic').disabled = phase === 'processing' || phase === 'permission';
+ $('ventureMic').disabled = !!phase && !live;
  $('ventureDictation').hidden = !phase;
  $('ventureDictation').classList.toggle('transcribing', phase === 'processing');
- $('ventureDictationStatus').textContent = live ? 'Listening' : phase === 'processing' ? 'Transcribing with Gemini…' : 'Waiting for microphone…';
+ $('ventureDictationStatus').textContent = live ? 'Listening' : phase === 'processing' ? 'Transcribing with ' + provider + '…' : 'Waiting for microphone…';
  $('ventureDictationTime').hidden = !live;
- $('ventureDictationRetry').hidden = true;
+ $('ventureDictation').classList.remove('failed');
+ for (const id of ['ventureDictationSave','ventureDictationOriginal','ventureDictationSaveText']) if ($(id)) $(id).hidden = true;
+ const discard = $('ventureDictationDiscard');
+ if (discard) {
+  discard.hidden = !phase;
+  discard.textContent = 'Cancel dictation';
+  discard.onclick = () => { if (ventureDictationCurrent(recording)) ventureStopDictation(); };
+ }
  venturePaintStatus();
 }
 function ventureReleaseMic(recording) {
@@ -46,7 +54,9 @@ function ventureStopDictation(discard = true) {
  if (!recording) return;
  if (!discard) { ventureFinishRecording(recording); return; }
  recording.cancelled = true;
- recording.controller?.abort();
+ clearTimeout(recording.retryTimer); recording.retryResolve?.(false); recording.retryResolve = null;
+ recording.controller?.abort(); recording.exportController?.abort(); recording.decoder?.stop();
+ recording.audio = null; recording.mp3 = null; recording.form = null; recording.chunks = [];
  if (recording.recorder?.state !== 'inactive') { try { recording.recorder?.stop(); } catch {} }
  ventureReleaseMic(recording);
  ventureRecording = null;
@@ -100,7 +110,7 @@ async function ventureDictate() {
   // Request from the user gesture; never silently acquire microphone access.
   recording.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1}});
   if (!ventureDictationCurrent(recording)) { ventureReleaseMic(recording); return; }
-  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
+  const mime = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
   recording.recorder = new MediaRecorder(recording.stream, {...(mime ? {mimeType: mime} : {}), audioBitsPerSecond: 64000});
   recording.recorder.ondataavailable = event => {
    if (recording.cancelled) return;
@@ -144,53 +154,167 @@ function ventureFinishRecording(recording) {
  try { if (recording.recorder.state !== 'inactive') recording.recorder.stop(); }
  finally { ventureReleaseMic(recording); ventureRecordingUI(recording, 'processing'); }
 }
-async function ventureUploadDictation(recording) {
+// One paid attempt, then three local attempts. Waiting never resubmits Gemini.
+const VENTURE_WHISPER_RETRY_MS = Object.freeze([0, 30000, 60000]);
+function ventureDictationPause(recording, milliseconds) {
+ return new Promise(resolve => {
+  recording.retryResolve = resolve;
+  recording.retryTimer = setTimeout(() => {
+   recording.retryResolve = null; recording.retryTimer = null;
+   resolve(ventureDictationCurrent(recording));
+  }, milliseconds);
+ });
+}
+function ventureDictationAudio(recording) {
+ return recording.audio || recording.form?.get('audio');
+}
+function ventureDictationAudioExtension(blob) {
+ const mime = (blob?.type || '').split(';')[0].toLowerCase();
+ return ({'audio/mp4':'m4a','audio/m4a':'m4a','audio/x-m4a':'m4a',
+  'audio/mpeg':'mp3','audio/mp3':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/x-wav':'wav','audio/webm':'webm'})[mime] || 'bin';
+}
+function ventureDictationAudioName(recording, extension) {
+ recording.savedName ||= 'Venture-dictation-' + new Date().toISOString().replace(/[:.]/g, '-');
+ return recording.savedName + '.' + extension;
+}
+function ventureDictationShowRecovery(recording, message, failed = true) {
  if (!ventureDictationCurrent(recording)) return;
- if (!recording.form) {
-  const mime = (recording.recorder.mimeType || recording.chunks[0]?.type || 'audio/webm').split(';')[0];
-  const blob = new Blob(recording.chunks, {type: mime}); recording.chunks = [];
-  if (!blob.size) { ventureStopDictation(); ventureSetNotice('No microphone audio was recorded.'); return; }
-  recording.form = new FormData(); recording.form.append('requestId', recording.requestId);
-  recording.form.append('audio', blob, mime.includes('mp4') ? 'dictation.m4a' : mime.includes('ogg') ? 'dictation.ogg' : 'dictation.webm');
+ recording.phase = failed ? 'failed' : 'awaiting-space';
+ ventureRecordingUI(recording, recording.phase);
+ $('ventureDictationStatus').textContent = message;
+ $('ventureDictation').classList.toggle('failed', failed);
+ const blob = ventureDictationAudio(recording), extension = ventureDictationAudioExtension(blob);
+ const direct = extension === 'm4a' || extension === 'mp3';
+ const save = $('ventureDictationSave'), original = $('ventureDictationOriginal');
+ save.hidden = !blob; save.disabled = false; save.textContent = direct ? 'Save audio (.' + extension + ')' : 'Save audio as MP3';
+ save.onclick = () => void ventureSaveDictationAudio(recording);
+ original.hidden = !blob || direct;
+ original.textContent = 'Save original (.' + extension + ')';
+ original.onclick = () => { if (ventureDictationCurrent(recording)) download(blob, ventureDictationAudioName(recording, extension)); };
+ const transcript = $('ventureDictationSaveText');
+ transcript.hidden = !recording.result;
+ transcript.onclick = () => { if (ventureDictationCurrent(recording)) download(new Blob([recording.result.text], {type:'text/plain'}), ventureDictationAudioName(recording,'txt')); };
+ $('ventureDictationDiscard').textContent = 'Discard recording';
+ venturePaintStatus();
+}
+async function ventureSaveDictationAudio(recording) {
+ if (!ventureDictationCurrent(recording) || recording.exporting) return;
+ const blob = ventureDictationAudio(recording); if (!blob) return;
+ const extension = ventureDictationAudioExtension(blob);
+ if (extension === 'm4a' || extension === 'mp3') {
+  download(blob, ventureDictationAudioName(recording, extension)); return;
  }
- ventureRecordingUI(recording, 'processing');
+ if (recording.mp3) { download(recording.mp3, ventureDictationAudioName(recording,'mp3')); return; }
+ // Reuse the already-bundled, offline FFmpeg worker. No PC or cloud request.
+ recording.exporting = true; recording.exportController = new AbortController();
+ const button = $('ventureDictationSave'), signal = recording.exportController.signal;
+ const message = $('ventureDictationStatus').textContent;
+ button.disabled = true; button.textContent = 'Preparing MP3 on this device…';
+ const timeout = setTimeout(() => { recording.exportController.abort(); recording.decoder?.stop(); }, 120000);
  try {
-  recording.controller = new AbortController();
-  const response = await ventureFetch('/venture/dictation', {method: 'POST', body: recording.form, signal: recording.controller.signal});
-  let result = await response.json();
-  // Recover an in-progress receipt without issuing another Gemini request.
-  for (let i = 0; result.status === 'processing' && i < 90; i++) {
-   await new Promise(resolve => setTimeout(resolve, 1500));
-   if (!ventureDictationCurrent(recording)) return;
-   result = await ventureJSON('/venture/dictation/' + encodeURIComponent(recording.requestId));
+  const wasmBinary = await embeddedBytes('ffmpeg-wasm-source', signal);
+  if (!ventureDictationCurrent(recording) || signal.aborted) return;
+  recording.decoder = decoderClient();
+  await recording.decoder.request('init', {wasmBinary}, [wasmBinary.buffer]);
+  const converted = await recording.decoder.request('transcription_chunk', {file:blob, start:0, end:VENTURE_DICTATION_LIMIT_MS/1000});
+  if (!ventureDictationCurrent(recording) || signal.aborted) return;
+  if (!converted.audio?.byteLength || converted.mimeType !== 'audio/mpeg') throw new Error('Invalid MP3 export');
+  recording.mp3 = new Blob([converted.audio], {type:'audio/mpeg'});
+  // Require a fresh click after asynchronous preparation for iOS download rules.
+  button.textContent = 'Save audio (.mp3)';
+  $('ventureDictationStatus').textContent = message + ' MP3 ready. Tap Save audio to download it.';
+ } catch {
+  if (ventureDictationCurrent(recording)) {
+   button.textContent = 'Prepare MP3 again';
+   $('ventureDictationStatus').textContent = message + ' MP3 conversion was unavailable. Save the original audio instead; it has not been changed.';
   }
-  if (!ventureDictationCurrent(recording)) return;
-  if (result.status !== 'completed') {
-   if (result.status !== 'processing') {
-    const message = result.error || 'This recording is no longer available. Tap the microphone for a new recording.';
-    ventureStopDictation(); ventureSetNotice(message); return;
-   }
-   throw new Error('Dictation is still processing. Retry to recover this recording.');
-  }
-  if (typeof result.text !== 'string') throw new Error('The dictation service did not return plain text.');
-  const field = $('ventureMessage'), text = result.text.trim();
-  const updated = field.value + (field.value && text ? ' ' : '') + text;
-  if (updated.length > field.maxLength) throw new Error('This dictation would exceed the message limit. Shorten your draft and retry transcription.');
-  field.value = updated;
-  if (venture.current) venture.drafts.set(venture.current.id, updated);
-  ventureRecording = null; ventureRecordingUI(null, ''); ventureResizeComposer();
-  if (!text) ventureSetNotice('No speech was detected.');
-  field.focus({preventScroll: true});
- } catch (error) {
-  if (!ventureDictationCurrent(recording)) return;
-  recording.phase = 'retry';
-  $('ventureDictationStatus').textContent = ventureError(error);
-  $('ventureDictationRetry').hidden = false;
-  $('ventureDictationRetry').onclick = () => { if (ventureDictationCurrent(recording)) void ventureUploadDictation(recording); };
-  $('ventureMic').disabled = false; $('ventureMic').setAttribute('aria-label', 'Dismiss dictation and start again');
-  $('ventureMic').onclick = () => { ventureStopDictation(); $('ventureMic').onclick = ventureDictate; void ventureDictate(); };
-  // Retain only the bounded local blob while offering an explicit same-ID retry.
+ } finally {
+  clearTimeout(timeout); recording.decoder?.stop(); recording.decoder = null; recording.exporting = false;
+  if (ventureDictationCurrent(recording)) button.disabled = false;
  }
+}
+function ventureInsertDictation(recording) {
+ if (!ventureDictationCurrent(recording) || !recording.result) return false;
+ const field = $('ventureMessage'), text = recording.result.text.trim();
+ const updated = field.value + (field.value && text ? ' ' : '') + text;
+ if (field.maxLength > 0 && updated.length > field.maxLength) {
+  ventureDictationShowRecovery(recording, 'Transcription completed. Shorten your draft to insert the retained transcript, or save the transcript below. No further transcription will run.', false);
+  return false;
+ }
+ // Only the currently selected account/conversation may receive a result.
+ field.value = updated;
+ if (venture.current) venture.drafts.set(venture.current.id, updated);
+ ventureStopDictation(); ventureResizeComposer();
+ if (!text) ventureSetNotice('No speech was detected.');
+ field.focus({preventScroll:true});
+ return true;
+}
+async function ventureDictationAttempt(recording) {
+ const provider = recording.provider;
+ recording.controller = new AbortController();
+ const signal = recording.controller.signal;
+ const limit = provider === 'whisper' ? 700000 : 240000;
+ const deadline = Date.now() + limit;
+ const receiptPath = '/venture/dictation/' + encodeURIComponent(recording.requestId);
+ const receipt = async () => (await ventureFetch(receiptPath, {signal})).json();
+ let result;
+ try {
+  const response = await ventureFetch('/venture/dictation', {method:'POST', body:recording.form, signal, timeoutMs:limit});
+  result = await response.json();
+ } catch (error) {
+  if (!ventureDictationCurrent(recording)) throw error;
+  // Read once after a lost response. Never repeat the paid POST.
+  try { result = await receipt(); } catch { throw error; }
+ }
+ while (result?.status === 'processing' && Date.now() < deadline) {
+  if (!await ventureDictationPause(recording, 1500)) throw new DOMException('Canceled','AbortError');
+  result = await receipt();
+ }
+ if (!ventureDictationCurrent(recording)) throw new DOMException('Canceled','AbortError');
+ if (result?.status !== 'completed' || typeof result.text !== 'string') {
+  throw new Error(result?.error || (provider === 'whisper' ? 'PC Whisper did not return a transcript.' : 'Gemini did not return a transcript.'));
+ }
+ return result;
+}
+async function ventureUploadDictation(recording) {
+ if (!ventureDictationCurrent(recording) || recording.uploading || recording.sequenceStarted) return;
+ recording.sequenceStarted = true;
+ if (!recording.form) {
+  const mime = (recording.recorder?.mimeType || recording.chunks?.[0]?.type || 'audio/webm').split(';')[0];
+  recording.audio = new Blob(recording.chunks || [], {type:mime}); recording.chunks = [];
+  if (!recording.audio.size) { ventureStopDictation(); ventureSetNotice('No microphone audio was recorded.'); return; }
+  recording.form = new FormData();
+  recording.form.append('audio', recording.audio, 'dictation.' + ventureDictationAudioExtension(recording.audio));
+ }
+ recording.audio ||= recording.form.get('audio');
+ recording.uploading = true;
+ try {
+  for (let attempt = 0; attempt < 4; attempt++) {
+   if (!ventureDictationCurrent(recording)) return;
+   recording.provider = attempt === 0 ? 'gemini' : 'whisper';
+   recording.localAttempt = attempt;
+   const delay = attempt > 0 ? VENTURE_WHISPER_RETRY_MS[attempt-1] : 0;
+   if (delay) {
+    recording.phase = 'waiting'; ventureRecordingUI(recording, 'waiting');
+    $('ventureDictationStatus').textContent = 'PC Whisper failed. Retrying in ' + (delay/1000) + ' seconds (attempt ' + attempt + ' of 3).';
+    if (!await ventureDictationPause(recording, delay)) return;
+   }
+   if (!ventureDictationCurrent(recording)) return;
+   recording.requestId = attempt === 0 ? recording.requestId || ventureId() : ventureId();
+   recording.form.set('requestId', recording.requestId); recording.form.set('provider', recording.provider);
+   recording.phase = 'processing'; ventureRecordingUI(recording, 'processing');
+   if (attempt) $('ventureDictationStatus').textContent = 'Transcribing with PC Whisper (attempt ' + attempt + ' of 3)…';
+   try {
+    recording.result = await ventureDictationAttempt(recording);
+    if (ventureDictationCurrent(recording)) ventureInsertDictation(recording);
+    return;
+   } catch (error) {
+    if (!ventureDictationCurrent(recording)) return;
+    recording.lastError = ventureError(error);
+   }
+  }
+  ventureDictationShowRecovery(recording, 'Transcription failed. Gemini and all 3 PC Whisper attempts were unsuccessful. Save the audio clip below to transcribe it elsewhere. Keep this tab open until it is saved.');
+ } finally { recording.uploading = false; }
 }
 function ventureResetAvatar() {
  if (ventureAvatarObjectURL) URL.revokeObjectURL(ventureAvatarObjectURL);

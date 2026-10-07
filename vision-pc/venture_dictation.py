@@ -1,6 +1,6 @@
-"""Narrow, authenticated Gemini dictation. Never grants project Gemini access.
+"""Narrow, authenticated dictation with allowlisted local Whisper fallback. Never grants project Gemini access.
 
-Only microphone audio is accepted; the model, transcription mode and transport
+Only microphone audio and an allowlisted provider are accepted; the model, transcription mode and transport
 are fixed on the server. No client prompt, URL, model, tools or project ID is
 forwarded. Audio is decoded/capped locally and removed after each request.
 """
@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -65,6 +66,10 @@ class Dictation:
                 CREATE INDEX IF NOT EXISTS venture_dictation_owner_time
                 ON venture_dictation_requests(uid,created_at);
             ''')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(venture_dictation_requests)')}
+            for column, definition in (('provider', "TEXT NOT NULL DEFAULT 'gemini'"), ('error_code', 'TEXT')):
+                if column not in columns:
+                    db.execute(f'ALTER TABLE venture_dictation_requests ADD COLUMN {column} {definition}')
             db.execute("UPDATE venture_dictation_requests SET status='interrupted',error=?,updated_at=? WHERE status='processing'",
                        ('Dictation was interrupted. It was not sent to Gemini again automatically.', time.time()))
             self.prune(db)
@@ -84,8 +89,10 @@ class Dictation:
         credentials = self.app.config.get('GEMINI_CREDENTIALS')
         ffmpeg = self.app.config.get('FFMPEG', '')
         ready = bool(credentials and credentials.available() and (Path(ffmpeg).is_file() or shutil.which(ffmpeg)))
+        local = self.v.transcription.capability() if self.v.transcription else {'ready': False, 'status': 'not-installed'}
         return dict(allowed=True, ready=ready, provider='gemini', model=MODEL,
-                    maxSeconds=MAX_SECONDS, format='text', projectAccessGranted=False)
+                    maxSeconds=MAX_SECONDS, format='text', projectAccessGranted=False, recoveryV2=True, automaticFallbackV1=True,
+                    providers={'gemini': {'ready': ready}, 'whisper': {'ready': bool(local.get('ready')), 'status': local.get('status')}})
 
     def normalize(self, raw: bytes, mime: str, directory: Path) -> tuple[bytes, float]:
         source, target = directory / 'microphone.input', directory / 'microphone.wav'
@@ -116,7 +123,7 @@ class Dictation:
 
     def snapshot(self, row):
         return dict(requestId=row['client_id'], status=row['status'], text=row['text'],
-                    error=row['error'], provider='gemini', format='text')
+                    error=row['error'], errorCode=row['error_code'], provider=row['provider'], format='text')
 
     def transcribe(self, uid, ident, audio, duration):
         # Deliberately does NOT call require_approved() or modify gemini_access.
@@ -135,7 +142,7 @@ class Dictation:
                                json=body, timeout=(15, 120), stream=True, allow_redirects=False) as response:
                 http = response.status_code
                 if not 200 <= http < 300:
-                    raise self.Error('Gemini dictation is temporarily unavailable. Your message was not sent.', 502)
+                    raise self.provider_error(http)
                 chunks = bytearray()
                 for chunk in response.iter_content(65536):
                     chunks.extend(chunk)
@@ -149,9 +156,75 @@ class Dictation:
                 status = 'succeeded'
                 return text
         except (requests.RequestException, ValueError, TypeError):
-            raise self.Error('Gemini dictation could not finish. Check the server connection and try a new recording.', 502) from None
+            raise self.Error('Gemini could not return a result. The provider may have processed this audio. A new Gemini attempt may be billed; PC Whisper uses no transcription API credits.', 502, 'gemini_connection') from None
         finally:
             usage_service.finish_request(receipt, status=status, usage=usage, http_status=http)
+
+    def provider_error(self, status):
+        messages = {
+            400: ('gemini_request', 'Gemini rejected the transcription request. Check the server model and request configuration.'),
+            401: ('gemini_credentials', 'Gemini rejected the saved credential. Reconnect the server Gemini key.'),
+            402: ('gemini_billing', 'Gemini reports a billing or prepaid-credit requirement. Check the Gemini project billing.'),
+            403: ('gemini_access', 'Gemini denied access. Check the saved key, key restrictions and project permissions.'),
+            404: ('gemini_model', 'The Gemini transcription model or endpoint was not found for this connection.'),
+            429: ('gemini_quota', 'Gemini reports a quota or rate limit. This alone does not establish that funds are depleted.'),
+        }
+        code, message = messages.get(status, ('gemini_service', 'Gemini could not complete this request (provider HTTP ' + str(status) + ').'))
+        return self.Error(message + ' Your recording is still available in this tab.', 502, code)
+
+    def transcribe_whisper(self, audio, duration, directory):
+        """Reuse installed offline Whisper, sharing the board worker's CPU lock.
+
+        No account project, Gemini approval, network download or provider secret
+        is involved. Keep the parent's pipe open: the child exits when it closes.
+        """
+        local = self.v.transcription
+        if not local or not local.capability().get('ready'):
+            raise self.Error('PC Whisper is disabled or not installed. Enable the installed local transcription service on FUPCJ Server.', 503, 'whisper_unavailable')
+        if not local._worker_lock.acquire(blocking=False):
+            raise self.Error('PC Whisper is processing another recording. Your audio is retained; try PC Whisper again after that job.', 429, 'whisper_busy')
+        child = None
+        try:
+            settings = local.settings
+            threads = max(1, min(4, int(settings.get('cpuThreads', 4))))
+            (directory / 'speech.wav').write_bytes(audio)
+            (directory / 'manifest.json').write_text(json.dumps({'sections': [
+                {'file': 'speech.wav', 'format': 'wav', 'start': 0, 'end': duration}]}), encoding='utf-8')
+            command = [sys.executable, str(Path(__file__).with_name('transcription.py').resolve()),
+                       '--process', str(directory), '--model', settings['modelPath'],
+                       '--threads', str(threads), '--ffmpeg', self.app.config['FFMPEG']]
+            if settings.get('packagesPath'):
+                command += ['--packages', settings['packagesPath']]
+            env = os.environ.copy()
+            env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', OMP_NUM_THREADS=str(threads),
+                       OPENBLAS_NUM_THREADS='1', MKL_NUM_THREADS=str(threads))
+            flags = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == 'nt' else {}
+            child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, env=env, **flags)
+            child.wait(timeout=600)
+            result = directory / 'result.json'
+            if child.returncode or not result.is_file() or result.stat().st_size > MAX_REPLY:
+                raise ValueError('invalid-local-result')
+            data = json.loads(result.read_text(encoding='utf-8'))
+            text = data.get('text')
+            if not isinstance(text, str):
+                raise ValueError('invalid-local-text')
+            # Remove only the worker's line-prefix timestamps, not spoken dates.
+            text = re.sub(r'^\[\d{2,}:\d{2}:\d{2}\]\s*', '', text, flags=re.M)
+            return plain_transcript({'output_text': text})
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise self.Error('PC Whisper could not complete this recording. Check the installed local transcription service.', 502, 'whisper_worker') from None
+        finally:
+            if child is not None:
+                if child.stdin:
+                    child.stdin.close()
+                if child.poll() is None:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        child.kill(); child.wait(timeout=5)
+            local._worker_lock.release()
 
     def register_routes(self):
         @self.app.route('/api/venture/dictation', methods=['GET', 'POST'])
@@ -160,8 +233,11 @@ class Dictation:
             if request.method == 'GET':
                 return jsonify(self.capability())
             request.max_content_length = MAX_BYTES + 65536
-            if set(request.form) != {'requestId'} or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
-                raise self.Error('Dictation accepts one microphone recording and its request ID only.')
+            if set(request.form) - {'requestId', 'provider'} or 'requestId' not in request.form or any(len(request.form.getlist(k)) != 1 for k in request.form) or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
+                raise self.Error('Dictation accepts one microphone recording, its request ID and an optional provider only.')
+            provider = request.form.get('provider', 'gemini')
+            if provider not in ('gemini', 'whisper'):
+                raise self.Error('Choose Gemini or PC Whisper for dictation.')
             client_id = request.form['requestId']
             if not re.fullmatch(r'[A-Za-z0-9_-]{16,120}', client_id):
                 raise self.Error('Invalid dictation request ID.')
@@ -182,7 +258,7 @@ class Dictation:
                     self.prune(db)
                     old = db.execute('SELECT * FROM venture_dictation_requests WHERE id=?', (ident,)).fetchone()
                     if old:
-                        if old['digest'] != digest:
+                        if old['digest'] != digest or old['provider'] != provider:
                             raise self.Error('This dictation ID belongs to a different recording.', 409)
                         return jsonify(self.snapshot(old)), 202 if old['status']=='processing' else 200
                     if db.execute("SELECT 1 FROM venture_dictation_requests WHERE uid=? AND status='processing'", (uid,)).fetchone():
@@ -192,19 +268,20 @@ class Dictation:
                     if count >= 60:
                         raise self.Error('Dictation is temporarily rate limited for this account. Try again later.', 429)
                     now = time.time()
-                    db.execute('INSERT INTO venture_dictation_requests(id,uid,client_id,digest,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
-                               (ident,uid,client_id,digest,'processing',now,now))
+                    db.execute('INSERT INTO venture_dictation_requests(id,uid,client_id,digest,status,created_at,updated_at,provider) VALUES(?,?,?,?,?,?,?,?)',
+                               (ident,uid,client_id,digest,'processing',now,now,provider))
                 try:
                     with tempfile.TemporaryDirectory(prefix='venture-dictation-', dir=self.app.config['DATA_DIR']/'temporary') as name:
                         audio, duration = self.normalize(raw, mime, Path(name))
-                        text = self.transcribe(uid, ident, audio, duration)
+                        text = self.transcribe_whisper(audio, duration, Path(name)) if provider == 'whisper' else self.transcribe(uid, ident, audio, duration)
                     with self.db() as db:
                         db.execute("UPDATE venture_dictation_requests SET status='completed',text=?,updated_at=? WHERE id=?", (text,time.time(),ident))
                 except Exception as error:
                     # Fixed messages only; a provider/credential error cannot leak keys.
-                    message = error.message if isinstance(error,self.Error) else 'The saved Gemini dictation connection needs a server update.'
+                    message = error.message if isinstance(error,self.Error) else 'The dictation connection needs attention on FUPCJ Server. Your recording is still available in this tab.'
+                    code = getattr(error, 'code', None) if isinstance(error, self.Error) else 'dictation_configuration'
                     with self.db() as db:
-                        db.execute("UPDATE venture_dictation_requests SET status='error',error=?,updated_at=? WHERE id=?", (message,time.time(),ident))
+                        db.execute("UPDATE venture_dictation_requests SET status='error',error=?,error_code=?,updated_at=? WHERE id=?", (message,code,time.time(),ident))
                 with self.db() as db:
                     row = db.execute('SELECT * FROM venture_dictation_requests WHERE id=?',(ident,)).fetchone()
                 return jsonify(self.snapshot(row))

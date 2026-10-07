@@ -1,0 +1,17 @@
+/* Fixed Material Symbols are masks so existing account/status text updates cannot erase them. */
+.top-actions .workspace-nav-icon{width:44px;height:44px;min-width:44px;padding:10px;position:relative;font-size:0;display:inline-flex;justify-content:center;align-items:center}
+.top-actions .workspace-nav-icon>*{display:none}
+.top-actions .workspace-nav-icon:before{content:"";display:block;width:24px;height:24px;background:currentColor;mask:var(--workspace-icon) center/24px no-repeat;-webkit-mask:var(--workspace-icon) center/24px no-repeat}
+.workspace-nav-icon:hover:after,.workspace-nav-icon:focus-visible:after{content:attr(aria-label);position:absolute;top:calc(100% + 8px);z-index:400;left:50%;transform:translateX(-50%);font:12px/1.4 system-ui;background:#171c19;color:#f3f6f1;border:1px solid #596258;border-radius:6px;padding:5px 8px;white-space:nowrap;pointer-events:none}
+.workspace-dialog{color:#edf2e9;background:#101411;border:1px solid #3d473e;border-radius:16px;width:min(720px,calc(100vw - 24px));max-height:85dvh;overflow:auto;padding:24px;box-sizing:border-box}
+.workspace-dialog::backdrop{background:#000a}
+.workspace-dialog p{line-height:1.6}
+.workspace-source-row{display:flex;align-items:center;gap:10px;padding:14px 0;border-bottom:1px solid #303931}
+.workspace-source-row>div{flex:1;min-width:0}.workspace-source-row strong{display:block;overflow-wrap:anywhere;font-size:14px}.workspace-source-row small{display:block;color:#a8b2a5;font-size:11px;margin-top:5px}
+.workspace-source-row button{min-height:40px}.workspace-preference{margin:16px 0}.workspace-preference label{display:block;margin-bottom:8px}.workspace-preference select{width:100%;min-height:44px;font-size:16px}
+.workspace-login-choice{display:flex;gap:12px;align-items:center;text-align:left;margin:12px 0}.workspace-login-choice select{min-width:0;flex:1;font-size:16px;min-height:44px}
+.workspace-sources-ready .venture-file-grid{display:none!important}
+#ventureDictation{flex-wrap:wrap}#ventureDictationStatus{overflow-wrap:anywhere;white-space:normal;max-width:100%}#ventureDictation button{min-height:40px;flex-shrink:0}
+@media(max-width:760px){#runProjectBtn,#ventureBack{display:none!important}.workspace-dialog{padding:18px}.workspace-source-row{flex-wrap:wrap}.workspace-source-row>div{flex-basis:100%}#workspaceSourcesButton{min-width:40px}}
+
+#ventureDictation.failed #ventureDictationStatus{color:#ff8f91} .venture-coming-soon{opacity:.5;cursor:not-allowed}.venture-coming-soon small{display:block;font-size:11px;margin-top:4px}.venture-coming-soon input{cursor:not-allowed}
