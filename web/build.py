@@ -34,6 +34,20 @@ def normalize_version(parts):
     return parts
 
 
+def select_release(requested, previous_raw, changed):
+    """Normalize a legacy multi-digit release without counting migration as a new build."""
+    previous_raw = list(previous_raw)
+    requested = normalize_version(requested)
+    previous = normalize_version(previous_raw)
+    if requested > previous:
+        return requested
+    # 1.0.0.21 and 1.0.2.1 identify the same release. Once a release is
+    # normalized, real source updates carry the last digit as usual.
+    if changed and (previous_raw == previous or requested < previous):
+        previous[3] += 1
+    return normalize_version(previous)
+
+
 def build():
     source = (ROOT / 'Vision.html').read_text(encoding='utf-8')
     previous_version = re.search(r'<meta name="vision-version" content="(\d+\.\d+\.\d+\.\d+)">', source)
@@ -83,10 +97,8 @@ def build():
     source_id = hashlib.sha256((version + '\0' + source).encode('utf-8')).hexdigest()
     parts = normalize_version(int(part) for part in version.split('.'))
     if previous_version and previous_source:
-        previous = normalize_version(int(part) for part in previous_version[1].split('.'))
-        if parts <= previous:
-            previous[3] += int(previous_source[1] != source_id)
-            parts = normalize_version(previous)
+        previous = [int(part) for part in previous_version[1].split('.')]
+        parts = select_release(parts, previous, previous_source[1] != source_id)
     release = '.'.join(str(part) for part in parts)
     if source.count('{{VISION_VERSION}}') != 2:
         raise ValueError('Expected the release ID in the header and info dialog')
