@@ -58,16 +58,12 @@ function workspaceSwitch(view) {
   if(!venture.open)void ventureOpen();
  }else ventureClose();
 }
-function workspaceOfferNotice() {
- if(!workspace.uid||!matchMedia('(max-width:760px)').matches||workspace.prefs.swipeNoticeVersion===1)return;
- const dialog=$('workspaceSwipeNotice');if(!dialog.open)dialog.showModal();
-}
 async function workspaceIdentity() {
- workspaceNavIcons();
+ workspaceNavIcons();workspaceSyncSwitch();
  const uid=ventureScope();if(uid===workspace.uid)return;
  workspace.uid=uid;workspace.epoch++;workspace.sources=false;workspace.prefs={launchView:'vision',swipeNoticeVersion:0};
  document.body.classList.remove('workspace-sources-ready');
- workspaceClearSources();$('workspaceSwipeNotice').close();
+ workspaceClearSources();
  if(!uid)return;
  ventureIdentity();const epoch=workspace.epoch,navigation=workspace.navigation;
  const saved=workspaceLocal();if(saved&&WORKSPACE_VIEWS.has(saved.launchView))workspace.prefs=saved;
@@ -82,7 +78,6 @@ async function workspaceIdentity() {
  workspaceLocal(workspace.prefs);workspacePaintPreferences();
  const launch=workspaceChosenURL()||workspace.prefs.launchView;
  if(launch==='venture'&&navigation===workspace.navigation)workspaceSwitch('venture');
- workspaceOfferNotice();
 }
 function workspaceClearSources() {
  workspace.sourceEpoch++;workspace.sourceCID=null;workspace.files.clear();workspace.cursor=null;workspace.loading=false;
@@ -134,16 +129,55 @@ function workspaceOpenSources() {
  if(!workspace.sources){$('workspaceSourcesStatus').textContent='Update FUPCJ Server to enable conversation-wide Sources. Existing file buttons are still available in the conversation.';return;}
  void workspaceLoadSources();
 }
+// One shared mobile button keeps its screen position and keyboard focus in both views.
+let workspaceChevronView='', workspaceChevronVisible=false;
+const workspaceChevrons={};
+function workspaceInstallSwitch() {
+ const button=document.createElement('button');button.id='workspaceSwitchButton';button.type='button';button.className='workspace-switch';button.hidden=true;
+ for(const direction of ['right','left']) {
+  const host=document.createElement('span');host.className='workspace-chevron';host.dataset.direction=direction;host.setAttribute('aria-hidden','true');host.hidden=true;button.append(host);
+  workspaceChevrons[direction]=window.VisionChevron.create(host,direction);
+ }
+ button.onclick=()=>workspaceSwitch(venture.open?'vision':'venture');document.body.append(button);
+ matchMedia('(max-width:760px)').addEventListener('change',()=>workspaceSyncSwitch());
+ workspaceSyncSwitch();
+}
+function workspaceSyncSwitch() {
+ const button=$('workspaceSwitchButton');if(!button)return;
+ const direction=venture.open?'left':'right', label=venture.open?'Return to Vision':'Open Venture';
+ const visible=accountSignedIn()&&matchMedia('(max-width:760px)').matches&&!(venture.open&&$('visionVenture').classList.contains('history-open'));
+ button.hidden=!visible;button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-controls',venture.open?'board':'visionVenture');
+ document.body.classList.toggle('workspace-in-venture',venture.open);
+ // The board is an isolated stacking context. Put its mobile Details control
+ // beside the fixed top bar so the bar cannot cover it.
+ const panel=$('sidebarToggle'),board=$('board');
+ if(panel&&board){const parent=matchMedia('(max-width:760px)').matches?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
+ const app=document.querySelector('main.app');if(app)app.inert=venture.open;
+ const header=$('appHeader');if(header)header.inert=venture.open||(matchMedia('(max-width:760px)').matches&&!document.documentElement.classList.contains('header-open'));
+ if($('headerReveal'))$('headerReveal').inert=venture.open;
+ for(const host of button.children)host.hidden=host.dataset.direction!==direction;
+ if(!visible||direction!==workspaceChevronView||!workspaceChevronVisible) {
+  for(const icon of Object.values(workspaceChevrons))icon.pause();
+  if(visible)workspaceChevrons[direction].start();
+ }
+ workspaceChevronView=direction;workspaceChevronVisible=visible;
+}
+function workspaceAnimateView(view) {
+ if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+ const host=view==='venture'?$('visionVenture'):document.querySelector('main.app');
+ if(!host?.animate)return;
+ host.getAnimations().forEach(animation=>animation.cancel());
+ host.animate([{opacity:.65,transform:'translateX('+(view==='venture'?'18':'-18')+'px)'},{opacity:1,transform:'translateX(0)'}],{duration:220,easing:'cubic-bezier(.2,.75,.25,1)'});
+}
 function workspaceInstall() {
  const createDialog=(id,html)=>{const d=document.createElement('dialog');d.id=id;d.className='workspace-dialog';d.innerHTML=html;document.body.append(d);return d;};
- const notice=createDialog('workspaceSwipeNotice','<h2>Switch workspaces with a swipe</h2><p>On your phone, swipe left across the top navigation area to go from Vision to Venture. Swipe right there to return to Vision. This works with the toolbar open or closed.</p><p>You can also switch from your account menu.</p><button id="workspaceSwipeOK" type="button" class="primary">OK</button>');
- notice.addEventListener('cancel',event=>event.preventDefault());
- $('workspaceSwipeOK').onclick=()=>{notice.close();void workspaceSave({swipeNoticeVersion:1});};
  createDialog('workspaceSources','<div class="row spread"><h2 id="workspaceSourcesHeading">Sources</h2><button id="workspaceSourcesClose" type="button" aria-label="Close Sources">×</button></div><p id="workspaceSourcesStatus" role="status"></p><button id="workspaceSourcesRefresh" type="button">Refresh files</button><div id="workspaceSourcesList"></div><button id="workspaceSourcesMore" type="button" hidden>Load earlier files</button>');
  $('workspaceSourcesClose').onclick=()=>workspaceClearSources();$('workspaceSources').addEventListener('close',()=>clearTimeout(workspace.timer));
  $('workspaceSourcesRefresh').onclick=()=>void workspaceLoadSources();$('workspaceSourcesMore').onclick=()=>void workspaceLoadSources(true);
  const sources=document.createElement('button');sources.id='workspaceSourcesButton';sources.type='button';sources.className='v-icon';sources.title='Conversation Sources';sources.setAttribute('aria-label','Open conversation Sources');sources.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h7l2 2h9v13H3z"/></svg>';
  sources.onclick=workspaceOpenSources;$('ventureBack').before(sources);
+ const slot=document.createElement('span');slot.className='workspace-switch-slot';slot.setAttribute('aria-hidden','true');$('ventureAvatar').before(slot);
+ workspaceInstallSwitch();
  const preference=(host,id,status)=>{if(!host)return;const div=document.createElement('div');div.className='workspace-preference';
   div.innerHTML='<label for="'+id+'">Open by default</label><select id="'+id+'"><option value="vision">Vision board</option><option value="venture">Venture</option></select><p id="'+status+'" class="mini-note" role="status"></p>';
   host.append(div);$(id).onchange=()=>void workspaceSave({launchView:$(id).value});};
@@ -155,38 +189,15 @@ function workspaceInstall() {
  workspaceNavIcons();
 }
 workspaceInstall();
-// Recognize only deliberate horizontal touch swipes that begin in the top UI.
-let workspaceTouch=null,workspaceSuppressClickUntil=0;
-function workspaceTopLimit() {
- if(venture.open)return document.querySelector('.venture-header').getBoundingClientRect().bottom;
- const header=$('appHeader'),open=document.documentElement.classList.contains('header-open');
- return open&&header?header.getBoundingClientRect().bottom:Math.max(52,$('mobileHeaderToggle')?.getBoundingClientRect().bottom||0,$('headerReveal')?.getBoundingClientRect().bottom||0);
-}
-document.addEventListener('touchstart',event=>{
- workspaceTouch=null;
- if(!accountSignedIn()||!matchMedia('(max-width:760px)').matches||event.touches.length!==1||document.querySelector('dialog[open]'))return;
- const t=event.touches[0];if(t.clientY>workspaceTopLimit()||event.target.closest('input,textarea,select'))return;
- workspaceTouch={x:t.clientX,y:t.clientY,time:performance.now(),view:venture.open?'venture':'vision'};
-},{passive:true,capture:true});
-document.addEventListener('touchmove',event=>{
- if(!workspaceTouch)return;if(event.touches.length!==1){workspaceTouch=null;return;}
- const t=event.touches[0],dx=t.clientX-workspaceTouch.x,dy=t.clientY-workspaceTouch.y;
- if(Math.abs(dy)>20&&Math.abs(dy)>Math.abs(dx)){workspaceTouch=null;return;}
- if(Math.abs(dx)>20&&Math.abs(dx)>Math.abs(dy)*1.5)event.preventDefault();
-},{passive:false,capture:true});
-document.addEventListener('touchend',event=>{
- const start=workspaceTouch;workspaceTouch=null;if(!start||event.changedTouches.length!==1)return;
- const t=event.changedTouches[0],dx=t.clientX-start.x,dy=t.clientY-start.y;
- if(performance.now()-start.time>1000||Math.abs(dx)<64||Math.abs(dx)<Math.abs(dy)*1.7)return;
- if((start.view==='vision'&&dx<0)||(start.view==='venture'&&dx>0)){event.preventDefault();workspaceSuppressClickUntil=performance.now()+700;workspaceSwitch(start.view==='vision'?'venture':'vision');}
-},{passive:false,capture:true});
-document.addEventListener('touchcancel',()=>{workspaceTouch=null;},{passive:true});
-document.addEventListener('click',event=>{if(performance.now()<workspaceSuppressClickUntil){event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
 const workspacePriorGate=accountUpdateGate;
 accountUpdateGate=function(){workspacePriorGate();queueMicrotask(()=>void workspaceIdentity());};
 const workspacePriorClose=ventureClose;
-ventureClose=function(){workspace.navigation++;workspaceClearSources();workspacePriorClose();};
+ventureClose=function(){const changed=venture.open;workspace.navigation++;workspaceClearSources();workspacePriorClose();workspaceSyncSwitch();if(changed)workspaceAnimateView('vision');};
 $('ventureBack').onclick=ventureClose;
+const workspacePriorOpen=ventureOpen;
+ventureOpen=function(){const changed=!venture.open;const pending=workspacePriorOpen();workspaceSyncSwitch();if(changed&&venture.open)workspaceAnimateView('venture');return pending;};
+const workspacePriorSidebar=ventureSidebar;
+ventureSidebar=function(show){workspacePriorSidebar(show);workspaceSyncSwitch();};
 const workspacePriorPaint=venturePaint;
 venturePaint=function(){workspacePriorPaint();if(workspace.sourceCID&&workspace.sourceCID!==venture.current?.id)workspaceClearSources();};
 if(typeof accountReady!=='undefined')void accountReady.then(()=>workspaceIdentity());else void workspaceIdentity();

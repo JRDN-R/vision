@@ -14,3 +14,25 @@
 @media(max-width:760px){#runProjectBtn,#ventureBack{display:none!important}.workspace-dialog{padding:18px}.workspace-source-row{flex-wrap:wrap}.workspace-source-row>div{flex-basis:100%}#workspaceSourcesButton{min-width:40px}}
 
 #ventureDictation.failed #ventureDictationStatus{color:#ff8f91} .venture-coming-soon{opacity:.5;cursor:not-allowed}.venture-coming-soon small{display:block;font-size:11px;margin-top:4px}.venture-coming-soon input{cursor:not-allowed}
+
+/* A single viewport anchor for both workspaces, outside the sliding content. */
+.workspace-switch,.workspace-switch-slot{display:none}
+.workspace-switch[hidden],.workspace-chevron[hidden]{display:none!important}
+@media(max-width:760px){
+ .workspace-switch{position:fixed;z-index:86;top:calc(10px + env(safe-area-inset-top,0px));right:calc(40px + max(12px,env(safe-area-inset-right,0px)));display:grid;place-items:center;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+ .workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
+ .workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
+ .workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
+ .workspace-chevron>svg{display:block;width:100%!important;height:100%!important}
+ .workspace-switch-slot{display:block;flex:0 0 44px;width:44px;height:44px}
+ .venture-root .venture-header{height:calc(65px + env(safe-area-inset-top,0px));min-height:calc(65px + env(safe-area-inset-top,0px));padding-top:calc(9px + env(safe-area-inset-top,0px));gap:8px}
+ .venture-root .venture-avatar{margin-left:0}
+ .venture-root #ventureNewCompact,.venture-root #workspaceSourcesButton{width:36px;min-width:36px;height:44px;padding:8px;flex-shrink:0}
+ .mobile-mode .app{padding-top:calc(65px + env(safe-area-inset-top,0px))}
+ .mobile-mode #appHeader{top:calc(65px + env(safe-area-inset-top,0px))}
+ .mobile-mode #headerReveal{top:env(safe-area-inset-top,0px);height:65px;padding-bottom:29px}
+ .mobile-mode #inspectorPanel{top:calc(65px + env(safe-area-inset-top,0px))}
+ .mobile-mode #sidebarToggle{position:fixed;z-index:46;top:calc(10px + env(safe-area-inset-top,0px));left:max(12px,env(safe-area-inset-left,0px));right:auto;min-height:44px;max-width:calc(50vw - 42px);overflow:hidden;text-overflow:ellipsis;background:transparent;border-color:transparent;box-shadow:none}
+ .workspace-in-venture #sidebarToggle{visibility:hidden}
+ .venture-popover{top:calc(64px + env(safe-area-inset-top,0px))}
+}

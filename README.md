@@ -7,6 +7,16 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+Mobile navigation in **v1.0.2.3** uses one fixed circle-chevron button just left
+of the account avatar position: right opens Venture, left returns to Vision.
+Venture's new-conversation and Sources controls sit to its left. The switch stays
+in place with Vision's toolbar open or closed. The old workspace swipes and swipe
+tutorial are retired. Each view entry reveals the original icon once, then only
+its green-dominant gradient loops. Reduced-motion settings show a still icon.
+The [standalone icon preview](web/animations/circle-chevron-preview.html) includes
+both downloadable Lottie files; [playback details](web/animations/README.md)
+describe the one-time entrance and continuous gradient segments.
+
 ## Vision Venture (1.0.0.15)
 
 **Venture** is the new account-owned conversation workspace: a near-black interface
