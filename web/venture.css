@@ -24,3 +24,25 @@
 .venture-memory-sources{font-size:12px;color:#9baba4;margin-top:12px}.venture-memory-sources p{font-size:12px!important}
 .venture-delete-button{margin:12px 0 8px;color:#f28b86;background:transparent;border:1px solid rgba(242,139,134,.28);padding:10px 14px;border-radius:10px;cursor:pointer}.venture-delete-button:hover{background:rgba(242,139,134,.09)}
 #ventureStoragePath{display:block;overflow-wrap:anywhere;font-size:11px}.venture-settings{max-height:calc(100dvh - 110px);overflow-y:auto}
+
+/* Model identities and a keyboard-accessible, selection-only catalog. */
+.venture-model-identity{display:inline-flex;align-items:center;gap:7px;min-width:0;font-family:inherit;font-weight:600;line-height:1.5}
+.venture-model-name{overflow-wrap:anywhere}.venture-model-symbol{display:inline-block;flex:none;width:20px;height:20px;background:currentColor;mask:var(--model-symbol) center/contain no-repeat;-webkit-mask:var(--model-symbol) center/contain no-repeat}
+.model-sol{color:#e6bc55}.model-terra{color:#7cbf79}.model-luna{color:#f0f1ef}.model-astra{color:#8d80df;--astra-wave:linear-gradient(110deg,#5873d9 0%,#8255bb 28%,#469897 48%,#ac627e 62%,#6154ae 80%,#5873d9 100%)}
+.model-astra .venture-model-name,.model-astra .venture-model-symbol{background-image:var(--astra-wave);background-size:300% 100%;animation:venture-astra-wave 16s linear infinite}
+.model-astra .venture-model-name{background-clip:text;-webkit-background-clip:text;color:transparent}
+@keyframes venture-astra-wave{from{background-position:100% 50%}to{background-position:-200% 50%}}
+.venture-root .venture-model-select{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:12px;background:#151b14;border:1px solid #506147;border-radius:11px;text-align:left;font-size:15px;color:#dcebd0}
+.venture-models-panel{margin-top:8px;padding:8px;background:#151a14;border:1px solid #43533d;border-radius:12px}.venture-models-panel[hidden]{display:none}
+#ventureModels{max-height:290px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.venture-model-group-title{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#91a785;padding:9px 8px 5px}
+.venture-root .venture-model-option{display:flex;align-items:center;justify-content:space-between;gap:9px;border:0;background:transparent;color:#d4dfce;text-align:left;border-radius:8px;padding:10px;width:100%;font-size:13px;min-height:42px;cursor:pointer}
+.venture-root .venture-model-option:hover,.venture-root .venture-model-option:focus-visible{background:#273023;outline:1px solid #7b9865;outline-offset:-1px}
+.venture-root .venture-model-option[aria-selected=true]{background:#2b3526}.venture-model-option small{font-size:9px;white-space:nowrap}.venture-model-option:disabled{opacity:.45;cursor:default}.venture-model-check{color:var(--accent)}
+.venture-popover .venture-pro-toggle{position:relative;display:flex;align-items:center;gap:9px;justify-content:space-between;font-size:13px;margin:16px 0}.venture-pro-toggle[hidden]{display:none!important}
+.venture-pro-toggle input{position:absolute;right:0;width:40px;height:24px;opacity:0;margin:0;cursor:pointer;z-index:1}.venture-switch-track{width:40px;height:24px;border-radius:16px;background:#485244;transition:background .2s}
+.venture-switch-track:after{content:'';display:block;width:18px;height:18px;margin:3px;border-radius:50%;background:#e2eadf;transition:transform .2s}.venture-pro-toggle input:checked+.venture-switch-track{background:#77994f}.venture-pro-toggle input:checked+.venture-switch-track:after{transform:translateX(16px)}.venture-pro-toggle input:focus-visible+.venture-switch-track{outline:2px solid var(--accent);outline-offset:3px}
+.venture-history-open{display:flex!important;align-items:center;gap:9px}.venture-history-graphic{flex:none;font-size:15px}.venture-history-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.venture-response-meta .venture-model-symbol{width:17px;height:17px}
+@media(prefers-reduced-motion:reduce){.model-astra .venture-model-name,.model-astra .venture-model-symbol{animation:none;background-position:45% 50%}}
+
+.venture-history-graphic svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
