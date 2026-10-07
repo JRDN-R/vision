@@ -1,0 +1,482 @@
+diff --git a/.github/workflows/test-venture.yml b/.github/workflows/test-venture.yml
+index d89fc71..5a1452e 100644
+--- a/.github/workflows/test-venture.yml
++++ b/.github/workflows/test-venture.yml
+@@ -57,0 +58,6 @@ jobs:
++      - name: Workspace recovery unit and browser checks
++        run: |
++          set -o pipefail
++          python tests/workspace-unit.py 2>&1 | tee tests/venture-logs/workspace-unit.txt
++          python tests/workspace-browser.py 2>&1 | tee tests/venture-logs/workspace-browser.txt
++          python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt
+diff --git a/tests/workspace-browser.py b/tests/workspace-browser.py
+new file mode 100644
+index 0000000..55b7961
+--- /dev/null
++++ b/tests/workspace-browser.py
+@@ -0,0 +1,185 @@
++"""Chromium integration of real workspace/recovery modules against non-billable fixtures.
++This is not an iOS-device, Windows-worker, or live-provider test.
++Query input is injected because this environment does not permit browser navigation.
++The URL parser is exercised; hosted navigation itself is not verified.
++"""
++from pathlib import Path
++import importlib.util, json, os
++from urllib.parse import urlparse
++from playwright.sync_api import sync_playwright
++ROOT=Path(__file__).resolve().parents[1]
++spec=importlib.util.spec_from_file_location('venture_fixture',ROOT/'tests/venture-smoke.py')
++mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
++extra='''<header id="appHeader" class="top-actions"><button id="accountButton">Account</button><button id="newBtn">New</button><button id="openBtn">Projects</button><button id="saveBtn">Save project</button><button id="exportBtn">Export</button></header><button id="mobileHeaderToggle" hidden></button><button id="headerReveal" hidden></button><dialog id="accountDialog"></dialog><div id="accountGateSignIn">Sign in</div>'''
++fixture=mod.fixture.replace('<body>','<body>'+extra).replace('</style>','\n'+(ROOT/'web/workspace.css').read_text()+'</style>',1).replace('</script></body>', '\n'+(ROOT/'web/workspace.js').read_text().replace('location.search',"window.fixtureQuery || ''")+'</script></body>')
++CID='v-test-conversation-001'
++settings=mod.settings
++run=dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create a report.',text='Saved report.',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)
++conv=dict(id=CID,title='Saved inspection report',settings=settings,revision=1,createdAt=1791320000,updatedAt=1791320000,boardProject=False)
++
++def response(data,status=200,mime='application/json'):
++    return dict(status=status,type=mime,body=json.dumps(data) if mime=='application/json' else data)
++
++def main():
++ with sync_playwright() as pw:
++  browser=pw.chromium.launch(headless=True,**({'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
++  checks=[]
++  try:
++   for width in (390,1280):
++    prefs=dict(launchView='vision',swipeNoticeVersion=0,sourcesV1=True);source_calls=[];patches=[]
++    def api(url,method,raw):
++     path=url.split('?')[0];body=json.loads(raw or '{}')
++     if path=='/health':return response({'capabilities':{'ventureV1':True,'ventureV2':True}})
++     if path=='/venture/workspace-preferences':
++      if method=='PATCH':prefs.update(body);patches.append(body)
++      return response(prefs)
++     if path=='/venture/dictation':return response({'recoveryV2':True,'providers':{'whisper':{'ready':True}}})
++     if path=='/venture/models':return response({'status':'available','models':[{'id':v} for v in ['gpt-6-astra','gpt-6.1-sol','gpt-4.1','sora-2']]})
++     if path=='/venture/profile':return response({'hasAvatar':False})
++     if path=='/venture/preferences':return response({'settings':body if method=='PUT' else settings})
++     if path=='/venture/funding':return response({'status':'available','fraction':.75,'revision':1,'issues':[]})
++     if path=='/venture/conversations':return response({'conversations':[conv],'nextCursor':None})
++     if path.endswith('/sources'):
++      source_calls.append(url)
++      older='before=' in url
++      files=[dict(id='a-'+str(i),kind='artifact',artifactId='a-001',runId='run-001',name='report.html' if i==0 else f'version-{i}.txt',mime='text/html' if i==0 else 'text/plain',size=50,ready=True,createdAt=1791321000-i) for i in (range(100,104) if older else range(100))]
++      return response({'conversationId':CID,'files':files,'nextCursor':None if older else '[1791320901,"a-99"]'})
++     if '/artifacts/' in path:return response('<h1>Saved report</h1><script>parent.hacked=true</script>',mime='text/html')
++     if path==f'/venture/conversations/{CID}':return response({'conversation':conv,'runs':[run],'cursor':1791320060,'nextCursor':None})
++     return response({'error':'Unexpected fixture request '+path},404)
++    ctx=browser.new_context(viewport={'width':width,'height':844},has_touch=True,accept_downloads=True)
++    p=ctx.new_page();p.set_default_timeout(5000);errors=[];p.on('pageerror',lambda error:errors.append(str(error)));p.expose_function('ventureTestAPI',api)
++    p.route('**/*',lambda route:route.fulfill(body=fixture,content_type='text/html') if route.request.url.startswith('http://127.0.0.1/') else route.abort())
++    p.set_content(fixture.replace('<script>', '<script>window.fixtureQuery="?view=venture";',1));p.wait_for_function('venture.open && venture.ready')
++    assert p.locator('#visionVenture').is_visible()
++    if width==390:
++     assert p.locator('#workspaceSwipeNotice').is_visible();p.keyboard.press('Escape');assert p.locator('#workspaceSwipeNotice').is_visible()
++     p.locator('#workspaceSwipeOK').click();p.wait_for_function('workspace.prefs.swipeNoticeVersion===1')
++     assert prefs['swipeNoticeVersion']==1
++     assert p.locator('#ventureBack').is_hidden();assert p.locator('#runProjectBtn').is_hidden()
++    else:assert p.locator('#workspaceSwipeNotice').is_hidden()
++    assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
++    assert p.evaluate('getComputedStyle(document.getElementById("accountButton"),"::before").maskImage.includes("data:image/svg+xml")')
++    p.evaluate('ventureSelect('+json.dumps(CID)+')');p.wait_for_function('venture.current?.id==='+json.dumps(CID))
++    p.locator('#workspaceSourcesButton').click();p.wait_for_function('workspace.files.size===100')
++    assert p.locator('.venture-file-grid').is_hidden()
++    p.locator('#workspaceSourcesMore').click();p.wait_for_function('workspace.files.size===104')
++    p.locator('#workspaceSourcesRefresh').click();p.wait_for_timeout(150)
++    assert p.locator('#workspaceSourcesList .workspace-source-row').count()==104
++    assert p.locator('#workspaceSourcesMore').is_hidden()
++    with p.expect_download() as dl:p.locator('.workspace-source-row').first.get_by_role('button',name='Download',exact=True).click()
++    assert dl.value.suggested_filename=='report.html'
++    # The existing preview is also a dialog and must keep opaque sandboxing.
++    p.locator('.workspace-source-row').first.get_by_role('button',name='Preview',exact=True).click();p.wait_for_timeout(100)
++    assert p.frame_locator('#consolePreviewBody iframe').locator('h1').inner_text()=='Saved report'
++    assert p.locator('#consolePreviewBody iframe').get_attribute('sandbox')==''
++    assert not p.evaluate('!!window.hacked');p.locator('#consolePreviewClose').click()
++    p.screenshot(path=str(ROOT/'tests/venture-screenshots'/f'sources-{width}.png'))
++    p.locator('#workspaceSourcesClose').click()
++    assert p.evaluate("ventureSettings({model:'gpt-4.1',runOptions:{mode:'pro',effort:'max',verbosity:'high'}}).runOptions")==dict(mode='auto',effort='auto',verbosity='auto',webSearch=False,codeInterpreter=True)
++    # Parameter controls hide for non-reasoning models and retain supported maxima.
++    p.evaluate("venture.settings.model='gpt-4.1';ventureNormalizeParameterChoice();venturePaintSettings();ventureTogglePopover('settings')")
++    assert p.locator('#ventureEffort').is_hidden();assert p.locator('#ventureVerbosity').is_hidden();assert p.locator('#ventureProRow').is_hidden()
++    assert p.locator('#ventureMaxTokens').get_attribute('max')=='32768'
++    p.locator('#ventureSettingsClose').click()
++    # Actual retry sequence; accelerated waits record the production delays.
++    # Paid/local providers and microphone acquisition are non-billable fixtures.
++    p.evaluate(r'''window.dictationRequests=[];window.dictationOutcomes=[];window.receiptOutcomes=[];
++    window.dictationWaits=[];window.holdDictationWait=false;
++    const originalFetch=ventureFetch,originalPause=ventureDictationPause;
++    ventureDictationPause=(rec,ms)=>{dictationWaits.push(ms);
++      if(holdDictationWait)return new Promise(resolve=>{rec.retryResolve=resolve;});
++      return originalPause(rec,1);};
++    ventureFetch=async function(path,options={}){
++      if(path.startsWith('/venture/dictation/')&&options.method!=='POST'){
++        const outcome=receiptOutcomes.shift();if(!outcome)throw new Error('No saved result');
++        return new Response(JSON.stringify(outcome),{status:200,headers:{'Content-Type':'application/json'}});
++      }
++      if(path==='/venture/dictation'&&options.method==='POST'){
++        dictationRequests.push({id:options.body.get('requestId'),provider:options.body.get('provider')||'gemini',audio:options.body.get('audio').size});
++        const outcome=dictationOutcomes.shift();if(outcome==='network')throw new Error('Connection interrupted');
++        return new Response(JSON.stringify(outcome),{status:200,headers:{'Content-Type':'application/json'}});
++      }return originalFetch(path,options);};
++    window.startTestRecording=(outcomes,receipts=[])=>{ventureStopDictation();dictationRequests=[];dictationOutcomes=outcomes;receiptOutcomes=receipts;dictationWaits=[];
++      const rec={epoch:venture.epoch,selection:venture.selection,phase:'processing',cancelled:false,provider:'gemini',requestId:ventureId(),form:new FormData()};
++      rec.form.set('requestId',rec.requestId);rec.form.set('audio',new Blob(['retained audio'],{type:'audio/mp4'}),'dictation.m4a');ventureRecording=rec;void ventureUploadDictation(rec);};''')
++    for outcomes,expected in [
++      ([dict(status='completed',text='Gemini text')],['gemini']),
++      ([dict(status='error',error='Gemini unavailable'),dict(status='completed',text='local text')],['gemini','whisper']),
++      ([dict(status='error')]*2+[dict(status='completed',text='second local')],['gemini','whisper','whisper']),
++      ([dict(status='error')]*3+[dict(status='completed',text='third local')],['gemini','whisper','whisper','whisper']),
++    ]:
++     p.evaluate('startTestRecording('+json.dumps(outcomes)+')');p.wait_for_function('ventureRecording===null')
++     assert p.evaluate('dictationRequests.map(r=>r.provider)')==expected
++     assert p.evaluate('new Set(dictationRequests.map(r=>r.id)).size')==len(expected)
++     assert p.evaluate('dictationWaits')==[30000,60000][:max(0,len(expected)-2)]
++     assert p.locator('#ventureMessage').input_value().endswith(outcomes[-1]['text'])
++     assert not p.evaluate('venture.pending')
++    assert p.locator('#ventureDictationRetry').count()==0
++    assert p.locator('#ventureDictationWhisper').count()==0
++    # An uncertain paid response is reconciled by GET, not another paid POST.
++    p.evaluate('startTestRecording(["network"],[{status:"processing"},{status:"completed",text:"saved receipt"}])')
++    p.wait_for_function('ventureRecording===null');assert p.evaluate('dictationRequests.length')==1
++    assert p.evaluate('dictationWaits')==[1500]
++    # No saved receipt: automatic local fallback, still exactly one Gemini POST.
++    p.evaluate('startTestRecording(["network",{status:"completed",text:"local after outage"}])')
++    p.wait_for_function('ventureRecording===null');assert p.evaluate('dictationRequests.map(r=>r.provider)')==['gemini','whisper']
++    # Exhaustion is finite, red, downloadable, and cannot be restarted by reentry.
++    p.evaluate('startTestRecording([{status:"error"},{status:"error"},{status:"error"},{status:"error"}])')
++    p.wait_for_function('ventureRecording?.phase==="failed"')
++    assert p.evaluate('dictationRequests.length')==4;assert p.evaluate('dictationWaits')==[30000,60000]
++    assert 'failed' in p.locator('#ventureDictation').get_attribute('class')
++    assert 'Transcription failed' in p.locator('#ventureDictationStatus').inner_text()
++    assert p.locator('#ventureDictationSave').inner_text()=='Save audio (.m4a)'
++    p.evaluate('ventureUploadDictation(ventureRecording)');assert p.evaluate('dictationRequests.length')==4
++    with p.expect_download() as dl:p.locator('#ventureDictationSave').click()
++    assert dl.value.suggested_filename.endswith('.m4a');assert Path(dl.value.path()).read_bytes()==b'retained audio'
++    assert p.evaluate('!ventureDictationBusy()')
++    p.screenshot(path=str(ROOT/'tests/venture-screenshots'/f'dictation-failed-{width}.png'))
++    # Cancellation while waiting prevents all subsequent attempts and insertion.
++    p.evaluate('holdDictationWait=true;startTestRecording([{status:"error"},{status:"error"},{status:"completed",text:"must not insert"}])')
++    p.wait_for_function('ventureRecording?.phase==="waiting"');p.locator('#ventureDictationDiscard').click()
++    p.wait_for_function('ventureRecording===null');assert p.evaluate('dictationRequests.length')==2
++    p.evaluate('holdDictationWait=false');assert not p.locator('#ventureMessage').input_value().endswith('must not insert')
++    # A full draft caches a successful transcript. Editing inserts it, without retry.
++    p.evaluate("document.getElementById('ventureMessage').value='full';document.getElementById('ventureMessage').maxLength=8")
++    p.evaluate('startTestRecording([{status:"completed",text:"result"}])');p.wait_for_function('ventureRecording?.phase==="awaiting-space"')
++    p.locator('#ventureMessage').fill('');p.wait_for_function('ventureRecording===null')
++    assert p.evaluate('dictationRequests.length')==1;assert p.locator('#ventureMessage').input_value()=='result'
++    p.evaluate("document.getElementById('ventureMessage').maxLength=50000")
++    # The requested auto-model placeholder cannot change model or settings.
++    p.evaluate('ventureTogglePopover("settings")')
++    assert p.locator('#ventureAutoModel').is_disabled();assert not p.locator('#ventureAutoModel').is_checked()
++    assert p.locator('#ventureAutoModelHelp').inner_text()=='Coming soon'
++    p.locator('#ventureSettingsClose').click()
++    p.evaluate('workspaceSave({launchView:"venture"})');assert prefs['launchView']=='venture';assert prefs['swipeNoticeVersion']==(1 if width==390 else 0)
++    # Synthetic touch events exercise browser listeners; not a physical-iOS claim.
++    p.evaluate(r'''window.swipe=(x1,y1,x2,y2)=>{const host=document.body;
++      const point=(x,y)=>new Touch({identifier:1,target:host,clientX:x,clientY:y});
++      host.dispatchEvent(new TouchEvent('touchstart',{touches:[point(x1,y1)],bubbles:true,cancelable:true}));
++      host.dispatchEvent(new TouchEvent('touchend',{touches:[],changedTouches:[point(x2,y2)],bubbles:true,cancelable:true}));};''')
++    p.evaluate('swipe(90,20,240,20)');p.wait_for_timeout(100)
++    if width==390:
++     assert not p.evaluate('venture.open')
++     p.evaluate('swipe(280,400,80,400)');assert not p.evaluate('venture.open'),'Body swipe switched workspaces'
++     p.evaluate('swipe(280,20,80,70)');p.wait_for_timeout(100)
++     assert p.evaluate('venture.open'),'Collapsed header swipe failed'
++     p.evaluate('workspaceSwitch("vision");document.documentElement.classList.add("header-open")')
++     p.evaluate('swipe(280,30,80,30)');p.wait_for_function('venture.open')
++    else:assert p.evaluate('venture.open'),'Desktop swipe must not switch'
++    # Logout clears retained content, Sources, and once-per-account state.
++    p.evaluate('workspaceOpenSources()');p.wait_for_timeout(100)
++    p.evaluate('testSignOut()');p.wait_for_function('!workspace.uid')
++    assert p.locator('#workspaceSources').is_hidden();assert p.locator('#workspaceSourcesList').inner_text()==''
++    assert not p.evaluate('ventureRecording');assert not errors,errors
++    checks.append(f'{width}px: startup, icons, notice, Sources/pagination/download/preview, parameter controls, one Gemini attempt, three-attempt local fallback/30s/60s waits, cancellation, audio download, receipt reconciliation, cached insertion, disabled auto-model toggle, swipes, account reset')
++    ctx.close()
++   # Explicit Vision URL wins over account preference; no once-acknowledged notice.
++   prefs.update(launchView='venture',swipeNoticeVersion=1)
++   ctx=browser.new_context(viewport={'width':390,'height':844});p=ctx.new_page();p.expose_function('ventureTestAPI',api)
++   p.route('**/*',lambda r:r.fulfill(body=fixture,content_type='text/html') if r.request.url.startswith('http://127.0.0.1/') else r.abort())
++   p.set_content(fixture.replace('<script>', '<script>window.fixtureQuery="?view=vision";',1));p.wait_for_function('workspace.sources')
++   assert not p.evaluate('venture.open');assert p.locator('#workspaceSwipeNotice').is_hidden();ctx.close()
++   print('\n'.join(checks));print('Explicit URL precedence and acknowledged notice passed. No paid API calls made.')
++  finally:browser.close()
++if __name__=='__main__':main()
+diff --git a/web/build.py b/web/build.py
+index 74c7ccb..2316353 100644
+--- a/web/build.py
++++ b/web/build.py
+@@ -9,0 +10 @@ import hashlib
++import json
+@@ -14,2 +15,2 @@ WEB = ROOT / 'web'
+-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'venture.js']
+-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css']
++SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'venture.js', 'workspace.js']
++STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css', 'workspace.css']
+@@ -49,0 +51,2 @@ def build():
++    parameters = json.loads((ROOT / 'vision-pc/model-parameters.json').read_text())
++    script = script.replace('/* VISION_PARAMETERS */ {}', json.dumps(parameters, separators=(',', ':')))
+diff --git a/web/model-parameters.js b/web/model-parameters.js
+new file mode 100644
+index 0000000..cf7dace
+--- /dev/null
++++ b/web/model-parameters.js
+@@ -0,0 +1,19 @@
++/* Source of truth is vision-pc/model-parameters.json, injected by the builder. */
++const VENTURE_PARAMETER_REGISTRY = /* VISION_PARAMETERS */ {};
++function ventureParameterProfile(model=venture.settings.model){return VENTURE_PARAMETER_REGISTRY.models?.[model]||null;}
++function ventureParameterLimit(model){return ventureParameterProfile(model)?.maxOutput||(/^(?:gpt-6(?:[.-]|$)|gpt-5\.6(?:[.-]|$))/.test(String(model||''))?128000:64000);}
++function ventureNormalizeParameterChoice(){
++ const p=ventureParameterProfile(),o=venture.settings.runOptions;
++ if(!p?.pro)o.mode='auto';
++ if(!(p?.efforts||['auto']).includes(o.effort))o.effort='auto';
++ if(!p?.verbosity)o.verbosity='auto';
++}
++function venturePaintParameterDetails(){
++ const p=ventureParameterProfile();
++ const showDial=(id,show)=>{const input=$(id);for(const element of [document.querySelector('label[for="'+id+'"]'),input,input?.nextElementSibling])if(element)element.hidden=!show;};
++ showDial('ventureEffort',!!p&&p.efforts.length>1);
++ showDial('ventureVerbosity',!!p?.verbosity);
++ let note=$('ventureParameterDetails');if(!note){note=document.createElement('p');note.id='ventureParameterDetails';note.className='venture-fine-print';$('ventureMaxTokens').after(note);}
++ note.textContent=p?'Provider maximum: '+p.maxOutput.toLocaleString()+' output tokens. Context window: '+p.context.toLocaleString()+'. Vision uses a 512 minimum and 16,000 starting budget; these are app settings, not provider defaults. Reasoning shares the output budget.':
++ 'Parameter capabilities have not been verified for this exact model ID. The slider shows a Vision safety cap, not a confirmed API maximum. Only model-default reasoning controls are shown.';
++}
+diff --git a/web/venture-controls.js b/web/venture-controls.js
+index 13c7786..06d2f15 100644
+--- a/web/venture-controls.js
++++ b/web/venture-controls.js
+@@ -2 +2 @@
+- * No Gemini credential/provider selector is present in browser code.
++ * No Gemini credential or general-purpose model permission is present in browser code.
+@@ -17 +17 @@ function ventureBrandIcon() {
+-function ventureDictationBusy() { return !!ventureRecording; }
++function ventureDictationBusy() { return !!ventureRecording && !['failed','awaiting-space'].includes(ventureRecording.phase); }
+@@ -23,0 +24 @@ function ventureRecordingUI(recording, phase) {
++ const provider = recording?.provider === 'whisper' ? 'PC Whisper' : 'Gemini';
+@@ -26 +27 @@ function ventureRecordingUI(recording, phase) {
+- $('ventureMic').setAttribute('aria-label', live ? 'Stop dictation' : phase === 'processing' ? 'Transcribing with Gemini' : 'Dictate a message');
++ $('ventureMic').setAttribute('aria-label', live ? 'Stop dictation' : phase === 'processing' ? 'Transcribing with ' + provider : 'Dictate a message');
+@@ -28 +29 @@ function ventureRecordingUI(recording, phase) {
+- $('ventureMic').disabled = phase === 'processing' || phase === 'permission';
++ $('ventureMic').disabled = !!phase && !live;
+@@ -31 +32 @@ function ventureRecordingUI(recording, phase) {
+- $('ventureDictationStatus').textContent = live ? 'Listening' : phase === 'processing' ? 'Transcribing with Gemini…' : 'Waiting for microphone…';
++ $('ventureDictationStatus').textContent = live ? 'Listening' : phase === 'processing' ? 'Transcribing with ' + provider + '…' : 'Waiting for microphone…';
+@@ -33 +34,8 @@ function ventureRecordingUI(recording, phase) {
+- $('ventureDictationRetry').hidden = true;
++ $('ventureDictation').classList.remove('failed');
++ for (const id of ['ventureDictationSave','ventureDictationOriginal','ventureDictationSaveText']) if ($(id)) $(id).hidden = true;
++ const discard = $('ventureDictationDiscard');
++ if (discard) {
++  discard.hidden = !phase;
++  discard.textContent = 'Cancel dictation';
++  discard.onclick = () => { if (ventureDictationCurrent(recording)) ventureStopDictation(); };
++ }
+@@ -49 +57,3 @@ function ventureStopDictation(discard = true) {
+- recording.controller?.abort();
++ clearTimeout(recording.retryTimer); recording.retryResolve?.(false); recording.retryResolve = null;
++ recording.controller?.abort(); recording.exportController?.abort(); recording.decoder?.stop();
++ recording.audio = null; recording.mp3 = null; recording.form = null; recording.chunks = [];
+@@ -103 +113 @@ async function ventureDictate() {
+-  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
++  const mime = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
+@@ -147 +157,24 @@ function ventureFinishRecording(recording) {
+-async function ventureUploadDictation(recording) {
++// One paid attempt, then three local attempts. Waiting never resubmits Gemini.
++const VENTURE_WHISPER_RETRY_MS = Object.freeze([0, 30000, 60000]);
++function ventureDictationPause(recording, milliseconds) {
++ return new Promise(resolve => {
++  recording.retryResolve = resolve;
++  recording.retryTimer = setTimeout(() => {
++   recording.retryResolve = null; recording.retryTimer = null;
++   resolve(ventureDictationCurrent(recording));
++  }, milliseconds);
++ });
++}
++function ventureDictationAudio(recording) {
++ return recording.audio || recording.form?.get('audio');
++}
++function ventureDictationAudioExtension(blob) {
++ const mime = (blob?.type || '').split(';')[0].toLowerCase();
++ return ({'audio/mp4':'m4a','audio/m4a':'m4a','audio/x-m4a':'m4a',
++  'audio/mpeg':'mp3','audio/mp3':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/x-wav':'wav','audio/webm':'webm'})[mime] || 'bin';
++}
++function ventureDictationAudioName(recording, extension) {
++ recording.savedName ||= 'Venture-dictation-' + new Date().toISOString().replace(/[:.]/g, '-');
++ return recording.savedName + '.' + extension;
++}
++function ventureDictationShowRecovery(recording, message, failed = true) {
+@@ -148,0 +182,100 @@ async function ventureUploadDictation(recording) {
++ recording.phase = failed ? 'failed' : 'awaiting-space';
++ ventureRecordingUI(recording, recording.phase);
++ $('ventureDictationStatus').textContent = message;
++ $('ventureDictation').classList.toggle('failed', failed);
++ const blob = ventureDictationAudio(recording), extension = ventureDictationAudioExtension(blob);
++ const direct = extension === 'm4a' || extension === 'mp3';
++ const save = $('ventureDictationSave'), original = $('ventureDictationOriginal');
++ save.hidden = !blob; save.disabled = false; save.textContent = direct ? 'Save audio (.' + extension + ')' : 'Save audio as MP3';
++ save.onclick = () => void ventureSaveDictationAudio(recording);
++ original.hidden = !blob || direct;
++ original.textContent = 'Save original (.' + extension + ')';
++ original.onclick = () => { if (ventureDictationCurrent(recording)) download(blob, ventureDictationAudioName(recording, extension)); };
++ const transcript = $('ventureDictationSaveText');
++ transcript.hidden = !recording.result;
++ transcript.onclick = () => { if (ventureDictationCurrent(recording)) download(new Blob([recording.result.text], {type:'text/plain'}), ventureDictationAudioName(recording,'txt')); };
++ $('ventureDictationDiscard').textContent = 'Discard recording';
++ venturePaintStatus();
++}
++async function ventureSaveDictationAudio(recording) {
++ if (!ventureDictationCurrent(recording) || recording.exporting) return;
++ const blob = ventureDictationAudio(recording); if (!blob) return;
++ const extension = ventureDictationAudioExtension(blob);
++ if (extension === 'm4a' || extension === 'mp3') {
++  download(blob, ventureDictationAudioName(recording, extension)); return;
++ }
++ if (recording.mp3) { download(recording.mp3, ventureDictationAudioName(recording,'mp3')); return; }
++ // Reuse the already-bundled, offline FFmpeg worker. No PC or cloud request.
++ recording.exporting = true; recording.exportController = new AbortController();
++ const button = $('ventureDictationSave'), signal = recording.exportController.signal;
++ const message = $('ventureDictationStatus').textContent;
++ button.disabled = true; button.textContent = 'Preparing MP3 on this device…';
++ const timeout = setTimeout(() => { recording.exportController.abort(); recording.decoder?.stop(); }, 120000);
++ try {
++  const wasmBinary = await embeddedBytes('ffmpeg-wasm-source', signal);
++  if (!ventureDictationCurrent(recording) || signal.aborted) return;
++  recording.decoder = decoderClient();
++  await recording.decoder.request('init', {wasmBinary}, [wasmBinary.buffer]);
++  const converted = await recording.decoder.request('transcription_chunk', {file:blob, start:0, end:VENTURE_DICTATION_LIMIT_MS/1000});
++  if (!ventureDictationCurrent(recording) || signal.aborted) return;
++  if (!converted.audio?.byteLength || converted.mimeType !== 'audio/mpeg') throw new Error('Invalid MP3 export');
++  recording.mp3 = new Blob([converted.audio], {type:'audio/mpeg'});
++  // Require a fresh click after asynchronous preparation for iOS download rules.
++  button.textContent = 'Save audio (.mp3)';
++  $('ventureDictationStatus').textContent = message + ' MP3 ready. Tap Save audio to download it.';
++ } catch {
++  if (ventureDictationCurrent(recording)) {
++   button.textContent = 'Prepare MP3 again';
++   $('ventureDictationStatus').textContent = message + ' MP3 conversion was unavailable. Save the original audio instead; it has not been changed.';
++  }
++ } finally {
++  clearTimeout(timeout); recording.decoder?.stop(); recording.decoder = null; recording.exporting = false;
++  if (ventureDictationCurrent(recording)) button.disabled = false;
++ }
++}
++function ventureInsertDictation(recording) {
++ if (!ventureDictationCurrent(recording) || !recording.result) return false;
++ const field = $('ventureMessage'), text = recording.result.text.trim();
++ const updated = field.value + (field.value && text ? ' ' : '') + text;
++ if (field.maxLength > 0 && updated.length > field.maxLength) {
++  ventureDictationShowRecovery(recording, 'Transcription completed. Shorten your draft to insert the retained transcript, or save the transcript below. No further transcription will run.', false);
++  return false;
++ }
++ // Only the currently selected account/conversation may receive a result.
++ field.value = updated;
++ if (venture.current) venture.drafts.set(venture.current.id, updated);
++ ventureStopDictation(); ventureResizeComposer();
++ if (!text) ventureSetNotice('No speech was detected.');
++ field.focus({preventScroll:true});
++ return true;
++}
++async function ventureDictationAttempt(recording) {
++ const provider = recording.provider;
++ recording.controller = new AbortController();
++ const signal = recording.controller.signal;
++ const limit = provider === 'whisper' ? 700000 : 240000;
++ const deadline = Date.now() + limit;
++ const receiptPath = '/venture/dictation/' + encodeURIComponent(recording.requestId);
++ const receipt = async () => (await ventureFetch(receiptPath, {signal})).json();
++ let result;
++ try {
++  const response = await ventureFetch('/venture/dictation', {method:'POST', body:recording.form, signal, timeoutMs:limit});
++  result = await response.json();
++ } catch (error) {
++  if (!ventureDictationCurrent(recording)) throw error;
++  // Read once after a lost response. Never repeat the paid POST.
++  try { result = await receipt(); } catch { throw error; }
++ }
++ while (result?.status === 'processing' && Date.now() < deadline) {
++  if (!await ventureDictationPause(recording, 1500)) throw new DOMException('Canceled','AbortError');
++  result = await receipt();
++ }
++ if (!ventureDictationCurrent(recording)) throw new DOMException('Canceled','AbortError');
++ if (result?.status !== 'completed' || typeof result.text !== 'string') {
++  throw new Error(result?.error || (provider === 'whisper' ? 'PC Whisper did not return a transcript.' : 'Gemini did not return a transcript.'));
++ }
++ return result;
++}
++async function ventureUploadDictation(recording) {
++ if (!ventureDictationCurrent(recording) || recording.uploading || recording.sequenceStarted) return;
++ recording.sequenceStarted = true;
+@@ -150,5 +283,5 @@ async function ventureUploadDictation(recording) {
+-  const mime = (recording.recorder.mimeType || recording.chunks[0]?.type || 'audio/webm').split(';')[0];
+-  const blob = new Blob(recording.chunks, {type: mime}); recording.chunks = [];
+-  if (!blob.size) { ventureStopDictation(); ventureSetNotice('No microphone audio was recorded.'); return; }
+-  recording.form = new FormData(); recording.form.append('requestId', recording.requestId);
+-  recording.form.append('audio', blob, mime.includes('mp4') ? 'dictation.m4a' : mime.includes('ogg') ? 'dictation.ogg' : 'dictation.webm');
++  const mime = (recording.recorder?.mimeType || recording.chunks?.[0]?.type || 'audio/webm').split(';')[0];
++  recording.audio = new Blob(recording.chunks || [], {type:mime}); recording.chunks = [];
++  if (!recording.audio.size) { ventureStopDictation(); ventureSetNotice('No microphone audio was recorded.'); return; }
++  recording.form = new FormData();
++  recording.form.append('audio', recording.audio, 'dictation.' + ventureDictationAudioExtension(recording.audio));
+@@ -156 +289,2 @@ async function ventureUploadDictation(recording) {
+- ventureRecordingUI(recording, 'processing');
++ recording.audio ||= recording.form.get('audio');
++ recording.uploading = true;
+@@ -158,6 +292 @@ async function ventureUploadDictation(recording) {
+-  recording.controller = new AbortController();
+-  const response = await ventureFetch('/venture/dictation', {method: 'POST', body: recording.form, signal: recording.controller.signal});
+-  let result = await response.json();
+-  // Recover an in-progress receipt without issuing another Gemini request.
+-  for (let i = 0; result.status === 'processing' && i < 90; i++) {
+-   await new Promise(resolve => setTimeout(resolve, 1500));
++  for (let attempt = 0; attempt < 4; attempt++) {
+@@ -165,7 +294,20 @@ async function ventureUploadDictation(recording) {
+-   result = await ventureJSON('/venture/dictation/' + encodeURIComponent(recording.requestId));
+-  }
+-  if (!ventureDictationCurrent(recording)) return;
+-  if (result.status !== 'completed') {
+-   if (result.status !== 'processing') {
+-    const message = result.error || 'This recording is no longer available. Tap the microphone for a new recording.';
+-    ventureStopDictation(); ventureSetNotice(message); return;
++   recording.provider = attempt === 0 ? 'gemini' : 'whisper';
++   recording.localAttempt = attempt;
++   const delay = attempt > 0 ? VENTURE_WHISPER_RETRY_MS[attempt-1] : 0;
++   if (delay) {
++    recording.phase = 'waiting'; ventureRecordingUI(recording, 'waiting');
++    $('ventureDictationStatus').textContent = 'PC Whisper failed. Retrying in ' + (delay/1000) + ' seconds (attempt ' + attempt + ' of 3).';
++    if (!await ventureDictationPause(recording, delay)) return;
++   }
++   if (!ventureDictationCurrent(recording)) return;
++   recording.requestId = attempt === 0 ? recording.requestId || ventureId() : ventureId();
++   recording.form.set('requestId', recording.requestId); recording.form.set('provider', recording.provider);
++   recording.phase = 'processing'; ventureRecordingUI(recording, 'processing');
++   if (attempt) $('ventureDictationStatus').textContent = 'Transcribing with PC Whisper (attempt ' + attempt + ' of 3)…';
++   try {
++    recording.result = await ventureDictationAttempt(recording);
++    if (ventureDictationCurrent(recording)) ventureInsertDictation(recording);
++    return;
++   } catch (error) {
++    if (!ventureDictationCurrent(recording)) return;
++    recording.lastError = ventureError(error);
+@@ -173 +314,0 @@ async function ventureUploadDictation(recording) {
+-   throw new Error('Dictation is still processing. Retry to recover this recording.');
+@@ -175,19 +316,2 @@ async function ventureUploadDictation(recording) {
+-  if (typeof result.text !== 'string') throw new Error('The dictation service did not return plain text.');
+-  const field = $('ventureMessage'), text = result.text.trim();
+-  const updated = field.value + (field.value && text ? ' ' : '') + text;
+-  if (updated.length > field.maxLength) throw new Error('This dictation would exceed the message limit. Shorten your draft and retry transcription.');
+-  field.value = updated;
+-  if (venture.current) venture.drafts.set(venture.current.id, updated);
+-  ventureRecording = null; ventureRecordingUI(null, ''); ventureResizeComposer();
+-  if (!text) ventureSetNotice('No speech was detected.');
+-  field.focus({preventScroll: true});
+- } catch (error) {
+-  if (!ventureDictationCurrent(recording)) return;
+-  recording.phase = 'retry';
+-  $('ventureDictationStatus').textContent = ventureError(error);
+-  $('ventureDictationRetry').hidden = false;
+-  $('ventureDictationRetry').onclick = () => { if (ventureDictationCurrent(recording)) void ventureUploadDictation(recording); };
+-  $('ventureMic').disabled = false; $('ventureMic').setAttribute('aria-label', 'Dismiss dictation and start again');
+-  $('ventureMic').onclick = () => { ventureStopDictation(); $('ventureMic').onclick = ventureDictate; void ventureDictate(); };
+-  // Retain only the bounded local blob while offering an explicit same-ID retry.
+- }
++  ventureDictationShowRecovery(recording, 'Transcription failed. Gemini and all 3 PC Whisper attempts were unsuccessful. Save the audio clip below to transcribe it elsewhere. Keep this tab open until it is saved.');
++ } finally { recording.uploading = false; }
