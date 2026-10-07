@@ -20,7 +20,7 @@ import requests
 from werkzeug.exceptions import HTTPException
 
 from media import normalize_url, process_job, MEDIA_LOCK
-from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT
+from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT, model_output_token_limit
 from transcription import LocalTranscription
 from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
 from documents import DocumentJobs
@@ -529,7 +529,7 @@ def response_payload(file_id, options):
         raise APIError('Choose a valid OpenAI model.')
     message = str(options.get('message', options.get('prompt', '')))[:50000]
     try:
-        limit = min(64000, max(512, int(options.get('max_output_tokens', options.get('maxOutputTokens', 16000)))))
+        limit = min(model_output_token_limit(model), max(512, int(options.get('max_output_tokens', options.get('maxOutputTokens', 16000)))))
     except (ValueError, TypeError):
         raise APIError('Choose a valid output length.')
     payload = {'model': model, 'instructions': BASE_INSTRUCTIONS,
