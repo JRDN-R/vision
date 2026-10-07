@@ -1,7 +1,7 @@
-name: Test Vision Venture
+name: Test Venture
 on:
   push:
-    branches: [feature/vision-venture]
+    branches: [feature/vision-venture, feature/venture-dictation-memory]
   pull_request:
     branches: [main]
     paths: ['web/**', 'vision-pc/**', 'tests/**', '.github/workflows/test-venture.yml']
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest discover -s vision-pc -p 'test_*.py' -v 2>&1 | tee tests/venture-logs/server.txt
-      - name: Build portable application
+      - name: Build hosted application bundle
         run: |
           set -o pipefail
           python web/build.py 2>&1 | tee tests/venture-logs/build.txt
@@ -55,6 +55,10 @@ jobs:
         run: |
           set -o pipefail
           python tests/venture-smoke.py 2>&1 | tee tests/venture-logs/venture.txt
+      - name: Hosted microphone and server integration
+        run: |
+          set -o pipefail
+          python tests/venture-integration.py 2>&1 | tee tests/venture-logs/integration.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
