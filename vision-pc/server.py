@@ -155,7 +155,9 @@ def api_error(error):
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
-        message = ('Document uploads exceed 50 MB.' if '/documents' in request.path
+        message = ('Dictation recording exceeds 12 MB.' if request.path.startswith('/api/venture/dictation')
+                   else 'Profile image exceeds 6 MB.' if request.path=='/api/venture/profile'
+                   else 'Document uploads exceed 50 MB.' if '/documents' in request.path
                    else 'Video uploads exceed 5 GB. Choose a smaller video.' if '/media' in request.path
                    else 'Server transcription audio uploads exceed 100 MB.' if '/transcriptions' in request.path
                    else 'The project exceeds 150 MB.' if request.method == 'PUT' and request.path.startswith('/api/projects/')
@@ -293,7 +295,8 @@ def health():
                    maxArchiveBytes=UPLOAD_LIMIT, maxProjectBytes=PROJECT_LIMIT,
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
                    geminiTranscription=gemini,
-                   capabilities={'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   ventureDictation=sessions.venture.dictation.capability(),
+                   capabilities={'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -364,6 +367,7 @@ def prune_expired():
                 Path(row['result_path']).unlink(missing_ok=True)
             db.execute('DELETE FROM jobs WHERE id=?', (row['id'],))
         db.execute('DELETE FROM responses WHERE expires_at<?', (time.time(),))
+        sessions.venture.dictation.prune(db)
 
 
 def process_next_job():

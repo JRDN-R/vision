@@ -20,7 +20,7 @@ import time
 from flask import g, jsonify, request, send_file
 from venture_billing import Funding, key_id
 
-DEFAULT_SETTINGS = dict(model='gpt-6-astra', maxOutputTokens=16000,
+DEFAULT_SETTINGS = dict(model='gpt-6-astra', maxOutputTokens=16000, memoryEnabled=False,
                         runOptions=dict(mode='auto',effort='auto',verbosity='auto',webSearch=False,codeInterpreter=True))
 CONVERSATION_ID = re.compile(r'^[A-Za-z0-9_-]{16,120}$')
 MIB = 1024*1024
@@ -84,6 +84,12 @@ class Venture:
         self.last_mirror={}
         self.documents=None
         self.transcription=None
+        from venture_dictation import Dictation
+        from venture_profile import Profile
+        from venture_memory import Memory
+        self.dictation=Dictation(self)
+        self.profile=Profile(self)
+        self.memory=Memory(self)
         self.register_routes()
 
     def initialize(self):
@@ -99,7 +105,16 @@ class Venture:
                 CREATE TABLE IF NOT EXISTS venture_preferences (
                     uid TEXT PRIMARY KEY,settings_json TEXT NOT NULL,updated_at REAL NOT NULL);
             ''')
+            columns={r[1] for r in db.execute('PRAGMA table_info(venture_conversations)')}
+            if 'deleted_at' not in columns:
+                db.execute('ALTER TABLE venture_conversations ADD COLUMN deleted_at REAL')
+            if 'purge_pending' not in columns:
+                db.execute('ALTER TABLE venture_conversations ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0')
             columns={r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
+            if 'venture_memory_enabled' not in columns:
+                db.execute('ALTER TABLE project_runs ADD COLUMN venture_memory_enabled INTEGER NOT NULL DEFAULT 0')
+            if 'venture_memory_sources' not in columns:
+                db.execute('ALTER TABLE project_runs ADD COLUMN venture_memory_sources TEXT')
             if 'venture_retry_of' not in columns:
                 db.execute('ALTER TABLE project_runs ADD COLUMN venture_retry_of TEXT')
             if 'venture_preparation_json' not in columns:
@@ -110,6 +125,13 @@ class Venture:
                 COALESCE((SELECT MAX(r.updated_at) FROM project_runs r WHERE r.project_id=p.id),p.updated_at)
                 FROM projects p WHERE p.owner_uid IS NOT NULL AND EXISTS(SELECT 1 FROM project_runs r WHERE r.project_id=p.id)''')
         self.funding.initialize()
+        self.memory.initialize()
+        self.dictation.initialize()
+        with self.db() as db:
+            pending=db.execute('SELECT * FROM venture_conversations WHERE deleted_at IS NOT NULL AND purge_pending=1').fetchall()
+        for row in pending:
+            try:self.purge_deleted(dict(row))
+            except OSError:self.app.logger.warning('A deleted conversation needs another disk cleanup attempt.')
 
     def account(self) -> str:
         if getattr(g,'auth_kind','')!='firebase-google':
@@ -131,13 +153,14 @@ class Venture:
         if db is None:
             with self.db() as connection:return self.lookup(cid,uid,connection)
         row=db.execute('SELECT * FROM venture_conversations WHERE id=?',(cid,)).fetchone()
-        if row is None or (uid is not None and row['uid']!=uid):
+        if row is None or row['deleted_at'] is not None or (uid is not None and row['uid']!=uid):
             raise self.Error('This conversation is unavailable.',404)
         return dict(row)
 
     def ensure(self,cid: str):
         """Register an existing account project on its first new run, not legacy trials."""
         with self.db() as db:
+            self.assert_not_deleted(cid,db)
             row=db.execute('SELECT owner_uid,title,created_at FROM projects WHERE id=?',(cid,)).fetchone()
             if not row or not row['owner_uid']:return None
             db.execute('INSERT OR IGNORE INTO venture_conversations(id,uid,title,native,created_at,updated_at) VALUES(?,?,?,0,?,?)',
@@ -167,7 +190,7 @@ class Venture:
 
     def settings(self,value) -> dict:
         from sessions import normalize_run_options
-        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions'}:
+        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled'}:
             raise self.Error('Invalid Venture settings.')
         model=value.get('model',DEFAULT_SETTINGS['model'])
         limit=value.get('maxOutputTokens',16000)
@@ -177,7 +200,9 @@ class Venture:
             raise self.Error('Choose an output limit from 512 to 64000 tokens.')
         try:options=normalize_run_options(value.get('runOptions'))
         except ValueError as error:raise self.Error(str(error))
-        return dict(model=model,maxOutputTokens=limit,runOptions=options)
+        memory=value.get('memoryEnabled',False)
+        if not isinstance(memory,bool):raise self.Error('Past-conversation memory must be on or off.')
+        return dict(model=model,maxOutputTokens=limit,runOptions=options,memoryEnabled=memory)
 
     def current_key_id(self,uid: str):
         from sessions import unprotect_secret
@@ -195,6 +220,7 @@ class Venture:
         if not conversation:return
         terminal=row['status'] in TERMINAL
         if terminal:
+            self.memory.index_run(row)
             try:self.funding.account_for(row)
             except Exception:self.app.logger.warning('Venture usage will be reconciled on the next meter refresh.')
         now=time.monotonic()
@@ -257,6 +283,61 @@ class Venture:
                     'schema':'vision-venture-conversation-v1','messages':['messages/'+r['id']+'.json' for r in runs],
                     'recovery':'Uploads and generated files are ordinary files. SQLite in the parent data directory is authoritative. Back up the whole data directory with the server stopped.'})
 
+    def assert_not_deleted(self,cid,db=None):
+        if db is None:
+            with self.db() as connection:return self.assert_not_deleted(cid,connection)
+        row=db.execute('SELECT deleted_at FROM venture_conversations WHERE id=?',(cid,)).fetchone()
+        if row and row['deleted_at'] is not None:raise self.Error('This conversation is unavailable.',404)
+
+    def purge_deleted(self,row):
+        # Only fixed, validated conversation roots are removed; no browser paths.
+        if not CONVERSATION_ID.fullmatch(row['id']):raise ValueError('Invalid conversation ID')
+        roots=[self.user_root(row['uid'])/'conversations'/row['id'],self.app.config['DATA_DIR']/'projects'/row['id']]
+        for path in roots:
+            if path.is_symlink():path.unlink()
+            elif path.exists():shutil.rmtree(path)
+        with self.db() as db:
+            db.execute('UPDATE venture_conversations SET purge_pending=0 WHERE id=?',(row['id'],))
+
+    def delete(self,cid,uid):
+        request.max_content_length=8192
+        with self.mirror_lock:
+            # Reconcile completed usage before deleting its source records. A
+            # deleted conversation never refunds tokens or loses a pending debit.
+            from sessions import TERMINAL
+            with self.db() as db:
+                owned=db.execute('SELECT * FROM venture_conversations WHERE id=? AND uid=?',(cid,uid)).fetchone()
+                if owned is None:raise self.Error('This conversation is unavailable.',404)
+                runs=db.execute('SELECT * FROM project_runs WHERE project_id=?',(cid,)).fetchall()
+            if any(r['status'] not in TERMINAL for r in runs):
+                raise self.Error('Stop the active response before deleting this conversation.',409)
+            for run in runs:
+                try:self.funding.account_for(dict(run))
+                except Exception:
+                    raise self.Error('Usage is still being saved. Try deleting this conversation again shortly.',503) from None
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row=db.execute('SELECT * FROM venture_conversations WHERE id=? AND uid=?',(cid,uid)).fetchone()
+                if row is None:raise self.Error('This conversation is unavailable.',404)
+                row=dict(row)
+                if row['deleted_at'] is None:
+                    active=db.execute("SELECT 1 FROM project_runs WHERE project_id=? AND status IN ('queued','preparing','submitting','in_progress','saving')",(cid,)).fetchone()
+                    if active:raise self.Error('Stop the active response before deleting this conversation.',409)
+                    # Tombstone prevents startup migration or a late tab reviving this ID.
+                    db.execute("UPDATE venture_conversations SET deleted_at=?,purge_pending=1,title='',settings_json='{}',storage_warning=NULL,revision=revision+1 WHERE id=?",(time.time(),cid))
+                    db.execute('DELETE FROM venture_memory WHERE cid=?',(cid,))
+                    db.execute('DELETE FROM venture_memory_indexed WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    # Funding rows deliberately survive. Deletion is never a refund.
+                    db.execute('DELETE FROM run_events WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    db.execute('DELETE FROM run_artifacts WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    db.execute('DELETE FROM project_runs WHERE project_id=?',(cid,))
+                    if row['native']:db.execute('DELETE FROM projects WHERE id=?',(cid,))
+            warning=None
+            try:self.purge_deleted(row)
+            except OSError:
+                warning='Conversation removed from history and memory. Some files are locked; FUPCJ Server will retry disk cleanup after restart.'
+            return dict(deleted=True,conversationId=cid,storageWarning=warning)
+
     def register_routes(self):
         app=self.app
         @app.route('/api/venture/conversations',methods=['GET','POST'])
@@ -274,6 +355,7 @@ class Venture:
                     db.execute('BEGIN IMMEDIATE')
                     existing=db.execute('SELECT * FROM venture_conversations WHERE id=?',(cid,)).fetchone()
                     if existing:
+                        if existing['deleted_at'] is not None:raise self.Error('This conversation was deleted. Start a new venture.',410)
                         if existing['uid']!=uid:raise self.Error('This conversation is unavailable.',404)
                         return jsonify(conversation=self.metadata(dict(existing))),200
                     if db.execute('SELECT 1 FROM projects WHERE id=?',(cid,)).fetchone():
@@ -287,7 +369,7 @@ class Venture:
                 return jsonify(conversation=self.metadata(self.lookup(cid,uid))),201
             term=str(request.args.get('q','')).strip()[:150]
             cursor=request.args.get('before','')
-            clauses=['uid=?'];params=[uid]
+            clauses=['uid=?','deleted_at IS NULL'];params=[uid]
             if term:clauses.append("title LIKE ? ESCAPE '\\'");params.append('%'+re.sub(r'([%_\\])',r'\\\1',term)+'%')
             if cursor:
                 try:
@@ -302,9 +384,11 @@ class Venture:
             return jsonify(conversations=[self.metadata(dict(r)) for r in rows],
                            nextCursor=json.dumps([rows[-1]['updated_at'],rows[-1]['id']]) if more else None)
 
-        @app.route('/api/venture/conversations/<cid>',methods=['GET','PATCH'])
+        @app.route('/api/venture/conversations/<cid>',methods=['GET','PATCH','DELETE'])
         def venture_conversation(cid):
-            uid=self.account();row=self.lookup(cid,uid)
+            uid=self.account()
+            if request.method=='DELETE':return jsonify(self.delete(cid,uid))
+            row=self.lookup(cid,uid)
             if request.method=='PATCH':
                 request.max_content_length=16384
                 body=request.get_json(silent=True) or {}
