@@ -14,8 +14,19 @@ function workspaceNavIcons() {
  for(const [id,path] of Object.entries(WORKSPACE_NAV_PATHS)) {
   const button=$(id); if(!button)continue;
   button.classList.add('workspace-nav-icon'); button.title=names[id]; button.setAttribute('aria-label',names[id]);
-  const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="'+path+'"/></svg>';
-  button.style.setProperty('--workspace-icon','url("data:image/svg+xml,'+encodeURIComponent(svg)+'")');
+  // Real SVG children prevent iOS Safari's text autosizing and CSS-mask rendering
+  // from exposing the original button label instead of showing the icon.
+  let svg=button.querySelector(':scope > svg.workspace-nav-svg');
+  if(!svg||button.childNodes.length!==1){
+   svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+   svg.setAttribute('class','workspace-nav-svg');
+   svg.setAttribute('viewBox','0 -960 960 960');
+   svg.setAttribute('aria-hidden','true');
+   svg.setAttribute('focusable','false');
+   const shape=document.createElementNS('http://www.w3.org/2000/svg','path');
+   shape.setAttribute('d',path);svg.append(shape);
+   button.replaceChildren(svg);
+  }
  }
 }
 function workspaceLocal(value) {
