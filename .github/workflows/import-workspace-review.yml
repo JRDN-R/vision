@@ -1,43 +1,31 @@
-name: Import workspace review changes
+name: Recover interrupted workspace work
 on:
   push:
     branches: [feature/venture-workspace-recovery]
-    paths: ['maintenance/venture-workspace.patch.gz.b64']
+    paths: ['.github/workflows/import-workspace-review.yml']
 permissions:
-  contents: write
-concurrency:
-  group: import-workspace-review
-  cancel-in-progress: false
+  contents: read
 jobs:
-  import:
-    if: github.ref == 'refs/heads/feature/venture-workspace-recovery'
+  recover:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Apply reviewable source changes and remove transport scaffolding
-        shell: bash
+      - name: Recover complete patch entries without changing source
         run: |
-          set -euo pipefail
-          test "${GITHUB_REF}" = refs/heads/feature/venture-workspace-recovery
           python3 - <<'PY'
+          import base64,zlib
           from pathlib import Path
-          import base64, gzip, hashlib, subprocess
-          expected = Path('maintenance/venture-workspace.patch.gz.b64').read_text().strip()
-          encoded = ''.join(Path(f'maintenance/venture-workspace.part-{i}.b64').read_text().strip() for i in (1,2,3))
-          compressed = base64.b64decode(encoded, validate=True)
-          if hashlib.sha256(compressed).hexdigest() != expected:
-              raise SystemExit('Transport checksum mismatch; no source changes applied.')
-          patch = gzip.decompress(compressed)
-          if len(patch) > 2000000:
-              raise SystemExit('Unexpected patch size.')
-          target = Path('/tmp/venture-workspace.patch')
-          target.write_bytes(patch)
-          subprocess.run(['git','apply','--check',str(target)],check=True)
-          subprocess.run(['git','apply','--index',str(target)],check=True)
+          value=Path('maintenance/venture-workspace.part-1.b64').read_text().strip()
+          data=zlib.decompressobj(31).decompress(base64.b64decode(value))
+          Path('/tmp/recovered-partial.patch').write_bytes(data)
+          chunks=data.split(b'diff --git ')
+          Path('/tmp/recovered-complete.patch').write_bytes(b''.join(b'diff --git '+chunk for chunk in chunks[1:-1]))
+          print('Recovered',len(data),'bytes;',len(chunks)-2,'complete file entries')
+          print('\n'.join(chunk.split(b'\n')[0].decode() for chunk in chunks[1:]))
           PY
-          git rm .github/workflows/import-workspace-review.yml maintenance/venture-workspace.patch.gz.b64 maintenance/venture-workspace.part-1.b64 maintenance/venture-workspace.part-2.b64 maintenance/venture-workspace.part-3.b64
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Implement Venture workspace navigation, Sources, model controls and dictation recovery'
-          git push origin HEAD:feature/venture-workspace-recovery
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-recovered
+          path: /tmp/recovered-*.patch
+          retention-days: 3
