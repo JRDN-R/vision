@@ -117,7 +117,9 @@ def run():
                 page.locator('#ventureHistoryToggle').click()
                 page.locator('[data-conversation="'+test.cid+'"]').first.click()
                 page.wait_for_function('!!venture.current')
-                page.locator('#ventureSettingsToggle').click();page.locator('#ventureMemory').check()
+                page.locator('#ventureSettingsToggle').click()
+                assert page.locator('#ventureMemory').is_checked(), 'Past-chat memory should default to on'
+                page.locator('#ventureMemory').uncheck();page.locator('#ventureMemory').check()
                 page.wait_for_function("$('ventureSettingsStatus').textContent.includes('Saved')")
                 assert test.client.get(test.path,headers=test.a).json['conversation']['settings']['memoryEnabled'] is True
                 page.locator('#ventureSettingsClose').click()
