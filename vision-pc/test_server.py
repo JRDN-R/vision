@@ -123,10 +123,12 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(parse_captions('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello there\n', 'vtt'), '[00:00:01.000] Hello there')
 
     def test_openai_payload_and_session_ownership(self):
-        payload = server.response_payload('file_test', {'model': 'gpt-6-astra', 'max_output_tokens': 999999})
+        with self.assertRaises(server.APIError):
+            server.response_payload('file_test', {'model': 'gpt-6-astra', 'max_output_tokens': 999999})
+        payload = server.response_payload('file_test', {'model': 'gpt-6-astra', 'max_output_tokens': 128000})
         self.assertEqual(payload['tools'][0]['container']['file_ids'], ['file_test'])
         self.assertEqual(payload['tool_choice'], 'required')
-        self.assertEqual(payload['max_output_tokens'], 64000)
+        self.assertEqual(payload['max_output_tokens'], 128000)
         server.track_event({'type': 'response.created', 'response': {'id': 'resp_test', 'status': 'in_progress'}}, 'installation-owner')
         with server.app.test_request_context(headers=self.headers):
             server.authorize()

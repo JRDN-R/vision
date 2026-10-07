@@ -26,9 +26,7 @@ TERMINAL = ('completed', 'incomplete', 'cancelled', 'error')
 ID = re.compile(r'^[A-Za-z0-9_-]{1,200}$')
 
 
-def model_output_token_limit(model):
-    """Vision policy: current GPT-5.6/GPT-6 families may use 128K; older/unknown models stay capped at 64K."""
-    return 128000 if re.match(r'^(?:gpt-6(?:[.-]|$)|gpt-5\.6(?:[.-]|$)|chat-latest$|chatgpt-4o-latest$)', str(model or '')) else 64000
+from model_parameters import output_limit as model_output_token_limit, validate_parameters
 
 
 class UpstreamFailure(Exception):
@@ -425,7 +423,8 @@ class Sessions:
                 raise self.Error('Past-conversation memory requires an authenticated Venture account.')
             message = str(options.get('message') or '')[:50000]
             try:
-                limit = min(model_output_token_limit(model), max(512, int(options.get('maxOutputTokens', 16000))))
+                limit = int(options.get('maxOutputTokens', 16000))
+                validate_parameters(model, run_options, limit)
             except (ValueError, TypeError):
                 raise self.Error('Choose a valid output length.')
             previous = options.get('previousRunId') or None

@@ -187,8 +187,11 @@ class VentureTests(unittest.TestCase):
         current['model'] = 'gpt-4.1'
         with self.assertRaises(self.venture.Error):
             self.venture.settings(current)
-        current['maxOutputTokens'] = 64000
-        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 64000)
+        current['maxOutputTokens'] = 32768
+        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 32768)
+        current['maxOutputTokens'] = 32769
+        with self.assertRaises(self.venture.Error):
+            self.venture.settings(current)
         self.assertEqual(sessions.model_output_token_limit('gpt-5.4'), 64000)
 
     def test_model_catalog_is_scoped_to_saved_key_and_read_only(self):

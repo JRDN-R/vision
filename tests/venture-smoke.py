@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def read(name):return (ROOT/name).read_text()
 base=read('web/base.js');download=base[base.index('function download('):].split('\n')[0]
 setup=r'''
-if(!crypto.randomUUID)crypto.randomUUID=()=>('10000000-1000-4000-8000-'+String(Date.now()).padStart(12,'0'));
+let fixtureUUIDCounter=0;if(!crypto.randomUUID)crypto.randomUUID=()=>('10000000-1000-4000-8000-'+String(++fixtureUUIDCounter).padStart(12,'0'));
 const $=id=>document.getElementById(id), state={title:'Unchanged board',nodes:[],settings:{},consoleSession:null};let busy=false,ioBusy=false;
 const R={safeFilename:n=>n};function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function bytesFromDataURL(s){return Uint8Array.from(atob(s.split(',')[1]),c=>c.charCodeAt(0));}
@@ -18,7 +18,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
@@ -73,8 +73,8 @@ def run():
                 assert p.evaluate('testState().board')=='Unchanged board'
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
-                assert not p.locator('#ventureSettings').is_visible(),'Idle settings did not close'
-                p.locator('#ventureSettingsToggle').click();p.locator('#ventureModel').click();p.wait_for_timeout(2200)
+                assert p.locator('#ventureSettings').is_visible(),'Settings closed automatically'
+                p.locator('#ventureModel').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed while choosing a model'
                 assert p.locator('input#ventureModel').count()==0
                 assert p.evaluate('VENTURE_DEFAULTS.model')=='gpt-5.6-terra'
@@ -82,7 +82,7 @@ def run():
                 assert p.locator('.venture-model-group').first.locator('.venture-model-name').all_inner_texts()==['Astra Pro','Astra','6.1 Sol','Sol','Terra','Luna']
                 assert p.locator('#ventureMaxTokens').get_attribute('type')=='range'
                 assert p.locator('#ventureMaxTokens').get_attribute('max')=='128000'
-                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128K'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128,000'
                 assert p.locator('#ventureMaxTokensValue').inner_text()=='16,000'
                 assert p.locator('#ventureProRow').is_hidden()
                 p.locator('[data-model="gpt-6-astra"][data-mode="pro"]').click()
@@ -106,12 +106,12 @@ def run():
                 p.keyboard.press('Escape');assert p.locator('#ventureModelsPanel').is_hidden()
                 p.locator('#ventureMaxTokens').fill('128000');assert p.locator('#ventureMaxTokensValue').inner_text()=='128,000'
                 p.locator('#ventureModel').click();p.locator('[data-model="gpt-4.1"]').click()
-                assert p.locator('#ventureMaxTokens').get_attribute('max')=='64000'
-                assert p.locator('#ventureMaxTokens').input_value()=='64000'
-                assert p.locator('#ventureMaxTokensEnd').inner_text()=='64K'
+                assert p.locator('#ventureMaxTokens').get_attribute('max')=='32768'
+                assert p.locator('#ventureMaxTokens').input_value()=='32768'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='32,768'
                 p.locator('#ventureModel').click();p.locator('[data-model="gpt-6-astra"][data-mode="standard"]').click()
                 assert p.locator('#ventureMaxTokens').get_attribute('max')=='128000'
-                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128K'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128,000'
                 p.locator('#ventureMemory').check()
                 p.locator('#ventureVerbosity').fill('3');p.locator('#ventureSettingsClose').click();p.wait_for_timeout(800)
                 assert p.evaluate('testState().settings.runOptions.verbosity')=='high'
@@ -152,7 +152,7 @@ def run():
                 assert p.locator('#ventureTurns').inner_text()==''
                 assert not errors,errors
                 context.close()
-            print('Venture: history, rename, model settings, two-second dismissal, calibration, durable download, sandbox isolation and account reset passed at 390px and 1280px.')
+            print('Venture: history, rename, model settings, persistent settings, calibration, durable download, sandbox isolation and account reset passed at 390px and 1280px.')
         finally:browser.close()
 
 if __name__=='__main__':run()

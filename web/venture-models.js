@@ -29,14 +29,14 @@ function ventureModelUsable(id){return /^(?:gpt-[456](?:[.-]|$)|o[134](?:[.-]|$)
 function ventureModelChoices() {
  const ids=venture.models||VENTURE_MODEL_STARTERS;
  const result=[];
- for(const id of ids){result.push({id,mode:'standard'});if(ventureModelIsAstra(id))result.push({id,mode:'pro'});}
+ for(const id of ids){result.push({id,mode:'standard'});if(ventureModelIsAstra(id)&&ventureParameterProfile(id)?.pro)result.push({id,mode:'pro'});}
  return result;
 }
 function venturePaintModelPicker() {
  const s=venture.settings,label=ventureModelBadge(s.model,s.runOptions.mode);
  $('ventureModelLabel').innerHTML=label;$('ventureModel').innerHTML=label+'<span aria-hidden="true">⌄</span>';
  $('ventureModel').setAttribute('aria-label','Choose model: '+ventureModelIdentity(s.model,s.runOptions.mode).name);
- $('ventureProRow').hidden=ventureModelIsAstra();$('venturePro').checked=s.runOptions.mode==='pro';
+ $('ventureProRow').hidden=ventureModelIsAstra()||!ventureParameterProfile()?.pro;$('venturePro').checked=s.runOptions.mode==='pro';
  const list=$('ventureModels');list.replaceChildren();
  const choices=ventureModelChoices(),featured=choices.filter(c=>VENTURE_MODEL_BRANDS[c.id]).sort((a,b)=>{const ak=a.id+':'+a.mode,bk=b.id+':'+b.mode,ai=VENTURE_FEATURED_ORDER.indexOf(ak),bi=VENTURE_FEATURED_ORDER.indexOf(bk);return (ai<0?999:ai)-(bi<0?999:bi);});
  const addGroup=(title,items)=>{
@@ -46,7 +46,7 @@ function venturePaintModelPicker() {
   for(const c of items){const option=document.createElement('button');option.type='button';option.className='venture-model-option';option.setAttribute('role','option');option.dataset.model=c.id;option.dataset.mode=c.mode;
    const selected=c.id===s.model&&(!ventureModelIsAstra(c.id)||c.mode===(s.runOptions.mode==='pro'?'pro':'standard'));
    option.setAttribute('aria-selected',String(selected));option.disabled=!ventureModelUsable(c.id);
-   option.innerHTML=ventureModelBadge(c.id,ventureModelIsAstra(c.id)?c.mode:'auto')+(option.disabled?'<small>Separate API</small>':'<span class="venture-model-check" aria-hidden="true">'+(selected?'✓':'')+'</span>');group.appendChild(option);
+   option.innerHTML=ventureModelBadge(c.id,ventureModelIsAstra(c.id)?c.mode:'auto')+(option.disabled?'<small>'+(/sora/i.test(c.id)?'Retired September 24, 2026':'Separate API, not integrated')+'</small>':'<span class="venture-model-check" aria-hidden="true">'+(selected?'✓':'')+'</span>');group.appendChild(option);
   }list.appendChild(group);
  };
  addGroup('Featured models',featured);
@@ -72,7 +72,7 @@ function ventureInstallModels() {
   const wasAstra=ventureModelIsAstra(),isAstra=ventureModelIsAstra(option.dataset.model);
   venture.settings.model=option.dataset.model;
   venture.settings.runOptions.mode=isAstra?option.dataset.mode:wasAstra?'standard':($('venturePro').checked?'pro':'standard');
-  venturePaintSettings();ventureModelPickerOpen(false);$('ventureModel').focus();ventureChangedSettings({target:{id:'ventureModel'}});
+  ventureNormalizeParameterChoice();venturePaintSettings();ventureModelPickerOpen(false);$('ventureModel').focus();ventureChangedSettings({target:{id:'ventureModel'}});
  };
  $('ventureModels').onkeydown=event=>{const options=Array.from($('ventureModels').querySelectorAll('button:not(:disabled)'));const i=options.indexOf(document.activeElement);let next;
   if(event.key==='ArrowDown')next=(i+1)%options.length;else if(event.key==='ArrowUp')next=(i-1+options.length)%options.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=options.length-1;

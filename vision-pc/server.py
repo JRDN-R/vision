@@ -529,7 +529,9 @@ def response_payload(file_id, options):
         raise APIError('Choose a valid OpenAI model.')
     message = str(options.get('message', options.get('prompt', '')))[:50000]
     try:
-        limit = min(model_output_token_limit(model), max(512, int(options.get('max_output_tokens', options.get('maxOutputTokens', 16000)))))
+        limit = int(options.get('max_output_tokens', options.get('maxOutputTokens', 16000)))
+        if not 512 <= limit <= model_output_token_limit(model):
+            raise ValueError('output limit out of range')
     except (ValueError, TypeError):
         raise APIError('Choose a valid output length.')
     payload = {'model': model, 'instructions': BASE_INSTRUCTIONS,

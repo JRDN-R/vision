@@ -114,6 +114,8 @@ class Venture:
         self.dictation=Dictation(self)
         self.profile=Profile(self)
         self.memory=Memory(self)
+        from venture_workspace import Workspace
+        self.workspace=Workspace(self)
         self.register_routes()
 
     def initialize(self):
@@ -164,6 +166,7 @@ class Venture:
         self.funding.initialize()
         self.memory.initialize()
         self.dictation.initialize()
+        self.workspace.initialize()
         with self.db() as db:
             pending=db.execute('SELECT * FROM venture_conversations WHERE deleted_at IS NOT NULL AND purge_pending=1').fetchall()
         for row in pending:
@@ -237,6 +240,9 @@ class Venture:
         if isinstance(limit,bool) or not isinstance(limit,int) or not 512<=limit<=max_limit:
             raise self.Error(f'Choose an output limit from 512 to {max_limit} tokens for this model.')
         try:options=normalize_run_options(value.get('runOptions'))
+        except ValueError as error:raise self.Error(str(error))
+        from model_parameters import validate_parameters
+        try:validate_parameters(model, options, limit)
         except ValueError as error:raise self.Error(str(error))
         memory=value.get('memoryEnabled',False)
         if not isinstance(memory,bool):raise self.Error('Past-conversation memory must be on or off.')

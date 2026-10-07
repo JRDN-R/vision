@@ -55,6 +55,12 @@ jobs:
         run: |
           set -o pipefail
           python tests/venture-smoke.py 2>&1 | tee tests/venture-logs/venture.txt
+      - name: Workspace recovery unit and browser checks
+        run: |
+          set -o pipefail
+          python tests/workspace-unit.py 2>&1 | tee tests/venture-logs/workspace-unit.txt
+          python tests/workspace-browser.py 2>&1 | tee tests/venture-logs/workspace-browser.txt
+          python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt
       - name: Hosted microphone and server integration
         run: |
           set -o pipefail
