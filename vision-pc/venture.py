@@ -22,7 +22,7 @@ import requests
 from flask import g, jsonify, request, send_file
 from venture_billing import Funding, key_id
 
-DEFAULT_SETTINGS = dict(model='gpt-6-astra', maxOutputTokens=16000, memoryEnabled=False,
+DEFAULT_SETTINGS = dict(model='gpt-5.6-terra', maxOutputTokens=16000, memoryEnabled=False,
                         runOptions=dict(mode='auto',effort='auto',verbosity='auto',webSearch=False,codeInterpreter=True))
 CONVERSATION_ID = re.compile(r'^[A-Za-z0-9_-]{16,120}$')
 MIB = 1024*1024
