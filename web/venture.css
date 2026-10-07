@@ -46,3 +46,29 @@
 @media(prefers-reduced-motion:reduce){.model-astra .venture-model-name,.model-astra .venture-model-symbol{animation:none;background-position:45% 50%}}
 
 .venture-history-graphic svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* Compact Venture settings: one-row tools, existing range sliders, no unused mobile copy. */
+.venture-settings{padding:15px 16px 13px}
+.venture-settings-top{display:flex;align-items:center;gap:8px}
+.venture-root .venture-settings-top .venture-model-select{flex:1;min-width:0;min-height:44px;padding:9px 11px}
+.venture-root .venture-settings-top>.v-icon{flex:0 0 40px;width:40px;min-width:40px;height:40px;padding:9px}
+.venture-root .venture-settings .venture-dial-label{margin-top:12px;margin-bottom:4px}
+.venture-root .venture-settings .venture-dial-ends{line-height:1.3}
+.venture-root .venture-settings .venture-pro-toggle{margin:8px 0}
+.venture-settings .venture-feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:12px 0 7px}
+.venture-root .venture-settings .venture-feature-grid label{display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;min-height:39px;margin:0;padding:6px 3px;border:1px solid #4a5a42;border-radius:9px;background:#182017;color:#c3d5b8;font-size:10px;line-height:1.2;cursor:pointer}
+.venture-settings .venture-feature-grid input{width:16px;height:16px;min-width:16px;margin:0;accent-color:var(--accent)}
+.venture-settings .venture-feature-grid span{overflow-wrap:normal}
+.venture-settings .venture-feature-grid label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.venture-settings .venture-feature-grid label:has(input:disabled){opacity:.5;cursor:not-allowed}
+.venture-root .venture-settings #ventureSettingsStatus{margin:4px 0 0;line-height:1.4}
+.venture-settings #ventureSettingsStatus:empty{display:none}
+@media(max-width:760px){
+ .venture-root .venture-settings{top:64px;right:11px;width:345px;max-width:calc(100vw - 22px);max-height:calc(100% - 74px);padding:13px 13px 11px;overflow-y:auto;overscroll-behavior:contain}
+ .venture-root .venture-settings .venture-dial-label{margin-top:11px;margin-bottom:2px}
+ .venture-root .venture-settings .venture-dial-ends{font-size:9px}
+ .venture-root .venture-settings .venture-feature-grid{gap:5px;margin:11px 0 5px}
+ .venture-root .venture-settings .venture-feature-grid label{font-size:10px;min-height:37px;gap:4px;padding:5px 2px}
+ .venture-root .venture-settings .venture-feature-grid input{width:16px;height:16px;min-width:16px}
+ .venture-root .venture-settings .venture-coming-soon,.venture-root .venture-settings #ventureParameterDetails{display:none!important}
+}
