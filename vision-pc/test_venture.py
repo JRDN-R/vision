@@ -177,6 +177,20 @@ class VentureTests(unittest.TestCase):
         self.assertEqual(result.status_code,409)
         self.assertEqual(self.venture.funding.status('firebase:alice',key_id('sk-test-venture'))['revision'],1)
 
+    def test_model_specific_output_limits(self):
+        current = dict(model='gpt-6-astra', maxOutputTokens=128000, runOptions={}, memoryEnabled=False)
+        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 128000)
+        current['model'] = 'gpt-5.6-terra'
+        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 128000)
+        current['model'] = 'gpt-6.1-sol'
+        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 128000)
+        current['model'] = 'gpt-4.1'
+        with self.assertRaises(self.venture.Error):
+            self.venture.settings(current)
+        current['maxOutputTokens'] = 64000
+        self.assertEqual(self.venture.settings(current)['maxOutputTokens'], 64000)
+        self.assertEqual(sessions.model_output_token_limit('gpt-5.4'), 64000)
+
     def test_model_catalog_is_scoped_to_saved_key_and_read_only(self):
         response=MagicMock();response.__enter__.return_value=response;response.status_code=200
         response.json.return_value={'data':[{'id':'gpt-6-astra'},{'id':'gpt-6-luna'},{'id':'gpt-6-luna'},{'id':'<script>'},{'id':'text-embedding-3-small'}]}
