@@ -226,15 +226,16 @@ class Venture:
                     storageWarning=row.get('storage_warning'))
 
     def settings(self,value) -> dict:
-        from sessions import normalize_run_options
+        from sessions import model_output_token_limit, normalize_run_options
         if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled'}:
             raise self.Error('Invalid Venture settings.')
         model=value.get('model',DEFAULT_SETTINGS['model'])
         limit=value.get('maxOutputTokens',16000)
         if not isinstance(model,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',model):
             raise self.Error('Enter a valid API model ID.')
-        if isinstance(limit,bool) or not isinstance(limit,int) or not 512<=limit<=64000:
-            raise self.Error('Choose an output limit from 512 to 64000 tokens.')
+        max_limit=model_output_token_limit(model)
+        if isinstance(limit,bool) or not isinstance(limit,int) or not 512<=limit<=max_limit:
+            raise self.Error(f'Choose an output limit from 512 to {max_limit} tokens for this model.')
         try:options=normalize_run_options(value.get('runOptions'))
         except ValueError as error:raise self.Error(str(error))
         memory=value.get('memoryEnabled',False)
