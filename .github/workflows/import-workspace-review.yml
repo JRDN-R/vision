@@ -1,4 +1,4 @@
-name: Recover interrupted workspace work
+name: Prepare workspace regression dependencies
 on:
   push:
     branches: [feature/venture-workspace-recovery]
@@ -6,26 +6,19 @@ on:
 permissions:
   contents: read
 jobs:
-  recover:
+  dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - name: Recover complete patch entries without changing source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Package test dependencies only
         run: |
-          python3 - <<'PY'
-          import base64,zlib
-          from pathlib import Path
-          value=Path('maintenance/venture-workspace.part-1.b64').read_text().strip()
-          data=zlib.decompressobj(31).decompress(base64.b64decode(value))
-          Path('/tmp/recovered-partial.patch').write_bytes(data)
-          chunks=data.split(b'diff --git ')
-          Path('/tmp/recovered-complete.patch').write_bytes(b''.join(b'diff --git '+chunk for chunk in chunks[1:-1]))
-          print('Recovered',len(data),'bytes;',len(chunks)-2,'complete file entries')
-          print('\n'.join(chunk.split(b'\n')[0].decode() for chunk in chunks[1:]))
-          PY
+          python -m pip install --target /tmp/vision-test-deps --no-compile 'Flask>=3.1,<4' 'waitress>=3,<4' 'PyJWT>=2.10,<3' 'yt-dlp[default]>=2025.11.12'
+          tar -czf /tmp/vision-test-deps.tar.gz -C /tmp/vision-test-deps .
       - uses: actions/upload-artifact@v4
         with:
-          name: workspace-recovered
-          path: /tmp/recovered-*.patch
-          retention-days: 3
+          name: workspace-test-deps
+          path: /tmp/vision-test-deps.tar.gz
+          retention-days: 1
