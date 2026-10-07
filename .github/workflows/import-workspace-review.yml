@@ -23,8 +23,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import base64, gzip, hashlib, subprocess
-          data = Path('maintenance/venture-workspace.patch.gz.b64').read_text().splitlines()
-          expected, encoded = data[0], ''.join(data[1:])
+          expected = Path('maintenance/venture-workspace.patch.gz.b64').read_text().strip()
+          encoded = ''.join(Path(f'maintenance/venture-workspace.part-{i}.b64').read_text().strip() for i in (1,2,3))
           compressed = base64.b64decode(encoded, validate=True)
           if hashlib.sha256(compressed).hexdigest() != expected:
               raise SystemExit('Transport checksum mismatch; no source changes applied.')
@@ -36,7 +36,7 @@ jobs:
           subprocess.run(['git','apply','--check',str(target)],check=True)
           subprocess.run(['git','apply','--index',str(target)],check=True)
           PY
-          git rm .github/workflows/import-workspace-review.yml maintenance/venture-workspace.patch.gz.b64
+          git rm .github/workflows/import-workspace-review.yml maintenance/venture-workspace.patch.gz.b64 maintenance/venture-workspace.part-1.b64 maintenance/venture-workspace.part-2.b64 maintenance/venture-workspace.part-3.b64
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Implement Venture workspace navigation, Sources, model controls and dictation recovery'
