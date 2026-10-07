@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('venture_fixture',ROOT/'tests/venture-smoke.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-extra='''<header id="appHeader" class="top-actions"><button id="accountButton">Account</button><button id="newBtn">New</button><button id="openBtn">Projects</button><button id="saveBtn">Save project</button><button id="exportBtn">Export</button></header><button id="mobileHeaderToggle" hidden></button><button id="headerReveal" hidden></button><dialog id="accountDialog"></dialog><div id="accountGateSignIn">Sign in</div>'''
+extra='''<header id="appHeader"><div class="top-actions"><button id="accountButton">Account</button><button id="newBtn">New</button><button id="openBtn">Projects</button><button id="saveBtn">Save project</button><button id="exportBtn">Export</button></div></header><button id="mobileHeaderToggle" hidden></button><button id="headerReveal" hidden></button><dialog id="accountDialog"></dialog><div id="accountGateSignIn">Sign in</div>'''
 fixture=mod.fixture.replace('<body>','<body>'+extra).replace('</style>','\n'+(ROOT/'web/workspace.css').read_text()+'</style>',1).replace('</script></body>', '\n'+(ROOT/'web/workspace.js').read_text().replace('location.search',"window.fixtureQuery || ''")+'</script></body>')
 CID='v-test-conversation-001'
 settings=mod.settings
@@ -59,7 +59,16 @@ def main():
      assert p.locator('#ventureBack').is_hidden();assert p.locator('#runProjectBtn').is_hidden()
     else:assert p.locator('#workspaceSwipeNotice').is_hidden()
     assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
-    assert p.evaluate('getComputedStyle(document.getElementById("accountButton"),"::before").maskImage.includes("data:image/svg+xml")')
+    assert p.locator('#accountButton > svg.workspace-nav-svg > path').count()==1
+    assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].length===5")
+    assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].every(b=>b.childNodes.length===1&&b.firstElementChild.tagName.toLowerCase()==='svg'&&b.textContent==='')")
+    assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].every(b=>b.getBoundingClientRect().width===44&&b.getBoundingClientRect().height===44)")
+    assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].every(b=>getComputedStyle(b.querySelector('svg')).display!=='none')")
+    # Repainting a signed-in account must not bring the visible label back.
+    p.evaluate("document.getElementById('accountButton').title='Signed in as test@example.com';workspaceNavIcons()")
+    assert p.locator('#accountButton svg.workspace-nav-svg').count()==1
+    assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
+    p.screenshot(path=str(ROOT/'tests/venture-screenshots'/f'nav-icons-{width}.png'))
     p.evaluate('ventureSelect('+json.dumps(CID)+')');p.wait_for_function('venture.current?.id==='+json.dumps(CID))
     p.locator('#workspaceSourcesButton').click();p.wait_for_function('workspace.files.size===100')
     assert p.locator('.venture-file-grid').is_hidden()
