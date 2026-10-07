@@ -81,6 +81,8 @@ def run():
                 assert p.evaluate('testState().settings.model')=='gpt-6-astra','Saved model choice was not retained'
                 assert p.locator('.venture-model-group').first.locator('.venture-model-name').all_inner_texts()==['Astra Pro','Astra','6.1 Sol','Sol','Terra','Luna']
                 assert p.locator('#ventureMaxTokens').get_attribute('type')=='range'
+                assert p.locator('#ventureMaxTokens').get_attribute('max')=='128000'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128K'
                 assert p.locator('#ventureMaxTokensValue').inner_text()=='16,000'
                 assert p.locator('#ventureProRow').is_hidden()
                 p.locator('[data-model="gpt-6-astra"][data-mode="pro"]').click()
@@ -102,6 +104,14 @@ def run():
                 p.screenshot(path=str(shots/f'venture-models-{width}.png'))
                 p.keyboard.press('End');assert p.locator('[data-model="gpt-4.1"]').evaluate('(el)=>el===document.activeElement')
                 p.keyboard.press('Escape');assert p.locator('#ventureModelsPanel').is_hidden()
+                p.locator('#ventureMaxTokens').fill('128000');assert p.locator('#ventureMaxTokensValue').inner_text()=='128,000'
+                p.locator('#ventureModel').click();p.locator('[data-model="gpt-4.1"]').click()
+                assert p.locator('#ventureMaxTokens').get_attribute('max')=='64000'
+                assert p.locator('#ventureMaxTokens').input_value()=='64000'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='64K'
+                p.locator('#ventureModel').click();p.locator('[data-model="gpt-6-astra"][data-mode="standard"]').click()
+                assert p.locator('#ventureMaxTokens').get_attribute('max')=='128000'
+                assert p.locator('#ventureMaxTokensEnd').inner_text()=='128K'
                 p.locator('#ventureMemory').check()
                 p.locator('#ventureVerbosity').fill('3');p.locator('#ventureSettingsClose').click();p.wait_for_timeout(800)
                 assert p.evaluate('testState().settings.runOptions.verbosity')=='high'
