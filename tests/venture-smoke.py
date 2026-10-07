@@ -77,6 +77,11 @@ def run():
                 p.locator('#ventureSettingsToggle').click();p.locator('#ventureModel').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed while choosing a model'
                 assert p.locator('input#ventureModel').count()==0
+                assert p.evaluate('VENTURE_DEFAULTS.model')=='gpt-5.6-terra'
+                assert p.evaluate('testState().settings.model')=='gpt-6-astra','Saved model choice was not retained'
+                assert p.locator('.venture-model-group').first.locator('.venture-model-name').all_inner_texts()==['Astra Pro','Astra','6.1 Sol','Sol','Terra','Luna']
+                assert p.locator('#ventureMaxTokens').get_attribute('type')=='range'
+                assert p.locator('#ventureMaxTokensValue').inner_text()=='16,000'
                 assert p.locator('#ventureProRow').is_hidden()
                 p.locator('[data-model="gpt-6-astra"][data-mode="pro"]').click()
                 assert p.locator('#ventureModelLabel').inner_text()=='Astra Pro'
