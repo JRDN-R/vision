@@ -218,7 +218,7 @@ class Funding:
                     (owner[0],row['venture_key_id'],now,now))
 
     def status(self, uid: str, kid: str | None) -> dict:
-        empty = dict(provider='estimate', status='uncalibrated', fraction=None, revision=0,
+        empty = dict(provider='estimate', status='uncalibrated', fraction=None, revision=0, connectionId=kid,
                      updatedAt=None, coverage='unknown', issues=[], pricingVersion=self.catalog['version'])
         if not kid:
             return {**empty,'status':'no-key'}
@@ -253,6 +253,8 @@ class Funding:
             amount = amount_micro(body.get('amount'))
         except ValueError as error:
             raise self.sessions.Error(str(error))
+        if kind=='add' and amount<=0:
+            raise self.sessions.Error('Enter the amount successfully added, greater than zero.')
         if not self.reconcile(uid,kid):
             raise self.sessions.Error('Usage reconciliation is pending. Try again after checking server storage.',503)
         payload=json.dumps([kind,amount],separators=(',',':'))

@@ -5,14 +5,14 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import zipfile
 
 import server
 import sessions
 import test_firebase_auth
 from test_sessions import FakeResponse
-from venture import disk_name, local_title
+from venture import disk_name, local_title, local_graphic
 from venture_billing import amount_micro, estimate, key_id
 from venture_files import check_zip
 
@@ -60,7 +60,7 @@ class VentureTests(unittest.TestCase):
 
     def test_account_history_and_board_separation(self):
         self.assertEqual(self.client.get('/api/projects', headers=self.a).json['projects'], [])
-        self.assertEqual(len(self.client.get('/api/venture/conversations', headers=self.a).json['conversations']), 1)
+        self.assertEqual(self.client.get('/api/venture/conversations', headers=self.a).json['conversations'], [])
         self.assertEqual(self.client.get('/api/venture/conversations', headers=self.b).json['conversations'], [])
         for method in ('get', 'patch'):
             result = getattr(self.client, method)(self.path, headers=self.b, **({'json': {'title': 'stolen', 'revision': 1}} if method=='patch' else {}))
@@ -114,7 +114,7 @@ class VentureTests(unittest.TestCase):
 
     def test_calibration_and_usage_are_idempotent(self):
         initial = self.funding(); self.assertEqual(initial.status_code,200,initial.json)
-        self.assertNotIn('25', json.dumps(initial.json))
+        self.assertTrue({'balance','amount','capacity'}.isdisjoint(initial.json))
         rid=self.submit().json['runId']; self.complete(rid)
         once=self.venture.funding.status('firebase:alice',key_id('sk-test-venture'))
         self.venture.funding.account_for(self.service.row(rid))
@@ -146,6 +146,54 @@ class VentureTests(unittest.TestCase):
         self.assertEqual(row['venture_retry_of'],second)
         self.assertEqual(len(self.client.get(self.path,headers=self.a).json['runs']),3)
 
+    def test_history_requires_response_and_titles_first_successful_exchange(self):
+        first=self.submit().json['runId']
+        self.service.update(first,status='error',text='',error='Unavailable')
+        self.assertEqual(self.client.get('/api/venture/conversations',headers=self.a).json['conversations'],[])
+        second=self.submit('request-venture-0002').json['runId']
+        self.service.update(second,status='in_progress',text='Inspect the cowling gaps.')
+        rows=self.client.get('/api/venture/conversations',headers=self.a).json['conversations']
+        self.assertEqual(len(rows),1)
+        self.assertLessEqual(len(rows[0]['title'].split()),4)
+        self.assertEqual(rows[0]['graphic'],'plane')
+        self.complete(second)
+        self.assertLessEqual(len(self.client.get(self.path,headers=self.a).json['conversation']['title'].split()),4)
+
+    def test_existing_titles_migrate_without_changing_manual_names(self):
+        rid=self.submit().json['runId'];self.complete(rid)
+        with server.connect_db() as db:
+            db.execute("UPDATE venture_conversations SET title='A very long old automatically generated title',metadata_version=0 WHERE id=?",(self.cid,))
+        self.venture.initialize()
+        self.assertLessEqual(len(self.venture.lookup(self.cid)['title'].split()),4)
+        with server.connect_db() as db:
+            db.execute("UPDATE venture_conversations SET title='Keep my own longer custom title',manual_title=1,metadata_version=0 WHERE id=?",(self.cid,))
+        self.venture.initialize()
+        self.assertEqual(self.venture.lookup(self.cid)['title'],'Keep my own longer custom title')
+
+    def test_funding_zero_addition_and_changed_connection_are_rejected(self):
+        self.funding()
+        self.assertEqual(self.funding('add','0','calibrate-request-0002',1).status_code,400)
+        result=self.client.post('/api/venture/funding',headers=self.a,json=dict(kind='add',amount='5',requestId='calibrate-request-0003',revision=1,connectionId='old-key'))
+        self.assertEqual(result.status_code,409)
+        self.assertEqual(self.venture.funding.status('firebase:alice',key_id('sk-test-venture'))['revision'],1)
+
+    def test_model_catalog_is_scoped_to_saved_key_and_read_only(self):
+        response=MagicMock();response.__enter__.return_value=response;response.status_code=200
+        response.json.return_value={'data':[{'id':'gpt-6-astra'},{'id':'gpt-6-luna'},{'id':'gpt-6-luna'},{'id':'<script>'},{'id':'text-embedding-3-small'}]}
+        with patch('venture.requests.get',return_value=response) as transport:
+            result=self.client.get('/api/venture/models',headers=self.a)
+            self.assertEqual(result.status_code,200,result.json)
+            self.assertEqual([m['id'] for m in result.json['models']],['gpt-6-astra','gpt-6-luna','text-embedding-3-small'])
+            self.assertNotIn('sk-test-venture',json.dumps(result.json))
+            self.client.get('/api/venture/models',headers=self.a)
+            self.assertEqual(transport.call_count,1)
+            self.assertEqual(self.client.get('/api/venture/models',headers=self.b).json['status'],'no-key')
+            self.assertEqual(transport.call_count,1)
+            with server.connect_db() as db:db.execute('UPDATE account_credentials SET openai_key_cipher=? WHERE uid=?',(b'sk-replaced','firebase:alice'))
+            self.client.get('/api/venture/models',headers=self.a)
+            self.assertEqual(transport.call_count,2)
+            self.assertEqual(transport.call_args.kwargs['headers']['Authorization'],'Bearer sk-replaced')
+
 
 class VenturePureTests(unittest.TestCase):
     def setUp(self):
@@ -166,6 +214,9 @@ class VenturePureTests(unittest.TestCase):
         for name in ('CON','NUL.txt','../../report.html',r'c:\bad\path.txt'):
             result=disk_name(name);self.assertNotIn('/',result);self.assertNotIn('\\',result)
         self.assertTrue(local_title('Please inspect cowling gaps and prepare a work order','The cowling gap inspection needs measurements.'))
+        for prompt,reply in [('Hi','Hello there'),('','Here is your inspection report'),('Can you help me create a detailed report on aircraft corrosion around the wing spar','Inspect the aircraft wing spar')]:
+            self.assertLessEqual(len(local_title(prompt,reply).split()),4)
+        self.assertEqual(local_graphic('Fix this Python API code','Here is the function'),'code')
     def test_unsafe_archive_rejected_without_extraction(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'source.zip'

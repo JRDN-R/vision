@@ -18,7 +18,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
@@ -33,19 +33,22 @@ def run():
                 conversations=[dict(id='v-test-conversation-001',title='Cowling inspection report',settings=settings,revision=1,createdAt=1791320000,updatedAt=1791320000,boardProject=False)]
                 runs=[dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create an inspection report and save the HTML.',text='## Your inspection report\n\nThe measurements are organized by panel and location.\n\n[Download the report](sandbox:/mnt/data/report.html)',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)]
                 funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[])
-                submitted=[]
+                submitted=[];funding_posts=[];conversation_posts=[]
                 def api(url,method,raw):
                     if url.endswith('/artifacts/a-001'):
                         return {'status':200,'type':'text/html','body':'<h1>Retained report</h1><script>parent.hacked=true</script>'}
                     path=url.split('?')[0];body=json.loads(raw or '{}');data={}
                     if path=='/health':data={'capabilities':{'ventureV1':True,'ventureV2':True}}
+                    elif path=='/venture/models':data={'status':'available','models':[{'id':id} for id in ['gpt-6-astra','gpt-6.1-sol','gpt-6-sol','gpt-5.6-terra','gpt-6-luna','gpt-4.1','text-embedding-3-small']]}
                     elif path=='/venture/profile':data={'hasAvatar':False,'avatarVersion':None}
                     elif path=='/venture/preferences':data={'settings':body if method=='PUT' else settings}
                     elif path=='/venture/funding':
-                        if method=='POST':funding.update(fraction=1,revision=funding['revision']+1)
+                        if method=='POST':
+                            funding_posts.append(body);funding.update(fraction=1,revision=funding['revision']+1)
                         data=funding
                     elif path=='/venture/conversations':
                         if method=='POST':
+                            conversation_posts.append(body)
                             new=dict(conversations[0],id=body['id'],title='New venture',settings=body['settings']);conversations.append(new);data={'conversation':new}
                         else:data={'conversations':conversations,'nextCursor':None}
                     elif path.startswith('/venture/conversations/'):
@@ -71,8 +74,29 @@ def run():
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
                 assert not p.locator('#ventureSettings').is_visible(),'Idle settings did not close'
-                p.locator('#ventureSettingsToggle').click();p.locator('#ventureModel').focus();p.wait_for_timeout(2200)
-                assert p.locator('#ventureSettings').is_visible(),'Settings closed while editing'
+                p.locator('#ventureSettingsToggle').click();p.locator('#ventureModel').click();p.wait_for_timeout(2200)
+                assert p.locator('#ventureSettings').is_visible(),'Settings closed while choosing a model'
+                assert p.locator('input#ventureModel').count()==0
+                assert p.locator('#ventureProRow').is_hidden()
+                p.locator('[data-model="gpt-6-astra"][data-mode="pro"]').click()
+                assert p.locator('#ventureModelLabel').inner_text()=='Astra Pro'
+                assert p.evaluate('testState().settings.model')=='gpt-6-astra'
+                assert p.evaluate('testState().settings.runOptions.mode')=='pro'
+                assert p.locator('#ventureProRow').is_hidden()
+                p.locator('#ventureModel').click();p.locator('[data-model="gpt-6.1-sol"]').click()
+                assert p.locator('#ventureModelLabel').inner_text()=='6.1 Sol'
+                assert p.locator('#ventureProRow').is_visible()
+                p.locator('#venturePro').check()
+                assert p.evaluate('testState().settings.runOptions.mode')=='pro'
+                p.locator('#venturePro').uncheck()
+                p.locator('#ventureModel').click()
+                assert p.locator('[data-model="text-embedding-3-small"]').is_disabled()
+                p.locator('[data-model="gpt-6-astra"][data-mode="standard"]').click()
+                assert p.locator('#ventureModelLabel').inner_text()=='Astra'
+                p.locator('#ventureModel').click()
+                p.screenshot(path=str(shots/f'venture-models-{width}.png'))
+                p.keyboard.press('End');assert p.locator('[data-model="gpt-4.1"]').evaluate('(el)=>el===document.activeElement')
+                p.keyboard.press('Escape');assert p.locator('#ventureModelsPanel').is_hidden()
                 p.locator('#ventureMemory').check()
                 p.locator('#ventureVerbosity').fill('3');p.locator('#ventureSettingsClose').click();p.wait_for_timeout(800)
                 assert p.evaluate('testState().settings.runOptions.verbosity')=='high'
@@ -82,6 +106,16 @@ def run():
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='76'
                 p.locator('#ventureCalibrate').click();p.locator('#ventureBalanceAmount').fill('25');p.locator('#ventureBalanceForm [type=submit]').click();p.wait_for_timeout(200)
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='100',p.locator('#ventureBalanceStatus').inner_text()
+                assert funding_posts[-1]['kind']=='set'
+                assert p.locator('#ventureBalanceKind').count()==0
+                p.locator('#ventureAddFunding').evaluate("el=>el.addEventListener('click',e=>e.preventDefault(),{once:true})")
+                p.locator('#ventureAddFunding').click()
+                assert p.locator('#ventureBalanceDialog').is_visible()
+                assert len(funding_posts)==1,'Opening billing must not credit the meter'
+                p.locator('#ventureBalanceAmount').fill('5');p.locator('#ventureBalanceSubmit').click();p.wait_for_timeout(200)
+                assert funding_posts[-1]['kind']=='add'
+                assert funding_posts[-1]['amount']=='5'
+                assert len(funding_posts)==2
                 p.locator('#ventureAccountClose').click()
                 # Original file link routes to the authorized retained server copy.
                 p.locator('.console-artifact-link').click();p.wait_for_timeout(100)
@@ -96,6 +130,9 @@ def run():
                 assert p.locator('#ventureTitle').inner_text()=='My adventure'
                 if width<761:p.locator('#ventureHistoryClose').click()
                 assert p.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+                p.locator('#ventureNewCompact').click();p.wait_for_timeout(150)
+                assert not conversation_posts,'New venture must not save an empty conversation'
+                assert p.evaluate('testState().current') is None
                 p.evaluate('testSignOut()');assert not p.locator('#visionVenture').is_visible()
                 assert p.locator('#ventureTurns').inner_text()==''
                 assert not errors,errors

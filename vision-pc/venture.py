@@ -17,6 +17,8 @@ import shutil
 import threading
 import time
 
+import requests
+
 from flask import g, jsonify, request, send_file
 from venture_billing import Funding, key_id
 
@@ -59,12 +61,13 @@ def local_title(prompt: str, reply: str) -> str:
     prompt=re.sub(r'^(?:please\s+|can you\s+|could you\s+|i (?:want|need) (?:you )?to\s+)+','',prompt.strip(),flags=re.I)
     words=re.findall(r"[\w][\w'’./-]*",prompt,flags=re.U)[:150]
     if not words:
-        return 'Untitled venture'
+        words=re.findall(r"[\w][\w'’./-]*",re.sub(r'https?://\S+|```[\s\S]*?```',' ',reply[:6000]),flags=re.U)[:150]
+    if not words:return 'New conversation'
     stop=set('a an the to of on in is it its this that for with and or but you your me my i we our can could would will please make help want need tell do does how what why when where about some something'.split())
     corpus=Counter(w.lower() for w in re.findall(r'\w+',prompt+' '+reply[:6000]) if len(w)>2 and w.lower() not in stop)
-    best=(float('-inf'),0,6)
+    best=(float('-inf'),0,4)
     for start in range(min(len(words),60)):
-        for length in range(3,8):
+        for length in range(1,5):
             phrase=words[start:start+length]
             if len(phrase)<min(3,len(words)):continue
             useful=[w for w in phrase if w.lower() not in stop]
@@ -72,8 +75,28 @@ def local_title(prompt: str, reply: str) -> str:
             if phrase[0].lower() in stop:score-=2
             if phrase[-1].lower() in stop:score-=2
             if score>best[0]:best=(score,start,length)
-    title=' '.join(words[best[1]:best[1]+best[2]])[:72].strip(' .-/')
+    title=' '.join(words[best[1]:best[1]+min(4,best[2])])[:72].strip(' .-/')
     return title[:1].upper()+title[1:] if title else 'Untitled venture'
+
+
+def local_graphic(prompt: str, reply: str) -> str:
+    """Small local topic classifier. Returns a fixed icon key, never HTML or URLs."""
+    topics={
+        'plane':'aircraft airplane aviation cowling fuselage wing rivet spar flight',
+        'code':'code python javascript html css github api function software programming',
+        'music':'music song songs singer singing drum drums piano guitar lyrics',
+        'image':'image images photo photos picture drawing design illustration logo',
+        'repair':'repair fix screw screws sealant plumbing handler maintenance',
+        'science':'science physics chemistry experiment biology molecule',
+        'travel':'travel trip hotel vacation itinerary destination',
+        'food':'food recipe dinner lunch breakfast cooking restaurant',
+        'document':'document report spreadsheet presentation slides letter email writing',
+    }
+    primary=Counter(re.findall(r'\w+',prompt.lower()[:6000]))
+    secondary=Counter(re.findall(r'\w+',reply.lower()[:6000]))
+    scores={icon:sum(3*primary[w]+secondary[w] for w in keywords.split()) for icon,keywords in topics.items()}
+    winner=max(scores,key=scores.get)
+    return winner if scores[winner] else 'conversation'
 
 
 class Venture:
@@ -82,6 +105,7 @@ class Venture:
         self.funding=Funding(sessions)
         self.mirror_lock=threading.RLock()
         self.last_mirror={}
+        self.model_cache={}
         self.documents=None
         self.transcription=None
         from venture_dictation import Dictation
@@ -94,6 +118,7 @@ class Venture:
 
     def initialize(self):
         self.last_mirror.clear()
+        self.model_cache.clear()
         with self.db() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS venture_conversations (
@@ -110,6 +135,10 @@ class Venture:
                 db.execute('ALTER TABLE venture_conversations ADD COLUMN deleted_at REAL')
             if 'purge_pending' not in columns:
                 db.execute('ALTER TABLE venture_conversations ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0')
+            if 'graphic' not in columns:
+                db.execute("ALTER TABLE venture_conversations ADD COLUMN graphic TEXT NOT NULL DEFAULT 'conversation'")
+            if 'metadata_version' not in columns:
+                db.execute('ALTER TABLE venture_conversations ADD COLUMN metadata_version INTEGER NOT NULL DEFAULT 0')
             columns={r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
             if 'venture_memory_enabled' not in columns:
                 db.execute('ALTER TABLE project_runs ADD COLUMN venture_memory_enabled INTEGER NOT NULL DEFAULT 0')
@@ -124,6 +153,14 @@ class Venture:
                 SELECT p.id,p.owner_uid,p.title,0,p.created_at,
                 COALESCE((SELECT MAX(r.updated_at) FROM project_runs r WHERE r.project_id=p.id),p.updated_at)
                 FROM projects p WHERE p.owner_uid IS NOT NULL AND EXISTS(SELECT 1 FROM project_runs r WHERE r.project_id=p.id)''')
+            # Give existing answered chats the same short titles and graphics,
+            # preserving names the user assigned and legacy board project names.
+            for conversation in db.execute('SELECT id,native,manual_title FROM venture_conversations WHERE deleted_at IS NULL AND metadata_version=0').fetchall():
+                first=db.execute("SELECT message,project_prompt,text FROM project_runs WHERE project_id=? AND length(trim(text))>0 ORDER BY created_at,id LIMIT 1",(conversation['id'],)).fetchone()
+                if first:
+                    prompt=first['message'] or first['project_prompt']
+                    db.execute('UPDATE venture_conversations SET title=CASE WHEN native=1 AND manual_title=0 THEN ? ELSE title END,graphic=?,metadata_version=1 WHERE id=?',
+                               (local_title(prompt,first['text']),local_graphic(prompt,first['text']),conversation['id']))
         self.funding.initialize()
         self.memory.initialize()
         self.dictation.initialize()
@@ -183,7 +220,7 @@ class Venture:
         return self.root(row['project_id'])/'generated'/row['id']/(aid+'-'+disk_name(name))
 
     def metadata(self,row: dict) -> dict:
-        return dict(id=row['id'],title=row['title'],manualTitle=bool(row['manual_title']),
+        return dict(id=row['id'],title=row['title'],graphic=row.get('graphic','conversation'),manualTitle=bool(row['manual_title']),
                     boardProject=not bool(row['native']),settings=json.loads(row['settings_json']),
                     revision=row['revision'],createdAt=row['created_at'],updatedAt=row['updated_at'],
                     storageWarning=row.get('storage_warning'))
@@ -224,7 +261,8 @@ class Venture:
             try:self.funding.account_for(row)
             except Exception:self.app.logger.warning('Venture usage will be reconciled on the next meter refresh.')
         now=time.monotonic()
-        if not terminal and now-self.last_mirror.get(rid,0)<1:return
+        first_reply=bool(row['text'].strip()) and not conversation.get('metadata_version')
+        if not terminal and not first_reply and now-self.last_mirror.get(rid,0)<1:return
         self.last_mirror[rid]=now
         # Bounded bookkeeping memory even on an always-on PC.
         if len(self.last_mirror)>500:self.last_mirror={rid:now}
@@ -232,11 +270,14 @@ class Venture:
             with self.mirror_lock:
                 with self.db() as db:
                     db.execute('UPDATE venture_conversations SET updated_at=? WHERE id=?',(row['updated_at'],row['project_id']))
-                    if terminal and row['text']:
-                        first=db.execute('SELECT id FROM project_runs WHERE project_id=? ORDER BY created_at,id LIMIT 1',(row['project_id'],)).fetchone()
+                    artifacts=db.execute('SELECT name FROM run_artifacts WHERE run_id=? AND path IS NOT NULL',(rid,)).fetchall() if not row['text'].strip() else []
+                    if row['text'].strip() or artifacts:
+                        first=db.execute("SELECT id FROM project_runs r WHERE project_id=? AND (length(trim(text))>0 OR EXISTS(SELECT 1 FROM run_artifacts a WHERE a.run_id=r.id AND a.path IS NOT NULL)) ORDER BY created_at,id LIMIT 1",(row['project_id'],)).fetchone()
                         if first and first[0]==rid:
-                            db.execute('UPDATE venture_conversations SET title=? WHERE id=? AND manual_title=0',
-                                       (local_title(row['message'] or row['project_prompt'],row['text']),row['project_id']))
+                            prompt=row['message'] or row['project_prompt']
+                            reply=row['text'] or 'Document '+ ' '.join(a['name'] for a in artifacts)
+                            db.execute('UPDATE venture_conversations SET title=CASE WHEN manual_title=0 THEN ? ELSE title END,graphic=?,metadata_version=1 WHERE id=?',
+                                       (local_title(prompt,reply),local_graphic(prompt,reply),row['project_id']))
                 self.mirror(row)
         except OSError:
             with self.db() as db:
@@ -369,7 +410,9 @@ class Venture:
                 return jsonify(conversation=self.metadata(self.lookup(cid,uid))),201
             term=str(request.args.get('q','')).strip()[:150]
             cursor=request.args.get('before','')
-            clauses=['uid=?','deleted_at IS NULL'];params=[uid]
+            # Drafts and requests with no assistant output remain recoverable by
+            # ID, but never take up a place in the user's conversation history.
+            clauses=['uid=?','deleted_at IS NULL',"EXISTS(SELECT 1 FROM project_runs r WHERE r.project_id=venture_conversations.id AND (length(trim(r.text))>0 OR EXISTS(SELECT 1 FROM run_artifacts a WHERE a.run_id=r.id AND a.path IS NOT NULL)))"];params=[uid]
             if term:clauses.append("title LIKE ? ESCAPE '\\'");params.append('%'+re.sub(r'([%_\\])',r'\\\1',term)+'%')
             if cursor:
                 try:
@@ -455,6 +498,33 @@ class Venture:
             with self.db() as db:row=db.execute('SELECT settings_json FROM venture_preferences WHERE uid=?',(uid,)).fetchone()
             return jsonify(settings=json.loads(row[0]) if row else DEFAULT_SETTINGS)
 
+        @app.get('/api/venture/models')
+        def venture_models():
+            from sessions import OPENAI, unprotect_secret
+            uid=self.account()
+            with self.db() as db:
+                saved=db.execute('SELECT openai_key_cipher FROM account_credentials WHERE uid=?',(uid,)).fetchone()
+            if not saved:return jsonify(models=[],status='no-key')
+            try:key=unprotect_secret(saved[0])
+            except Exception:raise self.Error('Save your API key again to load models.',503) from None
+            cache_key=(uid,key_id(key));cached=self.model_cache.get(cache_key)
+            if cached and time.monotonic()-cached[0]<300 and request.args.get('refresh')!='1':
+                return jsonify(models=cached[1],status='available')
+            try:
+                # Read-only discovery, never a model request or a billed probe.
+                with requests.get(OPENAI+'/models',headers={'Authorization':'Bearer '+key},timeout=(5,10)) as response:
+                    if response.status_code!=200:raise self.Error('OpenAI could not list models. Check this API key’s model permissions.',502)
+                    payload=response.json()
+                items=payload.get('data')
+                if not isinstance(items,list):raise ValueError('Invalid model list')
+                ids={m['id'] for m in items if isinstance(m,dict) and isinstance(m.get('id'),str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',m['id'])}
+                models=[dict(id=id) for id in sorted(ids)]
+            except (requests.RequestException,ValueError,AttributeError,TypeError):
+                raise self.Error('OpenAI’s model list is temporarily unavailable. Try refreshing it.',502) from None
+            if len(self.model_cache)>200:self.model_cache.clear()
+            self.model_cache[cache_key]=(time.monotonic(),models)
+            return jsonify(models=models,status='available')
+
         @app.route('/api/venture/funding',methods=['GET','POST'])
         def venture_funding():
             uid=self.account();kid=self.current_key_id(uid)
@@ -463,5 +533,6 @@ class Venture:
                 body=request.get_json(silent=True)
                 if not isinstance(body,dict):raise self.Error('Send a calibration amount.')
                 if not kid:raise self.Error('Save your API key before calibrating its funding estimate.')
+                if body.get('connectionId',kid)!=kid:raise self.Error('Your API connection changed. Check its balance before saving.',409)
                 return jsonify(self.funding.calibrate(uid,kid,body))
             return jsonify(self.funding.status(uid,kid))

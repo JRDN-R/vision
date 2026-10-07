@@ -40,16 +40,26 @@ blindly retried as another paid request.
 
 ## Using Venture
 
-Choose **Venture** from Vision. New Venture creates a separate conversation. The
-history drawer supports search, pagination, reopening and renaming through its
-menu or touch press-and-hold. Initial titles are generated locally from the first
-exchange using an extractive text heuristic; this is free of model/API charges,
-not an installed language model. A manual title is preserved.
+Choose **Venture** from Vision. New Venture opens a blank composer without saving
+an empty chat. Accepted work remains durable and recoverable, but enters history
+only when assistant text or a retained output file arrives. The history drawer
+supports search, pagination, reopening and renaming. A local extractive scorer
+creates a title of at most four words from the first answered exchange, and a
+small topic classifier selects its graphic. Neither calls an API or downloads
+model weights. Existing automatic titles are updated; manual titles are preserved.
 
-The header shows the model. Settings expose an exact model ID, mode, reasoning,
-verbosity, output-token limit, web search and code/files. Code Interpreter is on
+The header and responses show friendly model names and bundled Material Symbols.
+Astra and Astra Pro share the same API model with different modes; other models
+have a Pro switch. Sol is gold, Terra green, Luna pale white, and Astra has a slow
+blue/purple gradient with teal/red accents (static for reduced motion).
+The selection-only dropdown groups featured models above the full account catalog
+from `GET /v1/models`, fetched server-side with the saved key and cached for five
+minutes per account/key. Models for separate APIs are listed but disabled. An
+unverified starter catalog remains available if discovery fails. Raw API IDs stay
+in saved request state. Settings also expose reasoning, verbosity, output-token
+limit, web search and code/files. Code Interpreter is on
 by default. Sliders use discrete API values. The popover closes after approximately
-two idle seconds but not while a field is focused or a control is being dragged.
+two idle seconds but not while the model list is open, a field is focused, or a control is being dragged.
 Unsupported model/parameter combinations fail visibly, not with a silent downgrade.
 Settings are saved per conversation and snapshotted for every accepted request.
 
@@ -130,8 +140,14 @@ fresh local reconstruction rather than replaying stale cross-conversation excerp
 
 Click the account avatar to see a green/yellow/red bar with no dollar balance in
 its normal display. **Add funding** opens OpenAI's organization billing page;
-**Update balance** lets the user explicitly enter a current balance or an amount
-added. It does not detect a purchase on the billing website automatically.
+the completed-funding form is prepared automatically and restored on return.
+Entering the successfully purchased amount records the addition, without a
+separate record-funds option or opt-in. **Set balance** remains a separate
+correction that replaces the estimate. The external billing page does not send
+Vision a purchase receipt, so the amount still needs to be entered; merely
+opening billing never credits the meter. With no baseline, set the current
+balance first. The connection fingerprint prevents an open form crediting a
+different API key after it changes.
 
 The estimate is scoped to the signed-in account and a fingerprint of its configured
 API key. Actual returned token usage and a versioned server-side price catalog
