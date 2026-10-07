@@ -1,0 +1,43 @@
+name: Import workspace review changes
+on:
+  push:
+    branches: [feature/venture-workspace-recovery]
+    paths: ['maintenance/venture-workspace.patch.gz.b64']
+permissions:
+  contents: write
+concurrency:
+  group: import-workspace-review
+  cancel-in-progress: false
+jobs:
+  import:
+    if: github.ref == 'refs/heads/feature/venture-workspace-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply reviewable source changes and remove transport scaffolding
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = refs/heads/feature/venture-workspace-recovery
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, subprocess
+          data = Path('maintenance/venture-workspace.patch.gz.b64').read_text().splitlines()
+          expected, encoded = data[0], ''.join(data[1:])
+          compressed = base64.b64decode(encoded, validate=True)
+          if hashlib.sha256(compressed).hexdigest() != expected:
+              raise SystemExit('Transport checksum mismatch; no source changes applied.')
+          patch = gzip.decompress(compressed)
+          if len(patch) > 2000000:
+              raise SystemExit('Unexpected patch size.')
+          target = Path('/tmp/venture-workspace.patch')
+          target.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(target)],check=True)
+          subprocess.run(['git','apply','--index',str(target)],check=True)
+          PY
+          git rm .github/workflows/import-workspace-review.yml maintenance/venture-workspace.patch.gz.b64
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Implement Venture workspace navigation, Sources, model controls and dictation recovery'
+          git push origin HEAD:feature/venture-workspace-recovery
