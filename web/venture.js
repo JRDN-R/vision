@@ -100,10 +100,10 @@ const ventureLegacyArtifact=consoleArtifactBlob;
 consoleArtifactBlob=async function(file,run){if(!run.ventureId)return ventureLegacyArtifact(file,run);const epoch=venture.epoch;const response=await ventureFetch(ventureRunPath(run.ventureId)+'/'+encodeURIComponent(run.runId)+'/artifacts/'+encodeURIComponent(file.id));const blob=await response.blob();if(epoch!==venture.epoch)throw new Error('Account changed while downloading.');return blob;};
 async function ventureOpen(){
  ventureIdentity();if(!venture.uid){openAccountDialog('Sign in to open Venture.');return;}
- venture.open=true;$('visionConsole').hidden=true;$('visionVenture').hidden=false;ventureSidebar(matchMedia('(min-width:761px)').matches);venture.viewport?.();venturePaintAccount();ventureSetNotice('');const epoch=venture.epoch;
- try{const health=await ventureJSON('/health');if(epoch!==venture.epoch)return;if(!health.capabilities?.ventureV2)throw new Error('Venture needs the new FUPCJ Server update. Your existing board and saved projects are unchanged.');venture.ready=true;
+ venture.open=true;venture.ready=false;$('visionConsole').hidden=true;$('visionVenture').hidden=false;ventureSidebar(matchMedia('(min-width:761px)').matches);venture.viewport?.();venturePaintAccount();ventureSetNotice('');const epoch=venture.epoch;
+ try{const health=await ventureJSON('/health');if(epoch!==venture.epoch)return;if(!health.capabilities?.ventureV2)throw new Error('Venture needs the new FUPCJ Server update. Your existing board and saved projects are unchanged.');
  const prefs=await ventureJSON('/venture/preferences');if(epoch!==venture.epoch)return;venture.settings=ventureSettings(prefs.settings);venturePaintSettings();await ventureLoadHistory();
- const saved=venture.current?.id||ventureRecall('selection');if(saved)await ventureSelect(saved);else ventureBlank();void ventureLoadFunding();void ventureLoadProfile();
+ const saved=venture.current?.id||ventureRecall('selection');if(saved)await ventureSelect(saved);else ventureBlank();if(epoch!==venture.epoch)return;venture.ready=true;venturePaintStatus();void ventureLoadFunding();void ventureLoadProfile();
  }catch(error){if(epoch===venture.epoch){ventureSetNotice(ventureError(error));venturePaintStatus();}}
 }
 function ventureClose(){venture.open=false;clearTimeout(venture.poll);ventureStopDictation();ventureClosePopover('settings',false);ventureClosePopover('account',false);if($('visionVenture')){$('visionVenture').hidden=true;$('visionVenture').querySelector('.venture-main').inert=false;}$('ventureKey').value='';}

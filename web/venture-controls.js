@@ -90,6 +90,13 @@ async function ventureDictate() {
  ventureRecording = recording;
  ventureSetNotice(''); ventureRecordingUI(recording, 'permission');
  try {
+  // Unlock Web Audio synchronously in the click gesture (especially Safari).
+  // Waiting until after a permission dialog can leave the waveform suspended.
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (Audio) {
+   try { recording.audioContext = new Audio(); void recording.audioContext.resume().catch(() => {}); }
+   catch { /* Audio recording can work without a Web Audio analyser. */ }
+  }
   // Request from the user gesture; never silently acquire microphone access.
   recording.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1}});
   if (!ventureDictationCurrent(recording)) { ventureReleaseMic(recording); return; }
@@ -106,10 +113,8 @@ async function ventureDictate() {
   recording.recorder.onstop = () => { if (ventureDictationCurrent(recording)) void ventureUploadDictation(recording); };
   for (const track of recording.stream.getAudioTracks()) track.onended = () => ventureFinishRecording(recording);
   // The waveform uses actual microphone samples, not simulated speech activity.
-  const Audio = window.AudioContext || window.webkitAudioContext;
-  if (Audio) {
+  if (recording.audioContext) {
    try {
-    recording.audioContext = new Audio();
     recording.analyser = recording.audioContext.createAnalyser(); recording.analyser.fftSize = 1024;
     recording.source = recording.audioContext.createMediaStreamSource(recording.stream);
     recording.source.connect(recording.analyser);

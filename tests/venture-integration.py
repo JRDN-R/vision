@@ -13,6 +13,8 @@ import time
 from unittest.mock import patch
 import wave
 import base64
+import math
+import struct
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
@@ -34,6 +36,12 @@ class QuietHandler(WSGIRequestHandler):
 def run():
     VentureFeatureTests.setUpClass();test=VentureFeatureTests();test.setUp();test.enable_dictation()
     test.complete(test.submit().json['runId'])
+    # Continuous tone avoids Chromium's default fake mic alternating with silence.
+    # MediaRecorder, audio analysis and server decoding remain the real code paths.
+    mic=test.root/'microphone.wav'
+    with wave.open(str(mic),'wb') as audio:
+        audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(48000)
+        audio.writeframes(b''.join(struct.pack('<h',int(14000*math.sin(2*math.pi*440*i/48000))) for i in range(48000*5)))
     posts=[]
     def gemini(url,**kwargs):
         posts.append(kwargs['json'])
@@ -47,7 +55,7 @@ def run():
     token=test.token('alice')
     try:
         with patch('venture_dictation.requests.post',side_effect=gemini),sync_playwright() as pw:
-            browser=pw.chromium.launch(headless=True,args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream'],
+            browser=pw.chromium.launch(headless=True,args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-file-for-fake-audio-capture='+str(mic)],
                 **({'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
             try:
                 context=browser.new_context(viewport={'width':390,'height':844},permissions=['microphone'])
@@ -63,7 +71,8 @@ def run():
                 page.wait_for_timeout(1500)
                 assert page.locator('#ventureWaveform').is_visible()
                 assert page.evaluate("ventureRecording.analyser instanceof AnalyserNode")
-                assert page.evaluate("Array.from(ventureRecording.samples).some(n=>Math.abs(n-128)>1)"),'The waveform did not receive microphone samples'
+                page.wait_for_function("ventureRecording.audioContext.state==='running'",timeout=5000)
+                page.wait_for_function("Array.from(ventureRecording.samples).some(n=>Math.abs(n-128)>1)",timeout=5000)
                 page.screenshot(path=str(ROOT/'tests/venture-screenshots/venture-dictation-390.png'))
                 assert page.locator('#ventureSend').is_disabled()
                 page.locator('#ventureMic').click()
@@ -81,6 +90,8 @@ def run():
                 page.evaluate('window.lastMicStream=ventureRecording.stream;window.lastMicRecorder=ventureRecording.recorder;')
                 # Fast forward to the cut-off. Native capture remains real; backend
                 # duration cap is separately tested with an actual 181-second WAV.
+                # Native encoder time is not controlled by Playwright's JS clock.
+                time.sleep(.8)
                 page.clock.fast_forward(180000)
                 assert page.evaluate("window.lastMicRecorder.state==='inactive'")
                 assert page.evaluate("window.lastMicStream.getTracks().every(t=>t.readyState==='ended')")
@@ -119,6 +130,13 @@ def run():
                 assert not errors,errors
                 context.close()
                 print('Hosted integration passed: real microphone capture/waveform, server FFmpeg -> Gemini text adapter, silent 180-second timer, draft preservation/no auto-send, profile crop/upload/reload, storage paths, memory settings, conversation deletion and unchanged project Gemini approval.')
+            except Exception:
+                if 'page' in locals():
+                    try:
+                        page.screenshot(path=str(ROOT/'tests/venture-screenshots/venture-integration-failure.png'))
+                        print('Browser diagnostic:',page.evaluate("({notice:$('ventureNotice')?.textContent,recording:ventureRecording?.phase,audio:ventureRecording?.audioContext?.state,samples:ventureRecording?Array.from(ventureRecording.samples).slice(0,32):[],ready:venture.ready,errors:window.testErrors||[]})"))
+                    except Exception:pass
+                raise
             finally:browser.close()
     finally:
         http.shutdown();thread.join(timeout=5);test.tearDown()
