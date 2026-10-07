@@ -2,7 +2,7 @@ name: Apply reviewed v20 source
 on:
   push:
     branches: [release/v20-auto-dictation]
-    paths: ['maintenance/v20-apply.json']
+    paths: ['maintenance/v20-apply.json', '.github/workflows/apply-reviewed-v20.yml']
 permissions:
   contents: write
 concurrency:
@@ -45,7 +45,10 @@ jobs:
           for name,digest in expected.items():
               assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, 'Source checksum: '+name
           PY
-          git rm .github/workflows/apply-reviewed-v20.yml maintenance/v20-apply.json maintenance/v20-source-1.patch maintenance/v20-source-2.patch maintenance/v20-source-3.patch
+          # GITHUB_TOKEN may publish application source, not edit workflows.
+          # The authorized repository connection applies CI changes separately.
+          git restore --source=HEAD --staged --worktree .github/workflows/test-venture.yml
+          git rm maintenance/v20-apply.json maintenance/v20-source-1.patch maintenance/v20-source-2.patch maintenance/v20-source-3.patch
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Release v20 workspace updates and automatic Gemini to PC dictation recovery'
