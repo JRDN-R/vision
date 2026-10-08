@@ -5,6 +5,7 @@
 const NAVIGATION_RELEASE = /* VISION_RELEASE_NOTES */ {};
 const navigation = {menu:false, uid:'', newsTimer:null, receipts:new Set(), dialogPress:null};
 const navigationSpark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/><path d="M20 2v4m-2-2h4"/></svg>';
+function navigationBrand(name){return '<span class="workspace-brand-head" aria-hidden="true">'+ventureBrandIcon()+'</span><span class="workspace-brand-name">'+name+'</span>';}
 function navigationVersion(){return document.querySelector('meta[name="vision-version"]')?.content||'';}
 function navigationReceipt(){return 'vision-release-seen-v1:'+encodeURIComponent(ventureScope())+':'+navigationVersion();}
 function navigationSeen(){const key=navigationReceipt();if(navigation.receipts.has(key))return true;try{return localStorage.getItem(key)==='seen';}catch{return false;}}
@@ -35,6 +36,7 @@ function navigationSync(){
  button.hidden=!allowed;button.inert=!allowed;
  button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-controls',venture.open?'ventureSidebar':'workspaceMenu');
  button.setAttribute('aria-label',open?'Close menu':venture.open?'Open Venture menu':'Open Vision menu');
+ button.tabIndex=open?-1:0;navigation.motion?.setOpen(open);
  document.body.classList.toggle('workspace-menu-open',open);
  if(!venture.open){
   const app=document.querySelector('main.app');if(app)app.inert=navigation.menu||!allowed;
@@ -46,7 +48,7 @@ function navigationSync(){
 }
 function navigationVisionMenu(show,restore=true){
  navigation.menu=!!show;const menu=$('workspaceMenu');menu.hidden=!show;menu.inert=!show;$('workspaceMenuScrim').hidden=!show;
- if(show){workspaceNavIcons();menu.querySelector('button:not([hidden]):not(:disabled)')?.focus({preventScroll:true});}
+ if(show){workspaceNavIcons();menu.focus({preventScroll:true});}
  else if(restore&&!venture.open)$('workspaceMenuButton').focus({preventScroll:true});
 }
 function navigationCloseMenu(restore=true){
@@ -55,23 +57,27 @@ function navigationCloseMenu(restore=true){
  navigationSync();navigationCheckNews();
 }
 function navigationToggleMenu(){
- if(venture.open){ventureClosePopover('settings',false);ventureClosePopover('account',false);ventureSidebar(!navigationMenuOpen());if(navigationMenuOpen())$('ventureSearch').focus({preventScroll:true});}
+ if(venture.open){ventureClosePopover('settings',false);ventureClosePopover('account',false);ventureSidebar(!navigationMenuOpen());}
  else navigationVisionMenu(!navigation.menu);
  navigationSync();
 }
 function navigationDetailsIcon(){
- const button=$('sidebarToggle');if(!button||!mobileQuery.matches)return;
+ const button=$('sidebarToggle');if(!button)return;
  button.setAttribute('aria-label',sidebarOpen?'Hide details':'Show details');
- button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6"/></svg>';
+ button.textContent=sidebarOpen?'Details ↓':'Details ↑';
 }
 function navigationInstall(){
  document.documentElement.classList.add('compact-navigation');
- const button=document.createElement('button');button.id='workspaceMenuButton';button.type='button';button.className='workspace-menu-button';button.hidden=true;button.innerHTML=ventureIcon('menu');button.onclick=navigationToggleMenu;
+ const button=document.createElement('button');button.id='workspaceMenuButton';button.type='button';button.className='workspace-menu-button';button.hidden=true;button.innerHTML='<span id="workspaceMenuGlyph" aria-hidden="true"></span>';button.onclick=navigationToggleMenu;
  const menu=document.createElement('aside');menu.id='workspaceMenu';menu.className='workspace-menu';menu.hidden=true;menu.inert=true;menu.setAttribute('aria-label','Vision menu');
- menu.innerHTML='<div class="workspace-menu-heading"><span>Vision</span><small>YOUR WORKSPACE</small></div><nav class="workspace-menu-actions" aria-label="Project actions"></nav><div class="workspace-menu-footer"><span class="workspace-menu-version"></span></div>';
+ menu.tabIndex=-1;
+ menu.innerHTML='<div class="workspace-menu-heading workspace-brand">'+navigationBrand('Vision')+'</div><nav class="workspace-menu-actions" aria-label="Project actions"></nav><div class="workspace-menu-footer"><span class="workspace-menu-version"></span></div>';
  menu.querySelector('nav').append(document.querySelector('#appHeader .top-actions'));
  const scrim=document.createElement('button');scrim.type='button';scrim.id='workspaceMenuScrim';scrim.className='workspace-menu-scrim';scrim.hidden=true;scrim.setAttribute('aria-label','Close Vision menu');scrim.tabIndex=-1;scrim.onclick=()=>navigationCloseMenu();
  document.body.append(scrim,menu,button);
+ navigation.motion=window.VisionMenuMotion.create($('workspaceMenuGlyph'));
+ const ventureHeading=$('ventureSidebar').querySelector('.venture-wordmark');ventureHeading.className='venture-wordmark workspace-brand';ventureHeading.innerHTML=navigationBrand('Venture');$('ventureSidebar').tabIndex=-1;
+ const add=$('addNodeButton');add.innerHTML='<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="13"/><path d="M16 9v14M9 16h14"/></svg>';add.setAttribute('aria-label','Add a node');
  // Retain original actions, including controls that only exist in portable builds.
  for(const [id,label,icon] of [['runProjectBtn','Venture','compass'],['downloadAppBtn','Download app','download'],['localUpdateButton','Local updates','retry']]){
   const control=$(id);if(!control)continue;control.innerHTML=ventureIcon(icon)+'<span class="workspace-nav-label">'+label+'</span>';
@@ -102,10 +108,12 @@ const navigationPriorSync=workspaceSyncSwitch;
 workspaceSyncSwitch=function(){navigationPriorSync();navigationSync();};
 const navigationPriorSidebar=ventureSidebar;
 ventureSidebar=function(show){
+ const wasOpen=$('visionVenture').classList.contains('history-open');
  navigationPriorSidebar(show);
  // Both sizes use the same overlay behavior and click-outside dismissal.
  $('ventureScrim').hidden=!show;$('visionVenture').querySelector('.venture-main').inert=!!show;
  navigationSync();
+ if(show&&!wasOpen)$('ventureSidebar').focus({preventScroll:true});
 };
 const navigationPriorOpen=ventureOpen;
 ventureOpen=function(){navigationVisionMenu(false,false);const result=navigationPriorOpen();ventureSidebar(false);navigationSync();return result;};
@@ -138,8 +146,8 @@ document.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();navigationCloseMenu();return;}
  if(event.key!=='Tab')return;
  const menu=venture.open?$('ventureSidebar'):$('workspaceMenu');
- const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),$('workspaceSwitchButton')].filter(el=>el&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
- const index=focusable.indexOf(document.activeElement),next=(index+(event.shiftKey?-1:1)+focusable.length)%focusable.length;
+ const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),$('workspaceSwitchButton')].filter(el=>el&&el.tabIndex>=0&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
+ const index=focusable.indexOf(document.activeElement),next=index<0?(event.shiftKey?focusable.length-1:0):(index+(event.shiftKey?-1:1)+focusable.length)%focusable.length;
  event.preventDefault();focusable[next]?.focus();
 },true);
 // Newly created dialogs inherit dismissal automatically; wait to show release

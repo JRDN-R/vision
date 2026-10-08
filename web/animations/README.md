@@ -31,3 +31,15 @@ python3 web/build-chevron-preview.py
 ```
 
 Lottie-web 5.13.0 is vendored under the MIT license in `web/vendor/lottie-LICENSE.md`.
+
+# Floating menu animation
+
+`menu-in-out.json` comes from the user-supplied `menu - in  out.lottie.zip`.
+The original line geometry and timing are preserved, with a pastel white stroke.
+Frames 0–51 draw the menu, frame 60 holds it, and frames 80–120 remove it.
+`navigation-animation.js` plays each segment once and handles interrupted
+toggles and reduced motion. The glyph is unboxed with a transparent 44px target.
+
+Lilita One is bundled under its SIL Open Font License in `web/vendor/` and
+embedded into the portable HTML. The existing transparent head is shared by both
+menus and receives the same brief entrance motion without a tile or background.

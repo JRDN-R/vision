@@ -1,14 +1,10 @@
 {
-  "title": "More room for your board",
+  "title": "A cleaner menu, details back in place",
   "items": [
-    "A slimmer Vision header gives your board more space. Your project name and save status stay at the top.",
-    "The hamburger menu stays in the same place in Vision and Venture. Both side menus have the same width.",
-    "Vision’s existing actions now have smaller icons and clear text labels in the side menu.",
-    "The header stays open while idle. Swipe it up or work on the board to hide it; the hamburger and animated chevron stay within reach.",
-    "Tap outside a menu to return to your workspace. Escape works too.",
-    "Open What’s new beside the version or from either side menu. These notes appear once after sign-in for each update on this device.",
-    "Dock the tool belt on the left or right without covering nodes. Hold its handle and drag toward an edge, or use the dock button.",
-    "Pin tools open, or leave them on Auto. After you choose a tool and use the board, the belt folds away with a scrolling icon animation. Tap the tools button to reopen it.",
-    "Your profile is now at the bottom of both workspace menus. Update your photo, API key and account settings from Vision or Venture."
+    "Vision and Venture share a floating animated hamburger. It disappears when the menu opens and returns when you close it.",
+    "Both menus use the same animated head and Lilita One lettering.",
+    "On mobile, Details opens from the bottom again. Its button sits below the circular plus button at the bottom right.",
+    "The plus button adds a node without the extra label.",
+    "Opening Venture’s menu no longer focuses Search or summons the keyboard. Tap Search when you want to use it."
   ]
 }

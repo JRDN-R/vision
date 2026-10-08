@@ -43,7 +43,7 @@ def run():
             page.goto(URL); page.wait_for_timeout(450)
             assert page.locator('#workspaceNews').is_hidden(), 'Must not show before sign-in'
             page.evaluate('navSignIn()'); page.locator('#workspaceNews').wait_for(state='visible')
-            assert page.locator('#workspaceNews li').count()>=6
+            assert page.locator('#workspaceNews li').count()>=1
             assert page.evaluate('localStorage.getItem(navTest.receipt())')=='seen'
             if width==390: page.screenshot(path=str(SHOTS/'compact-whats-new.png'))
             outside(page,'#workspaceNews'); page.locator('#workspaceNews').wait_for(state='hidden')
@@ -103,7 +103,7 @@ def run():
             toggle.click();page.locator('#ventureMenuNews').focus();page.keyboard.press('Tab')
             assert page.evaluate('document.activeElement.id')=='ventureProfileButton'
             page.keyboard.press('Tab')
-            expected='workspaceSwitchButton' if width<=760 else 'workspaceMenuButton'
+            expected='workspaceSwitchButton' if width<=760 else 'ventureNew'
             assert page.evaluate('document.activeElement.id')==expected
             page.locator('#ventureScrim').click(position={'x':width-5,'y':400})
             assert not page.locator('#visionVenture').evaluate('el=>el.classList.contains("history-open")')

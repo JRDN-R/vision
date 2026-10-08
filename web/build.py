@@ -88,11 +88,15 @@ def build():
     chevrons = {direction: json.loads((WEB / 'animations' / f'circle-chevron-{direction}-gradient-shift.json').read_text())
                 for direction in ('right', 'left')}
     controller = (WEB / 'workspace-chevron.js').read_text().replace('/* VISION_CHEVRONS */ {}', json.dumps(chevrons, separators=(',', ':')))
-    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + script)
+    menu_data = json.loads((WEB / 'animations/menu-in-out.json').read_text())
+    menu_controller = (WEB / 'navigation-animation.js').read_text().replace('/* VISION_MENU_ANIMATION */ {}', json.dumps(menu_data, separators=(',', ':')))
+    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + menu_controller + '\n' + script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')
     source = source.replace('{{VISION_STYLES}}', css)
+    font = base64.b64encode((WEB / 'vendor/LilitaOne-Regular.ttf').read_bytes()).decode('ascii')
+    source = source.replace('{{VISION_LILITA_FONT}}', 'data:font/ttf;base64,' + font)
     # Reuse the original transparent head without changing its image pixels.
     # An SVG viewport trims its transparent margins only for header layout.
     logo = base64.b64encode((ROOT / 'logo or node.PNG').read_bytes()).decode('ascii')
