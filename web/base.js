@@ -38,14 +38,22 @@ const normalViewport=viewportMeta.content;
 let headerTimer=null;
 function headerEditing(){return appHeader.contains(document.activeElement)&&document.activeElement.matches('input,textarea,select');}
 function hideMobileHeader(){clearTimeout(headerTimer);if(!mobileQuery.matches)return;document.documentElement.classList.remove('header-open');appHeader.inert=true;headerReveal.setAttribute('aria-expanded','false');headerReveal.setAttribute('aria-label','Show top toolbar');}
-function queueHeaderHide(){clearTimeout(headerTimer);if(mobileQuery.matches&&!headerEditing())headerTimer=setTimeout(hideMobileHeader,4500);}
+function queueHeaderHide(){clearTimeout(headerTimer);}
 function showMobileHeader(){if(!mobileQuery.matches)return;document.documentElement.classList.add('header-open');appHeader.inert=false;headerReveal.setAttribute('aria-expanded','true');headerReveal.setAttribute('aria-label','Hide top toolbar');queueHeaderHide();}
-function syncMobileMode(){document.documentElement.classList.toggle('mobile-mode',mobileQuery.matches);viewportMeta.content=mobileQuery.matches?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;clearTimeout(headerTimer);document.documentElement.classList.remove('header-open');appHeader.inert=mobileQuery.matches;headerReveal.setAttribute('aria-expanded','false');headerReveal.setAttribute('aria-label','Show top toolbar');}
+function syncMobileMode(){document.documentElement.classList.toggle('mobile-mode',mobileQuery.matches);viewportMeta.content=mobileQuery.matches?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;clearTimeout(headerTimer);document.documentElement.classList.toggle('header-open',mobileQuery.matches);appHeader.inert=false;headerReveal.setAttribute('aria-expanded',String(mobileQuery.matches));headerReveal.setAttribute('aria-label','Hide top toolbar');}
 headerReveal.onclick=()=>document.documentElement.classList.contains('header-open')?hideMobileHeader():showMobileHeader();
 appHeader.addEventListener('pointerdown',()=>clearTimeout(headerTimer));appHeader.addEventListener('pointerup',queueHeaderHide);
 appHeader.addEventListener('focusin',()=>clearTimeout(headerTimer));appHeader.addEventListener('focusout',()=>setTimeout(queueHeaderHide,0));
 appHeader.addEventListener('input',queueHeaderHide);
-document.addEventListener('pointerdown',e=>{if(mobileQuery.matches&&!appHeader.contains(e.target)&&!headerReveal.contains(e.target)){if(headerEditing())document.activeElement.blur();hideMobileHeader();}},true);
+// Only board interaction hides the header. Menus and idle time leave it alone.
+function headerBoardInteraction(e){if(mobileQuery.matches&&board.contains(e.target)&&!e.target.closest('button,input,textarea,select,a,#inspectorPanel')){if(headerEditing())document.activeElement.blur();hideMobileHeader();}}
+document.addEventListener('pointerdown',headerBoardInteraction,true);
+board.addEventListener('wheel',headerBoardInteraction,{passive:true});
+let headerSwipe=null;
+appHeader.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||e.target.closest('input,textarea,select,button'))return;headerSwipe={id:e.pointerId,x:e.clientX,y:e.clientY};});
+document.addEventListener('pointermove',e=>{if(headerSwipe?.id===e.pointerId&&e.clientY-headerSwipe.y < -24&&Math.abs(e.clientX-headerSwipe.x)<50){hideMobileHeader();headerSwipe=null;}});
+document.addEventListener('pointerup',()=>headerSwipe=null);
+appHeader.addEventListener('pointercancel',()=>headerSwipe=null);
 for(const type of ['gesturestart','gesturechange','gestureend'])document.addEventListener(type,e=>{if(mobileQuery.matches)e.preventDefault();},{passive:false});
 for(const type of ['touchstart','touchmove'])document.addEventListener(type,e=>{if(mobileQuery.matches&&e.touches.length>1)e.preventDefault();},{passive:false});
 mobileQuery.addEventListener('change',syncMobileMode);syncMobileMode();

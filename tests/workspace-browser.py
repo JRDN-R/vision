@@ -181,7 +181,7 @@ def main():
      p.evaluate('swipe(280,20,80,20)');assert not p.evaluate('venture.open')
      control.focus();p.keyboard.press('Enter');p.wait_for_function('venture.open')
      assert control.bounding_box()==before
-     p.locator('#ventureHistoryToggle').click();assert control.is_hidden()
+     p.locator('#ventureHistoryToggle').click();assert control.is_visible()
      p.locator('#ventureHistoryClose').click();assert control.is_visible()
     else:assert p.locator('#workspaceSwitchButton').is_hidden()
     # Logout clears retained content, Sources, and once-per-account state.

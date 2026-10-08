@@ -17,7 +17,7 @@ function workspaceNavIcons() {
   // Real SVG children prevent iOS Safari's text autosizing and CSS-mask rendering
   // from exposing the original button label instead of showing the icon.
   let svg=button.querySelector(':scope > svg.workspace-nav-svg');
-  if(!svg||button.childNodes.length!==1){
+  if(!svg){
    svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
    svg.setAttribute('class','workspace-nav-svg');
    svg.setAttribute('viewBox','0 -960 960 960');
@@ -26,6 +26,11 @@ function workspaceNavIcons() {
    const shape=document.createElementNS('http://www.w3.org/2000/svg','path');
    shape.setAttribute('d',path);svg.append(shape);
    button.replaceChildren(svg);
+  }
+  if(button.closest('#workspaceMenu')){
+   let label=button.querySelector('.workspace-nav-label');
+   if(!label){label=document.createElement('span');label.className='workspace-nav-label';button.append(label);}
+   label.textContent=names[id];
   }
  }
 }
@@ -145,7 +150,7 @@ function workspaceInstallSwitch() {
 function workspaceSyncSwitch() {
  const button=$('workspaceSwitchButton');if(!button)return;
  const direction=venture.open?'left':'right', label=venture.open?'Return to Vision':'Open Venture';
- const visible=accountSignedIn()&&matchMedia('(max-width:760px)').matches&&!(venture.open&&$('visionVenture').classList.contains('history-open'));
+ const visible=accountSignedIn()&&matchMedia('(max-width:760px)').matches;
  button.hidden=!visible;button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-controls',venture.open?'board':'visionVenture');
  document.body.classList.toggle('workspace-in-venture',venture.open);
  // The board is an isolated stacking context. Put its mobile Details control

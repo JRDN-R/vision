@@ -98,6 +98,8 @@ with sync_playwright() as pw:
             page.route('**/*', lambda route: route.abort())
             page.set_content(shell, wait_until='load')
             page.evaluate('boardSubmissionSetup()')
+            page.locator('#workspaceNews').wait_for(state='visible')
+            page.locator('#workspaceNews button').click()
             assert page.evaluate('typeof window.fflate') == 'undefined'
             page.locator('#ventureIncludeBoard').check()
             page.locator('#ventureMessage').fill("Make it good (it's supposed to be funny)")
