@@ -66,6 +66,7 @@ jobs:
           python tests/workspace-switch-layout.py 2>&1 | tee tests/venture-logs/workspace-switch-layout.txt
           python tests/compact-navigation.py 2>&1 | tee tests/venture-logs/compact-navigation.txt
           python tests/floating-navigation.py 2>&1 | tee tests/venture-logs/floating-navigation.txt
+          python tests/menu-signout.py 2>&1 | tee tests/venture-logs/menu-signout.txt
           python tests/toolbelt-browser.py 2>&1 | tee tests/venture-logs/toolbelt.txt
           python tests/shared-account.py 2>&1 | tee tests/venture-logs/shared-account.txt
           python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt

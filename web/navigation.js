@@ -30,6 +30,13 @@ function navigationNewsButton(id,compact=false){
  button.onclick=event=>{event.stopPropagation();navigationNews();};return button;
 }
 function navigationMenuOpen(){return venture.open?$('visionVenture').classList.contains('history-open'):navigation.menu;}
+function navigationFooterActions(newsId,signOutId){
+ const row=document.createElement('div');row.className='workspace-footer-actions';
+ const button=document.createElement('button');button.id=signOutId;button.type='button';button.className='workspace-sign-out';button.title='Sign out';button.setAttribute('aria-label','Sign out');button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-controls','workspaceSignOutDialog');
+ button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/></svg>';
+ button.onclick=()=>{if(!accountSignedIn()||accountBusy)return;$('workspaceSignOutDialog').showModal();$('workspaceSignOutNo').focus();};
+ row.append(navigationNewsButton(newsId),button);return row;
+}
 function navigationSync(){
  const button=$('workspaceMenuButton');if(!button)return;
  const allowed=accountCanUseApp(),open=navigationMenuOpen();
@@ -44,6 +51,8 @@ function navigationSync(){
   $('sidebarToggle').inert=navigation.menu||!allowed;headerReveal.inert=navigation.menu||!allowed;
  }
  const uid=accountSignedIn()?ventureScope():'';
+ for(const id of ['workspaceMenuSignOut','ventureMenuSignOut']){const control=$(id);if(control){control.hidden=!uid;control.disabled=accountBusy;}}
+ if(!uid)$('workspaceSignOutDialog')?.close();
  if(uid!==navigation.uid){navigation.uid=uid;if(!uid){navigationVisionMenu(false,false);$('workspaceNews').close();}else navigationCheckNews();}
 }
 function navigationVisionMenu(show,restore=true){
@@ -87,14 +96,18 @@ function navigationInstall(){
  extra('Processing activity','retry',openActivity);
  extra('Help','file',()=>$('helpDialog').showModal());
  menu.querySelector('.workspace-menu-version').textContent='Vision v'+navigationVersion();
- menu.querySelector('.workspace-menu-footer').append(navigationNewsButton('workspaceMenuNews'));
+ menu.querySelector('.workspace-menu-footer').append(navigationFooterActions('workspaceMenuNews','workspaceMenuSignOut'));
  menu.addEventListener('click',event=>{if(!event.target.closest('.top-actions button'))return;queueMicrotask(()=>{if(!document.querySelector('dialog[open]'))navigationCloseMenu(false);});});
  const brand=document.querySelector('#appHeader .brand');
  // Processing activity remains in the menu and queue badge; the brand now
  // contains its own release-notes button.
  brand.removeAttribute('role');brand.removeAttribute('tabindex');brand.removeAttribute('aria-label');brand.removeAttribute('title');brand.onclick=null;brand.onkeydown=null;
  const version=brand.querySelector('.vision-version'),row=document.createElement('div');row.className='workspace-header-version';version.before(row);row.append(version,navigationNewsButton('workspaceHeaderNews',true));
- const footer=document.createElement('div');footer.className='workspace-menu-footer';const release=document.createElement('span');release.className='workspace-menu-version';release.textContent='Vision v'+navigationVersion();footer.append(release,navigationNewsButton('ventureMenuNews'));$('ventureSidebar').append(footer);
+ const footer=document.createElement('div');footer.className='workspace-menu-footer';const release=document.createElement('span');release.className='workspace-menu-version';release.textContent='Vision v'+navigationVersion();footer.append(release,navigationFooterActions('ventureMenuNews','ventureMenuSignOut'));$('ventureSidebar').append(footer);
+ const signOut=document.createElement('dialog');signOut.id='workspaceSignOutDialog';signOut.className='workspace-sign-out-dialog';signOut.setAttribute('aria-labelledby','workspaceSignOutTitle');signOut.setAttribute('aria-describedby','workspaceSignOutQuestion');
+ signOut.innerHTML='<h2 id="workspaceSignOutTitle">Sign out?</h2><p id="workspaceSignOutQuestion">Are you sure?</p><div class="workspace-sign-out-actions"><button id="workspaceSignOutNo" type="button" autofocus>No</button><button id="workspaceSignOutYes" type="button" class="primary">Yes</button></div>';
+ document.body.append(signOut);$('workspaceSignOutNo').onclick=()=>signOut.close();
+ $('workspaceSignOutYes').onclick=async()=>{if(!signOut.open||accountBusy||!accountSignedIn())return;signOut.close();navigationCloseMenu(false);await accountGoogleSignOut();if(accountSignedIn())openAccountDialog(accountError||'Unable to sign out. Please try again.');};
  const news=document.createElement('dialog');news.id='workspaceNews';news.className='workspace-news';news.setAttribute('aria-labelledby','workspaceNewsTitle');
  const eyebrow=document.createElement('p');eyebrow.className='workspace-news-eyebrow';eyebrow.textContent='WHAT’S NEW · V'+navigationVersion();
  const title=document.createElement('h2');title.id='workspaceNewsTitle';title.textContent=NAVIGATION_RELEASE.title||'What’s new';

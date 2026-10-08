@@ -37,6 +37,15 @@
 .workspace-menu .workspace-nav-icon:after{display:none!important}
 .workspace-menu-footer{display:flex;flex-direction:column;gap:9px;padding:17px 10px 0;margin-top:16px;border-top:1px solid #ffffff0a;flex:none}
 .workspace-menu-version{font:10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:#8c9a85}
+.workspace-footer-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.workspace-sign-out,.venture-root .workspace-sign-out{display:grid;place-items:center;flex:none;width:44px;height:44px;padding:11px;border:0;background:transparent;color:#bac8b2;box-shadow:none}
+.workspace-sign-out[hidden]{display:none!important}
+.workspace-sign-out svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.workspace-sign-out:hover{color:#c4f48a}.workspace-sign-out:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.workspace-sign-out-dialog{box-sizing:border-box;width:min(320px,calc(100vw - 32px));padding:24px;border:1px solid #45533b;border-radius:18px;background:#191f19;color:#dfe9d8}
+.workspace-sign-out-dialog::backdrop{background:#0008;backdrop-filter:blur(3px)}
+.workspace-sign-out-dialog h2{margin:0 0 12px;font-size:22px}.workspace-sign-out-dialog p{margin:0 0 22px}
+.workspace-sign-out-actions{display:flex;gap:12px}.workspace-sign-out-actions button{flex:1;min-height:44px}
 .workspace-news-link,.venture-root .workspace-news-link{display:flex;align-items:center;gap:10px;min-height:40px;padding:5px 0;border:0;background:transparent;color:#c4f48a;font:12px/1.4 Inter,system-ui,sans-serif;text-align:left}
 .workspace-menu-scrim{position:fixed;inset:0;z-index:89;border:0;border-radius:0;background:#0008;backdrop-filter:blur(3px);padding:0;width:100%;height:100%}
 .compact-navigation .venture-sidebar{position:absolute;inset:0 auto 0 0;width:var(--workspace-menu-width);max-width:85vw;flex-basis:var(--workspace-menu-width);z-index:5;margin:0!important;transform:translateX(-105%);transition:transform .2s;box-shadow:20px 0 80px #0007}
