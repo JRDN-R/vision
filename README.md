@@ -7,6 +7,13 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+**v1.0.2.8** corrects the mobile Details sheet so it opens from the bottom.
+Its control sits beneath a circular plus at the board’s bottom-right edge; both
+stay above the sheet while it is open. Both menus use the supplied floating
+hamburger animation, an animated unboxed head, and bundled Lilita One lettering.
+The hamburger disappears when a menu opens and returns on dismissal. Opening
+Venture’s menu focuses the menu container; Search only focuses when selected.
+
 **v1.0.2.7** replaces Vision’s tall mobile toolbar with a single 65-pixel header.
 The shared hamburger stays at the far left in both workspaces, and the existing
 animated chevron keeps its position. Both menus slide in from the left at the

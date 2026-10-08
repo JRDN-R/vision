@@ -8,7 +8,7 @@ function positionToast(){
  notice.style.setProperty('--toast-max-width',Math.max(0,Math.min(310,bounds.width-86))+'px');
  const right=parseFloat(getComputedStyle(notice).right)||12,left=viewport-right-notice.offsetWidth;
  let top=Math.max(8,bounds.top+12);
- for(const control of [appHeader,headerReveal,$('sidebarToggle'),$('refreshNotice')]){
+ for(const control of [appHeader,headerReveal,$('refreshNotice')]){
   if(!control||control.hidden)continue;
   const style=getComputedStyle(control),rect=control.getBoundingClientRect();
   if(style.display==='none'||style.visibility==='hidden'||!rect.height||rect.bottom<=0)continue;
