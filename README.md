@@ -7,6 +7,12 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+**v1.0.2.4** fixes Venture's **Include board** submission for boards containing
+images, transcripts, and file attachments. It uses Vision's bundled ZIP exporter
+and preserves the board instructions and attachment bytes. Preparation errors
+no longer appear as a connection diagnosis. This update only changes the webpage;
+the existing FUPCJ Server installation does not need an update or restart.
+
 Mobile navigation in **v1.0.2.3** uses one fixed circle-chevron button just left
 of the account avatar position: right opens Venture, left returns to Vision.
 Venture's new-conversation and Sources controls sit to its left. The switch stays

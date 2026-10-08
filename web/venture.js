@@ -157,8 +157,8 @@ function venturePaintTurns(){
 }
 function venturePaintStatus(){
  const active=venture.runs.find(ventureActive),pending=!!venture.pending;$('ventureSend').hidden=!!active&&!venture.sending;$('ventureStop').hidden=!active||venture.sending;$('ventureSend').disabled=!venture.ready||venture.sending||pending||!!active||ventureDictationBusy();
- $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?'Confirming submission. No duplicate request has been sent.':active?(active.phase||'Thinking…'):venture.notice?'Connection needs attention.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);
- $('ventureCheck').hidden=!venture.notice&&!pending;$('ventureCheck').textContent=pending?.form?'Retry same submission':venture.pending?.form?'Retry same submission':'Check connection';$('ventureCheck').disabled=venture.sending;
+ $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?'Confirming submission. No duplicate request has been sent.':active?(active.phase||'Thinking…'):venture.notice?'Review the message above.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);
+ $('ventureCheck').hidden=!venture.notice&&!pending;$('ventureCheck').textContent=venture.pending?.form?'Retry same submission':'Check status';$('ventureCheck').disabled=venture.sending;
  $('ventureFootnote').textContent=venture.sending?'Uploads must finish before you close this page.':active?'FUPCJ Server is working. You can close Vision and return later.':'Accepted requests keep working when you leave.';
  $('ventureToolsLabel').textContent=venture.settings.runOptions.codeInterpreter?'Code & files ready':'Text only';
 }
@@ -171,7 +171,15 @@ async function ventureSend(retry=null){
  const epoch=venture.epoch;venture.sending=true;ventureSetNotice('');venturePaintStatus();
  try{if(!venture.current){const data=await ventureJSON('/venture/conversations','POST',{id:ventureId(),settings:venture.settings});if(epoch!==venture.epoch)return;venture.current=data.conversation;ventureRemember('selection',venture.current.id);}
  const cid=venture.current.id,form=new FormData();let projectPrompt=retry?.projectPrompt||'';
- if(board){const bundle=await consoleBoardFiles();if(epoch!==venture.epoch)return;const entries={};for(const file of bundle)entries[file.name]=typeof file.data==='string'?new TextEncoder().encode(file.data):new Uint8Array(await file.data.arrayBuffer());projectPrompt=typeof bundle.find(f=>f.name==='MAIN_PROMPT.txt')?.data==='string'?bundle.find(f=>f.name==='MAIN_PROMPT.txt').data:await consoleFileText(bundle.find(f=>f.name==='MAIN_PROMPT.txt'));const zip=window.fflate.zipSync(entries,{level:6});form.append('file',new Blob([zip],{type:'application/zip'}),'vision-board.zip');if(zip.byteLength+files.reduce((sum,f)=>sum+f.size,0)>128*1024*1024)throw new Error('The board and attachments exceed the 128 MB message limit.');}
+ if(board){
+  const bundle=await consoleBoardFiles();if(epoch!==venture.epoch)return;
+  projectPrompt=await consoleFileText(bundle.find(f=>f.name==='MAIN_PROMPT.txt'));
+  // Board exports mix text, image Blobs and Uint8Array attachments. Use the
+  // bundled exporter that already accepts those types and checks ZIP paths.
+  const archive=await R.zip(bundle);if(epoch!==venture.epoch)return;
+  if(archive.size+files.reduce((sum,f)=>sum+f.size,0)>128*1024*1024)throw new Error('The board and attachments exceed the 128 MB message limit.');
+  form.append('file',archive,'vision-board.zip');
+ }
  for(const file of files)form.append('attachments',file,file.name);
  const options={clientRequestId:ventureId(),...venture.settings,message:message||(board?'Follow the instructions in the attached Vision board.':'Use the attached files.'),projectPrompt,previousRunId:retry?retry.previousRunId||null:venture.runs.at(-1)?.runId||null,...(retry?{retryOf:retry.runId}:{})};form.append('options',JSON.stringify(options));
  venture.pending={clientRequestId:options.clientRequestId,cid,form};ventureRemember('pending-'+cid,{clientRequestId:options.clientRequestId,cid});await venturePostPending();

@@ -56,6 +56,7 @@ jobs:
         run: |
           set -o pipefail
           python tests/venture-smoke.py 2>&1 | tee tests/venture-logs/venture.txt
+          python tests/venture-board-submit.py 2>&1 | tee tests/venture-logs/board-submit.txt
       - name: Workspace recovery unit and browser checks
         run: |
           set -o pipefail
