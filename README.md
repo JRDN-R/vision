@@ -7,6 +7,35 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+**v1.0.2.7** replaces Vision’s tall mobile toolbar with a single 65-pixel header.
+The shared hamburger stays at the far left in both workspaces, and the existing
+animated chevron keeps its position. Both menus slide in from the left at the
+same responsive width; Vision’s original actions keep their handlers and gain
+small icons with text labels. Tap outside a menu or press Escape to dismiss it.
+The header stays open while idle; swipe up or interact with the board to hide it.
+The hamburger, chevron, and Details control stay accessible.
+
+**What’s new** opens beside the header version and from either side menu. It also
+appears after sign-in once per release, per account and browser/device. Receipts
+are local, contain no project content, and survive reloads; clearing browser
+storage shows the notice again. If storage is unavailable, the receipt lasts
+for the current page session. This interface update requires no FUPCJ Server
+installation or restart. It does not change API credentials, funding or billing.
+
+The tool belt has a dedicated strip beside the board, so it cannot cover nodes.
+Hold its handle, then drag left or right to dock; the dock button and keyboard
+left/right arrows provide the same two positions. In **Auto**, it stays open
+until you choose a tool and finish a board gesture, then folds into a tools
+button with a short scrolling-icon animation. **Pin** keeps it open. Reduced
+motion skips the animation, and collapsed/expanded states reserve the same
+board width. Side and pin preferences are saved per account on this device.
+
+The avatar row at the bottom of both menus opens one shared account dialog.
+Photo upload/removal, the saved API key, existing balance estimate, launch view,
+and processor settings use the same account services from either workspace.
+Opening this from Vision keeps the board in place. Dismiss nested settings to
+return to your profile; dismiss the profile to return to the menu.
+
 ## Intelligent Context Engine (review build)
 
 This branch adds a local, derived project index for Venture's **Include board**.
@@ -181,6 +210,13 @@ python web/build.py
 The builder updates the portable HTML and the small GitHub Pages loader's cache
 version. Both use the same application. Server service source and tests are in
 `vision-pc/`. Tests use mocked OpenAI responses and do not make billable API calls.
+
+Update `web/release-notes.json` with user-facing bullet points for each release,
+along with `web/version.txt`. The builder embeds the notes in the portable app;
+the displayed version and receipt use the built `vision-version` metadata.
+`python tests/compact-navigation.py` checks actual bundled navigation at 320,
+390, 430, 760 and 1280 pixels, including account isolation, reload persistence,
+blocked storage, deferred notices, fixed controls and guarded light dismissal.
 
 ## Background document preparation
 

@@ -64,6 +64,9 @@ jobs:
           python tests/workspace-browser.py 2>&1 | tee tests/venture-logs/workspace-browser.txt
           python tests/workspace-chevron.py 2>&1 | tee tests/venture-logs/workspace-chevron.txt
           python tests/workspace-switch-layout.py 2>&1 | tee tests/venture-logs/workspace-switch-layout.txt
+          python tests/compact-navigation.py 2>&1 | tee tests/venture-logs/compact-navigation.txt
+          python tests/toolbelt-browser.py 2>&1 | tee tests/venture-logs/toolbelt.txt
+          python tests/shared-account.py 2>&1 | tee tests/venture-logs/shared-account.txt
           python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt
       - name: Hosted microphone and server integration
         run: |

@@ -12,8 +12,8 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'intelligent-context.js', 'venture.js', 'workspace.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css', 'workspace.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'intelligent-context.js', 'venture.js', 'workspace.js', 'navigation.js', 'toolbelt.js', 'account-profile.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css', 'workspace.css', 'navigation.css', 'toolbelt.css', 'account-profile.css']
 
 
 def without_browser_gemini(source):
@@ -73,6 +73,10 @@ def build():
     script = '\n'.join(chunks) + '\nrenderAll();\n})();\n'
     parameters = json.loads((ROOT / 'vision-pc/model-parameters.json').read_text())
     script = script.replace('/* VISION_PARAMETERS */ {}', json.dumps(parameters, separators=(',', ':')))
+    notes = json.loads((WEB / 'release-notes.json').read_text())
+    if not isinstance(notes.get('title'), str) or not notes.get('items') or not all(isinstance(item, str) for item in notes['items']):
+        raise ValueError('Release notes need a title and nonempty text bullet points')
+    script = script.replace('/* VISION_RELEASE_NOTES */ {}', json.dumps(notes, separators=(',', ':')))
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:

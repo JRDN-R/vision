@@ -1,0 +1,27 @@
+/* The same account entry anchors both navigation drawers. */
+.workspace-profile-button,.venture-root .workspace-profile-button{display:flex;align-items:center;gap:11px;flex:none;width:100%;min-height:64px;margin:14px 0 0;padding:11px 9px;border:1px solid #ffffff0b;border-radius:12px;background:#ffffff03;color:#dce6d6;text-align:left;touch-action:manipulation}
+.workspace-profile-button[hidden]{display:none!important}
+.workspace-profile-button:hover,.venture-root .workspace-profile-button:hover{background:#ffffff09}
+.workspace-profile-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.workspace-profile-avatar{position:relative;display:grid;place-items:center;flex:none;width:35px;height:35px;overflow:hidden;border:1px solid #526245;border-radius:50%;background:#34412d;color:#d6e5c2;font:600 11px/1 Inter,system-ui,sans-serif}
+.workspace-profile-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.workspace-profile-text{flex:1;min-width:0}.workspace-profile-text strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:550 12px/1.5 Inter,system-ui,sans-serif}.workspace-profile-text small{display:block;color:#91a185;font:10px/1.6 Inter,system-ui,sans-serif}
+.workspace-profile-button>svg{flex:none;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;color:#8c9c81}
+.workspace-account-dialog{box-sizing:border-box;width:min(400px,calc(100vw - 28px));max-width:calc(100vw - 28px);max-height:calc(100dvh - 32px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));padding:0;overflow:auto;overscroll-behavior:contain;border:1px solid #4c5d3d;border-radius:19px;background:#20271e;color:#e0ecd6;box-shadow:0 24px 90px #0008;scrollbar-width:thin;color-scheme:dark}
+.workspace-account-dialog::backdrop{background:#0008;backdrop-filter:blur(3px)}
+.workspace-account-dialog *{box-sizing:border-box}
+.workspace-account-dialog #ventureAccount{position:static;width:100%;max-width:none;max-height:none;margin:0;padding:21px;border:0;border-radius:0;overflow:visible;background:transparent;box-shadow:none;backdrop-filter:none;animation:none}
+.workspace-account-dialog [hidden]{display:none!important}
+.workspace-account-dialog .venture-account-email{font-size:11px;color:#8ca37e;margin:0 0 16px;overflow-wrap:anywhere}
+.workspace-account-dialog button,.workspace-account-dialog a{touch-action:manipulation;letter-spacing:normal}
+.workspace-account-dialog .v-icon{display:grid;place-items:center;min-width:36px;width:36px;height:36px;padding:9px;border:0;border-radius:10px;background:transparent;color:#a8b89d}
+.workspace-account-dialog .v-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round}
+.workspace-account-dialog .v-text-button{min-height:38px;padding:7px 0;border:0;background:transparent;color:#b4c1ac;font-size:12px;text-align:left}
+.workspace-account-dialog .v-text-button:hover{color:var(--accent)}
+.workspace-account-dialog button:focus-visible,.workspace-account-dialog a:focus-visible,.workspace-account-dialog summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.workspace-account-dialog .venture-profile-controls{gap:10px;margin-top:0}
+.workspace-account-dialog .venture-account-foot{gap:12px;flex-wrap:wrap}
+.workspace-account-dialog #sharedAccountWorkspace{width:100%;margin-top:12px;min-height:40px;border:1px solid #445338;border-radius:9px;background:#2b3723;color:#c9dfb6;font-size:12px}
+.workspace-account-dialog .venture-key-details>summary{min-height:30px;padding:5px 0}
+@media(max-width:760px){.workspace-account-dialog #ventureAccount{padding:18px}.workspace-account-dialog .venture-key-actions>button:first-child{min-height:40px}.workspace-account-dialog .venture-popover input:not([type=range]):not([type=checkbox]),.workspace-account-dialog select{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.workspace-account-dialog *{animation:none!important;transition:none!important}}
