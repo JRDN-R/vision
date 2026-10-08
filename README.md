@@ -7,6 +7,9 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+**v1.0.2.9** adds a sign-out icon beside What’s new in both menus, with a
+Yes/No confirmation. No, Escape, or clicking outside keeps the account signed in.
+
 **v1.0.2.8** corrects the mobile Details sheet so it opens from the bottom.
 Its control sits beneath a circular plus at the board’s bottom-right edge; both
 stay above the sheet while it is open. Both menus use the supplied floating

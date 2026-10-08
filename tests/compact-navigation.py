@@ -101,6 +101,8 @@ def run():
             page.locator('#ventureSearch').focus();page.keyboard.press('Escape')
             assert page.evaluate('document.activeElement.id')=='workspaceMenuButton'
             toggle.click();page.locator('#ventureMenuNews').focus();page.keyboard.press('Tab')
+            assert page.evaluate('document.activeElement.id')=='ventureMenuSignOut'
+            page.keyboard.press('Tab')
             assert page.evaluate('document.activeElement.id')=='ventureProfileButton'
             page.keyboard.press('Tab')
             expected='workspaceSwitchButton' if width<=760 else 'ventureNew'
