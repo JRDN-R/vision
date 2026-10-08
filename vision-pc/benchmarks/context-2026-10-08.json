@@ -36,7 +36,7 @@
         "projectPromptSentDirectly": false,
         "existingFtsExcerptTokens": 4675,
         "textContextTokens": 4715,
-        "preparationAndRetrievalSeconds": 0.002851839999493677,
+        "preparationAndRetrievalSeconds": 0.0033379819979018066,
         "excerptRecordCoverage": {
           "expected": 13,
           "idsPresent": 13,
@@ -120,10 +120,10 @@
           "deduplicatedUnits": 0,
           "fullContextFallback": true,
           "index": {
-            "cpuSeconds": 14.8495,
+            "cpuSeconds": 16.5955,
             "embeddedUnits": 37,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 8.8824,
+            "indexSeconds": 9.855,
             "indexedSources": 4,
             "originalBytes": 92827,
             "reusedSources": 0,
@@ -131,9 +131,9 @@
           },
           "contextDigest": "4a69bfb55b9f4ff30cee782be098062294634e4b93931215812e7587222e3cff"
         },
-        "indexSeconds": 8.888142961000995,
-        "retrievalSeconds": 0.007617164999828674,
-        "peakProcessTreeRssBytes": 739266560,
+        "indexSeconds": 9.8613893010006,
+        "retrievalSeconds": 0.006730557000992121,
+        "peakProcessTreeRssBytes": 738717696,
         "indexStatus": {
           "status": "ready",
           "ready": true,
@@ -145,17 +145,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 14.8495,
+            "cpuSeconds": 16.5955,
             "embeddedUnits": 37,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 8.8824,
+            "indexSeconds": 9.855,
             "indexedSources": 4,
             "originalBytes": 92827,
             "reusedSources": 0,
             "textCharacters": 92827
           }
         },
-        "incrementalSeconds": 0.03165323599750991,
+        "incrementalSeconds": 0.030498255997372326,
         "incrementalStatus": {
           "status": "ready",
           "ready": true,
@@ -167,17 +167,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.0297,
+            "cpuSeconds": 0.0284,
             "embeddedUnits": 37,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.0254,
+            "indexSeconds": 0.0249,
             "indexedSources": 0,
             "originalBytes": 92827,
             "reusedSources": 4,
             "textCharacters": 92827
           }
         },
-        "changedSourceSeconds": 0.055372287999489345,
+        "changedSourceSeconds": 0.05643875999885495,
         "changedSourceStatus": {
           "status": "ready",
           "ready": true,
@@ -189,10 +189,10 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.0556,
+            "cpuSeconds": 0.058,
             "embeddedUnits": 38,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.0498,
+            "indexSeconds": 0.0499,
             "indexedSources": 1,
             "originalBytes": 92863,
             "reusedSources": 4,
@@ -243,7 +243,7 @@
       "focusedQuery": {
         "kind": "exact-identifier",
         "initialTextTokens": 4759,
-        "retrievalSeconds": 0.019804679999651853,
+        "retrievalSeconds": 0.022248930003115674,
         "recordCoverage": {
           "expected": 1,
           "idsPresent": 1,
@@ -316,7 +316,7 @@
         "projectPromptSentDirectly": false,
         "existingFtsExcerptTokens": 5235,
         "textContextTokens": 5275,
-        "preparationAndRetrievalSeconds": 0.008075767000264022,
+        "preparationAndRetrievalSeconds": 0.008231127998442389,
         "excerptRecordCoverage": {
           "expected": 100,
           "idsPresent": 19,
@@ -388,7 +388,7 @@
         "warningCount": 1,
         "metrics": {
           "retrievalOperations": 1,
-          "retrievalSeconds": 0.0098,
+          "retrievalSeconds": 0.0118,
           "contextCharacters": 39721,
           "contextTokens": {
             "value": 9518,
@@ -400,10 +400,10 @@
           "deduplicatedUnits": 0,
           "fullContextFallback": true,
           "index": {
-            "cpuSeconds": 66.6983,
+            "cpuSeconds": 75.6055,
             "embeddedUnits": 269,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 32.7996,
+            "indexSeconds": 37.1146,
             "indexedSources": 4,
             "originalBytes": 720941,
             "reusedSources": 0,
@@ -411,9 +411,9 @@
           },
           "contextDigest": "d79e99fb2c151b1b2fb355b819fc7b7cdd5e687a8f96c644d9101f6cf883d39a"
         },
-        "indexSeconds": 32.82113900100012,
-        "retrievalSeconds": 0.014463252999121323,
-        "peakProcessTreeRssBytes": 830902272,
+        "indexSeconds": 37.13706291299968,
+        "retrievalSeconds": 0.018061696999211563,
+        "peakProcessTreeRssBytes": 832151552,
         "indexStatus": {
           "status": "ready",
           "ready": true,
@@ -425,17 +425,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 66.6983,
+            "cpuSeconds": 75.6055,
             "embeddedUnits": 269,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 32.7996,
+            "indexSeconds": 37.1146,
             "indexedSources": 4,
             "originalBytes": 720941,
             "reusedSources": 0,
             "textCharacters": 720941
           }
         },
-        "incrementalSeconds": 0.1916131790021609,
+        "incrementalSeconds": 0.2199193380001816,
         "incrementalStatus": {
           "status": "ready",
           "ready": true,
@@ -447,17 +447,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.1714,
+            "cpuSeconds": 0.1942,
             "embeddedUnits": 269,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.1714,
+            "indexSeconds": 0.1942,
             "indexedSources": 0,
             "originalBytes": 720941,
             "reusedSources": 4,
             "textCharacters": 720941
           }
         },
-        "changedSourceSeconds": 0.22040924499742687,
+        "changedSourceSeconds": 0.2705801470001461,
         "changedSourceStatus": {
           "status": "ready",
           "ready": true,
@@ -469,10 +469,10 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.2078,
+            "cpuSeconds": 0.2535,
             "embeddedUnits": 270,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.1969,
+            "indexSeconds": 0.2464,
             "indexedSources": 1,
             "originalBytes": 720977,
             "reusedSources": 4,
@@ -523,7 +523,7 @@
       "focusedQuery": {
         "kind": "exact-identifier",
         "initialTextTokens": 9544,
-        "retrievalSeconds": 0.04999054200015962,
+        "retrievalSeconds": 0.05309076099729282,
         "recordCoverage": {
           "expected": 1,
           "idsPresent": 1,
@@ -603,7 +603,7 @@
         "projectPromptSentDirectly": false,
         "existingFtsExcerptTokens": 6446,
         "textContextTokens": 6553,
-        "preparationAndRetrievalSeconds": 6.480980276002811,
+        "preparationAndRetrievalSeconds": 6.790343366999878,
         "excerptRecordCoverage": {
           "expected": 13,
           "idsPresent": 2,
@@ -675,7 +675,7 @@
         "warningCount": 5,
         "metrics": {
           "retrievalOperations": 1,
-          "retrievalSeconds": 0.0275,
+          "retrievalSeconds": 0.0291,
           "contextCharacters": 38992,
           "contextTokens": {
             "value": 14630,
@@ -687,10 +687,10 @@
           "deduplicatedUnits": 47,
           "fullContextFallback": true,
           "index": {
-            "cpuSeconds": 123.0114,
+            "cpuSeconds": 126.5813,
             "embeddedUnits": 428,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 61.4315,
+            "indexSeconds": 63.3383,
             "indexedSources": 125,
             "originalBytes": 16597906,
             "reusedSources": 0,
@@ -698,9 +698,9 @@
           },
           "contextDigest": "797d648bd71e0104166dda10916f15c3a754e6e961ce8f18cf45fb60df9d0331"
         },
-        "indexSeconds": 61.65478477599754,
-        "retrievalSeconds": 0.06961939199754852,
-        "peakProcessTreeRssBytes": 1050587136,
+        "indexSeconds": 63.56485797499772,
+        "retrievalSeconds": 0.034159733997512376,
+        "peakProcessTreeRssBytes": 1057701888,
         "indexStatus": {
           "status": "ready",
           "ready": true,
@@ -712,17 +712,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 123.0114,
+            "cpuSeconds": 126.5813,
             "embeddedUnits": 428,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 61.4315,
+            "indexSeconds": 63.3383,
             "indexedSources": 125,
             "originalBytes": 16597906,
             "reusedSources": 0,
             "textCharacters": 537342
           }
         },
-        "incrementalSeconds": 0.49101822600277956,
+        "incrementalSeconds": 0.47989728200263926,
         "incrementalStatus": {
           "status": "ready",
           "ready": true,
@@ -734,17 +734,17 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.2745,
+            "cpuSeconds": 0.2664,
             "embeddedUnits": 428,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.2747,
+            "indexSeconds": 0.2665,
             "indexedSources": 0,
             "originalBytes": 16597906,
             "reusedSources": 125,
             "textCharacters": 537342
           }
         },
-        "changedSourceSeconds": 0.573634624000988,
+        "changedSourceSeconds": 0.5332227559993044,
         "changedSourceStatus": {
           "status": "ready",
           "ready": true,
@@ -756,10 +756,10 @@
             "warning": null
           },
           "metrics": {
-            "cpuSeconds": 0.3336,
+            "cpuSeconds": 0.323,
             "embeddedUnits": 429,
             "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
-            "indexSeconds": 0.3262,
+            "indexSeconds": 0.317,
             "indexedSources": 1,
             "originalBytes": 16597942,
             "reusedSources": 125,
@@ -810,7 +810,7 @@
       "focusedQuery": {
         "kind": "semantic-paraphrase",
         "initialTextTokens": 16081,
-        "retrievalSeconds": 0.07973224899978959,
+        "retrievalSeconds": 0.07897255600255448,
         "recordCoverage": {
           "expected": 1,
           "idsPresent": 1,
@@ -863,8 +863,8 @@
     }
   ],
   "implementationSha256": {
-    "context_engine.py": "391174a857b58eee09bfb7ef306249b161b00d05dd56c6834435f967b7d672f2",
-    "context_sources.py": "94109335884563c5ab1666199ab4b4ec068a56e9356830ef71848150af365adf",
+    "context_engine.py": "0423811bd0f670084e8fd5410ceb184e2c3bad1339f03ef5791bdd709ad2442f",
+    "context_sources.py": "00cb6dac81a62b5a1d562f48be8d55a75b63649207f5b1c9884572317adace47",
     "context_embeddings.py": "aba8b42f2f741c71c11d9dc4f280e40c56415e90f2241c3cb44d6efd402c4868",
     "context_integration.py": "9b78cd88f525569b0fddd1c96e5d6ead5345fbd3657e752da4bb4f7f94c67720",
     "venture_files.py": "31054ba5eede451a0d2a6d821c479a33a3406f064eead3b6c8f242dfffa7233c",

@@ -40,9 +40,9 @@ Measured on the available Linux test host with Python 3.12.14, CPU-only MiniLM a
 
 | Dataset | Initial indexing | Initial retrieval | Title-only revision | One changed source | Peak process-tree RSS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Synthetic, 13 records | 8.888 s | 7.6 ms | 0.032 s | 0.055 s | 705.0 MiB |
-| Synthetic, 100 records | 32.821 s | 14.5 ms | 0.192 s | 0.220 s | 792.4 MiB |
-| Supplied export | 61.655 s | 69.6 ms | 0.491 s | 0.574 s | 1001.9 MiB |
+| Synthetic, 13 records | 9.861 s | 6.7 ms | 0.030 s | 0.056 s | 704.5 MiB |
+| Synthetic, 100 records | 37.137 s | 18.1 ms | 0.220 s | 0.271 s | 793.6 MiB |
+| Supplied export | 63.565 s | 34.2 ms | 0.480 s | 0.533 s | 1008.7 MiB |
 
 The supplied-export title-only revision reused all 125 extracted sources. Adding one changed caption indexed one source and reused the other 125. Real source units were embedded with the installed `sentence-transformers/all-MiniLM-L6-v2` snapshot `c9745ed1d9f207416be6d2e6f8de32d1f16199bf`; the multiwindow adapter preserves semantic searchability beyond a single model window. Exact source text remains available independently of embeddings.
 
@@ -75,4 +75,4 @@ python -m unittest discover -s vision-pc -p "test_context_billing.py"
 python -m unittest discover -s vision-pc -p "test_context_benchmark.py"
 ```
 
-The complete aggregate measurement is in [benchmarks/context-2026-10-08.json](benchmarks/context-2026-10-08.json). Source implementation fingerprints are included so later algorithm changes can be identified.
+The complete aggregate measurement is in [benchmarks/context-2026-10-08.json](benchmarks/context-2026-10-08.json). All six source implementation fingerprints were rechecked after the final run and match the measured code. They are included so later algorithm changes can be identified.

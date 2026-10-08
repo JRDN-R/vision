@@ -34,6 +34,14 @@ SQLite database, retained evidence and revision manifests are derived local data
   complete data directory before activation and retains rollback. Code rollback
   preserves projects and conversations created after an update.
 
+The vector store deliberately uses normalized blobs in SQLite and exhaustive
+per-project scoring. The measured semantic query over the supplied project's
+428 units took about 79 ms, including query embedding. This avoids adding a
+native vector-extension deployment requirement to the Windows runtime. It is
+not a claim that exhaustive search will outperform an ANN index at larger
+scales. A separate cross-encoder was not justified by these measured cases;
+hybrid ranking uses exact matches, lexical coverage and semantic score strength.
+
 ## Verification record
 
 The unchanged starting revision was
@@ -43,7 +51,7 @@ below; no test used a paid embedding or generation API.
 
 | Check | Local result |
 | --- | --- |
-| Server Python suite | 263 tests: 262 passed, one optional real-model test skipped in the ordinary environment |
+| Server Python suite | 269 tests: 268 passed, one optional real-model test skipped in the ordinary environment |
 | Cloud Python suite | 4 passed |
 | Other repository Python suite | 23 tests: 20 passed, three real-model tests skipped in the ordinary environment |
 | Explicit offline CPU model suite | All three real MiniLM tests passed; the server semantic suffix test also passed separately |
@@ -56,6 +64,8 @@ below; no test used a paid embedding or generation API.
 The optional model tests check real normalized embeddings, synonym ranking,
 persisted/reused vectors and semantic access beyond a long record's first model
 window. Skipped tests in the ordinary suite are not counted as passes there.
+Windows CI exposed retained SQLite connection handles; scoped production
+connections now close after commit/rollback, with two explicit lifecycle tests.
 
 The browser checks exercised the rebuilt portable bundle, including mobile
 390px and desktop 1280px viewports. Venture submission tests verified that the
@@ -128,8 +138,8 @@ ZIP/model inputs and optional measurement dependencies. No paid call is needed.
    HAR-derived browser behavior. OCR/transcripts cannot establish full visual or
    audio coverage. Image pixels and unusual binary encodings may still contain
    sensitive information that heuristic inspection cannot detect.
-4. Processing and retrieval have explicit size, archive, unit, call and character
-   limits. Large complete-enumeration requests paginate or report incomplete
+4. Processing and retrieval have explicit size, archive, aggregate extraction,
+   unit, call and character limits. Large complete-enumeration requests paginate or report incomplete
    coverage. They are not silently reduced to top-k snippets and declared done.
    Optional MiniLM quality and exhaustive vector search need further evaluation
    for other languages, domains and much larger projects.

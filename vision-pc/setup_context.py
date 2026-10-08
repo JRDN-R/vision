@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -88,7 +89,7 @@ def hardware_report(root: Path) -> dict:
             physical_memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
         except (ValueError, OSError, AttributeError):
             pass
-    with sqlite3.connect(":memory:") as connection:
+    with closing(sqlite3.connect(":memory:")) as connection, connection:
         connection.execute("CREATE VIRTUAL TABLE check_fts USING fts5(text)")
     disk_root = root if root.exists() else root.parent
     return {"platform": platform.platform(), "python": platform.python_version(),

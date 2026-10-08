@@ -1,5 +1,6 @@
 """Installer safety checks that use disposable data and never a live processor."""
 import importlib.util
+from contextlib import closing
 import json
 from pathlib import Path
 import shutil
@@ -26,7 +27,7 @@ class ContextInstallerTests(unittest.TestCase):
     def test_cold_backup_preserves_sqlite_and_original_files(self):
         source = self.root / "data"
         source.mkdir()
-        with sqlite3.connect(source / "venture.sqlite3") as con:
+        with closing(sqlite3.connect(source / "venture.sqlite3")) as con, con:
             con.execute("CREATE TABLE projects(id TEXT, payload TEXT)")
             con.execute("INSERT INTO projects VALUES(?,?)", ("owned", "unchanged 0.380 RH"))
         (source / "original.zip").write_bytes(b"opaque-original-bytes")
@@ -36,7 +37,7 @@ class ContextInstallerTests(unittest.TestCase):
         result = setup.backup_data(source, target)
         self.assertTrue(result["complete"])
         self.assertEqual(result["fileCount"], 3)
-        with sqlite3.connect(target / "data/venture.sqlite3") as con:
+        with closing(sqlite3.connect(target / "data/venture.sqlite3")) as con, con:
             self.assertEqual(con.execute("SELECT payload FROM projects").fetchone()[0], "unchanged 0.380 RH")
         self.assertEqual((source / "original.zip").read_bytes(), (target / "data/original.zip").read_bytes())
         manifest = json.loads((target / "backup-manifest.json").read_text())

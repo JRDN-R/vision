@@ -41,6 +41,8 @@ class ContextIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.engine_patch=patch.dict(sys.modules,context_engine=SimpleNamespace(ContextEngine=FakeEngine))
         self.engine_patch.start()
+        # Cleanup still runs if a platform-specific fixture teardown fails.
+        self.addCleanup(self.engine_patch.stop)
         test_venture.VentureTests.setUp(self)
         self.service.context.settings['syncDebounceSeconds']=0
         self.board='board_context_00000001'
@@ -50,7 +52,6 @@ class ContextIntegrationTests(unittest.TestCase):
         self.engine=self.service.context.engine
     def tearDown(self):
         test_venture.VentureTests.tearDown(self)
-        self.engine_patch.stop()
 
     def turn(self, request_id='ctx-turn-1', **kwargs):
         options=dict(clientRequestId=request_id,message='Reproduce every operation',model='gpt-6-astra',
