@@ -63,6 +63,12 @@
 .venture-settings .venture-feature-grid label:has(input:disabled){opacity:.5;cursor:not-allowed}
 .venture-root .venture-settings #ventureSettingsStatus{margin:4px 0 0;line-height:1.4}
 .venture-settings #ventureSettingsStatus:empty{display:none}
+.venture-root .venture-context-status{margin-left:auto;padding:4px 2px;min-width:0;max-width:120px;border:0;background:transparent;color:#a3b695;font-size:9px;line-height:1.3;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;cursor:pointer}
+.venture-root .venture-context-status[data-status=attention],.venture-root .venture-context-status[data-status=unavailable]{color:#e0b486}
+.venture-root .venture-context-status[hidden],.venture-tools-label[hidden]{display:none!important}
+.venture-context-dialog .venture-context-full{display:flex;align-items:center;gap:8px;font-size:13px;line-height:1.4}
+.venture-context-dialog .venture-context-full input{width:16px;min-width:16px;margin:0;accent-color:var(--accent)}
+@media(max-width:375px){.venture-root .venture-context-status{max-width:74px;font-size:8px}.venture-compose-tools:has(.venture-context-status:not([hidden])) #ventureMic{margin-left:0}}
 @media(max-width:760px){
  .venture-root .venture-settings{top:64px;right:11px;width:345px;max-width:calc(100vw - 22px);max-height:calc(100% - 74px);padding:13px 13px 11px;overflow-y:auto;overscroll-behavior:contain}
  .venture-root .venture-settings .venture-dial-label{margin-top:11px;margin-bottom:2px}

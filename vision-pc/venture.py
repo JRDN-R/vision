@@ -378,6 +378,9 @@ class Venture:
                     # Funding rows deliberately survive. Deletion is never a refund.
                     db.execute('DELETE FROM run_events WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
                     db.execute('DELETE FROM run_artifacts WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    db.execute('DELETE FROM context_responses WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    db.execute('DELETE FROM context_uploads WHERE run_id IN (SELECT id FROM project_runs WHERE project_id=?)',(cid,))
+                    db.execute('DELETE FROM context_sync_jobs WHERE project_id=?',(cid,))
                     db.execute('DELETE FROM project_runs WHERE project_id=?',(cid,))
                     if row['native']:db.execute('DELETE FROM projects WHERE id=?',(cid,))
             warning=None

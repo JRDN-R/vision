@@ -38,7 +38,7 @@ window.boardSubmissionSetup=()=>{
    const form=options.body,request=JSON.parse(form.get('options'));
    window.boardPosts.push({form,request});
    return Response.json({runId:'board-run',status:'queued',phase:'Queued',
-    clientRequestId:request.clientRequestId,message:request.message,projectPrompt:request.projectPrompt,
+    clientRequestId:request.clientRequestId,message:request.message,projectPrompt:request.projectPrompt,boardContext:request.boardContext,
     model:request.model,runOptions:request.runOptions,attachments:[],artifacts:[],
     createdAt:'2026-10-08T00:00:00Z',updatedAt:'2026-10-08T00:00:00Z'},{status:202});
   }
@@ -62,6 +62,26 @@ window.boardSubmissionFail=()=>{
 };
 window.boardFailureResult=()=>({posts:window.boardPosts.length,files:venture.files.map(f=>f.name),
  pending:!!venture.pending,unchanged:window.boardBefore===JSON.stringify(state)});
+window.contextSubmissionSetup=(textOnly=false)=>{
+ boardSubmissionSetup();venture.runs=[];venture.rendered.clear();$('ventureTurns').replaceChildren();
+ ventureContextSchedule=()=>ventureContextPaint();ventureContext.capable=true;ventureContext.status=null;
+ state.projectCloud={id:'project-contextfixture',revision:12,key:'never-send-this-key'};
+ projectPending=false;projectEpoch++;
+ ensureRemoteProject=async()=>({...state.projectCloud});
+ window.contextRebuilds=[];
+ projectRequest=async(path,options={})=>{
+  if(options.method==='POST')window.contextRebuilds.push(JSON.parse(options.body));
+  return Response.json({revision:12,status:'updating'});
+ };
+ if(textOnly){venture.files=[];venture.settings.runOptions.codeInterpreter=false;}
+ else venture.settings.runOptions.codeInterpreter=true;
+ window.boardBefore=JSON.stringify(state);venturePaintStatus();venturePaintAttachments();
+};
+window.contextSubmissionResult=()=>{
+ const post=window.boardPosts[0];return {count:window.boardPosts.length,options:post?.request,
+  hasArchive:post?.form.has('file'),attachments:post?.form.getAll('attachments').map(f=>f.name),
+  unchanged:window.boardBefore===JSON.stringify(state),notice:venture.notice};
+};
 '''
 where = shell.rfind('\n})();')
 assert where >= 0
@@ -71,7 +91,7 @@ with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True, **(
         {'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
     try:
-        for width in (390, 1280):
+        for width in [int(value) for value in os.environ.get('VISION_TEST_WIDTHS', '390,1280').split(',')]:
             page = browser.new_page(viewport={'width': width, 'height': 844})
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -113,7 +133,34 @@ with sync_playwright() as pw:
             failure = page.evaluate('boardFailureResult()')
             assert failure == {'posts': 1, 'files': ['keep.txt'], 'pending': False, 'unchanged': True}, failure
             assert not errors, errors
+
+            # Current servers receive a saved-revision reference, never both
+            # a generated project prompt and the same attachment bytes again.
+            for text_only in (False, True):
+                page.evaluate('contextSubmissionSetup', text_only)
+                page.locator('#ventureMessage').fill('Retrieve every complete operation record.')
+                assert page.locator('#ventureIncludeBoard').is_checked()
+                page.locator('#ventureContextStatus').click()
+                page.locator('#ventureContextRebuild').click()
+                expect(page.locator('#ventureContextRebuild')).to_be_enabled()
+                assert page.evaluate('contextRebuilds[0]') == {'action': 'rebuild', 'revision': 12}
+                page.locator('#ventureContextFull').check()
+                if not text_only:
+                    screenshots = ROOT / 'tests/venture-screenshots'
+                    screenshots.mkdir(exist_ok=True)
+                    page.screenshot(path=str(screenshots / f'context-options-{width}.png'))
+                page.locator('#ventureContextClose').click()
+                page.locator('#ventureSend').click()
+                expect(page.locator('#ventureActivity')).to_have_text('Queued')
+                optimized = page.evaluate('contextSubmissionResult()')
+                assert optimized['options']['boardContext'] == {
+                    'projectId': 'project-contextfixture', 'revision': 12, 'mode': 'full'}, optimized
+                assert 'projectPrompt' not in optimized['options']
+                assert not optimized['hasArchive'] and optimized['unchanged'], optimized
+                assert optimized['attachments'] == ([] if text_only else ['extra.txt'])
+                assert not optimized['notice'] and not errors, (optimized, errors)
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
             page.close()
-            print(f'{width}px: mixed board ZIP submitted once; prompt and bytes intact; failed preparation preserves the draft.')
+            print(f'{width}px: legacy ZIP bytes intact; failed preparation keeps drafts; exact-revision context sends no redundant board/prompt, with and without Code & files.')
     finally:
         browser.close()

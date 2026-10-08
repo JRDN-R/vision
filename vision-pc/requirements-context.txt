@@ -1,0 +1,10 @@
+# Optional CPU-only semantic retrieval. Installed into a private plugin directory,
+# never into the existing web/transcription runtime's packages. No paid API.
+# Resolved versions are recorded by InstallContextEngine for local diagnosis.
+sentence-transformers==6.1.0
+torch==2.14.1+cpu
+transformers==5.19.0
+huggingface-hub==1.33.0
+safetensors==0.8.0
+# Hub downloads support existing corporate/SOCKS proxy settings without changing them.
+httpx[socks]>=0.28.1,<1

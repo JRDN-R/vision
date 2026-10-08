@@ -5,12 +5,13 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools','InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
     [string]$FirebaseProjectId = 'visionboard-api',
-    [ValidateSet('Full','Standard')][string]$DocumentProfile = 'Standard'
+    [ValidateSet('Full','Standard')][string]$DocumentProfile = 'Standard',
+    [string]$BackupDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,7 +26,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -277,21 +278,44 @@ function Stop-ProcessorForChange {
     }
     throw 'The Vision task did not stop. No application files should be changed until it stops.'
 }
-function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false, [bool]$CheckDocuments = $false) {
+function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false, [bool]$CheckDocuments = $false, [bool]$CheckContext = $false, [bool]$CheckLocalTranscription = $false) {
     Initialize-ServerConfiguration $Configuration
+    # Validate staged imports and a disposable context project before any downtime.
+    Invoke-Checked $PythonExe @((Join-Path $StageDirectory 'setup_context.py'),'--self-test')
     $Files = $ProcessorFiles
     $BackupDirectory = Join-Path $DownloadDir ('processor-update-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
+    Set-PrivateDirectory $BackupDirectory
     Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
     $PreviousFiles = @{}
     foreach ($File in $Files) {
         $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
         if ($PreviousFiles[$File]) { Copy-Item -LiteralPath (Join-Path $InstallRoot $File) -Destination (Join-Path $BackupDirectory $File) }
     }
+    $InstalledUpdater = Join-Path $InstallRoot 'Setup-Vision-PC.ps1'
+    if (Test-Path -LiteralPath $InstalledUpdater) { Copy-Item -LiteralPath $InstalledUpdater -Destination (Join-Path $BackupDirectory 'Setup-Vision-PC.ps1') }
     $WasRunning = ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running')
     $Changed = $false
+    $Stopped = $false
     try {
         Stop-ProcessorForChange
+        $Stopped = $true
+        # A cold snapshot includes original projects, conversations, encrypted keys,
+        # SQLite WAL sidecars and derived indexes. No live data is migrated first.
+        $DataDirectory = [string]$Configuration.dataDir
+        if (-not $DataDirectory) { $DataDirectory = Join-Path $InstallRoot 'data' }
+        if (-not [IO.Path]::IsPathRooted($DataDirectory)) { $DataDirectory = Join-Path $InstallRoot $DataDirectory }
+        Invoke-Checked $PythonExe @((Join-Path $StageDirectory 'setup_context.py'),'--backup-data',$DataDirectory,'--destination',(Join-Path $BackupDirectory 'snapshot'))
+        $BackupFiles = @($Files | ForEach-Object {
+            $Entry = [ordered]@{ name = $_; existed = [bool]$PreviousFiles[$_] }
+            if ($PreviousFiles[$_]) { $Entry.sha256 = (Get-FileHash -LiteralPath (Join-Path $BackupDirectory $_) -Algorithm SHA256).Hash }
+            [pscustomobject]$Entry
+        })
+        Write-Utf8 (Join-Path $BackupDirectory 'processor-backup.json') (([ordered]@{
+            schemaVersion = 1; complete = $true; sourceRef = $SourceRef;
+            createdAt = [DateTime]::UtcNow.ToString('o'); files = $BackupFiles;
+            configSha256 = (Get-FileHash -LiteralPath (Join-Path $BackupDirectory 'config.json') -Algorithm SHA256).Hash
+        }) | ConvertTo-Json -Depth 10)
         $Changed = $true
         foreach ($File in $Files) { Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force }
         $TempConfig = "$ConfigPath.update-part"
@@ -301,6 +325,14 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         Stage-ExistingGeminiCredential $Configuration
         Start-ScheduledTask -TaskName $TaskName
         if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The updated processor did not become healthy.' }
+        if ($CheckContext -or -not $Configuration.intelligentContext -or $Configuration.intelligentContext.enabled -ne $false) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.capabilities.intelligentContextV1 -ne $true) { throw 'The processor did not confirm the context engine as ready.' }
+        }
+        if ($CheckLocalTranscription) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.localTranscription.available -ne $true) { throw 'The processor did not report local transcription as available.' }
+        }
         if ($CheckDocuments) {
             $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
             if ($Health.documentProcessing.ready -ne $true) { throw 'The processor did not confirm document processing as ready.' }
@@ -318,8 +350,9 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
     } catch {
         $Failure = $_.Exception.Message
         if (-not $Changed) {
-            Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
-            throw "$Failure The application and configuration were not changed."
+            if ($Stopped -and $WasRunning) { Start-ScheduledTask -TaskName $TaskName }
+            # A failed/incomplete snapshot is retained for diagnosis, never marked valid.
+            throw "$Failure The application and configuration were not changed. Backup attempt: $BackupDirectory"
         }
         try {
             Stop-ProcessorForChange
@@ -338,65 +371,24 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         } catch {
             throw "$Failure Recovery also needs attention: $($_.Exception.Message) Protected backup: $BackupDirectory"
         }
-        throw "$Failure Previous application and configuration restored."
+        throw "$Failure Previous application and configuration restored. Saved user data was not rolled back. Backup: $BackupDirectory"
     }
-    Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+    Write-Host "Verified pre-update data and application backup retained: $BackupDirectory" -ForegroundColor Green
 }
 function Set-LocalTranscription($Configuration, [bool]$Enabled, [string]$StageDirectory = '') {
-    Initialize-ServerConfiguration $Configuration
-    $BackupDirectory = Join-Path $DownloadDir ('local-activation-backup-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $BackupDirectory | Out-Null
-    Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $BackupDirectory 'config.json')
-    $Files = $ProcessorFiles
-    $PreviousFiles = @{}
-    foreach ($File in $Files) {
-        $PreviousFiles[$File] = Test-Path -LiteralPath (Join-Path $InstallRoot $File)
-        if ($PreviousFiles[$File]) { Copy-Item -LiteralPath (Join-Path $InstallRoot $File) -Destination (Join-Path $BackupDirectory $File) }
+    # Optional transcription activation can also carry newer application files.
+    # Reuse the same cold-data backup and rollback transaction for that path.
+    if (-not $StageDirectory) {
+        $StageDirectory = Join-Path $DownloadDir ('local-setting-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $StageDirectory | Out-Null
+        Set-PrivateDirectory $StageDirectory
+        foreach ($File in $ProcessorFiles) {
+            $Source = Join-Path $InstallRoot $File
+            if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw 'Run -Action Update before changing local transcription with this updater.' }
+            Copy-Item -LiteralPath $Source -Destination (Join-Path $StageDirectory $File)
+        }
     }
-    $WasRunning = ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running')
-    $Changed = $false
-    try {
-        Stop-ProcessorForChange
-        $Changed = $true
-        if ($StageDirectory) {
-            foreach ($File in $Files) { Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force }
-        }
-        $TempConfig = "$ConfigPath.local-part"
-        Write-Utf8 $TempConfig ($Configuration | ConvertTo-Json -Depth 20)
-        Move-Item -LiteralPath $TempConfig -Destination $ConfigPath -Force
-        Invoke-Checked $PythonExe @((Join-Path $InstallRoot 'server.py'),'--check')
-        Start-ScheduledTask -TaskName $TaskName
-        if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The processor did not restart after the local transcription change.' }
-        if ($Enabled) {
-            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
-            if ($Health.localTranscription.available -ne $true) { throw 'The processor did not report local transcription as available.' }
-        }
-    } catch {
-        $Failure = $_.Exception.Message
-        if (-not $Changed) {
-            Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
-            throw "$Failure The application and configuration were not changed."
-        }
-        try {
-            Stop-ProcessorForChange
-            Copy-Item -LiteralPath (Join-Path $BackupDirectory 'config.json') -Destination $ConfigPath -Force
-            foreach ($File in $Files) {
-                if ($PreviousFiles[$File]) {
-                    Copy-Item -LiteralPath (Join-Path $BackupDirectory $File) -Destination (Join-Path $InstallRoot $File) -Force
-                } elseif (Test-Path -LiteralPath (Join-Path $InstallRoot $File)) {
-                    Remove-Item -LiteralPath (Join-Path $InstallRoot $File) -Force
-                }
-            }
-            if ($WasRunning) {
-                Start-ScheduledTask -TaskName $TaskName
-                if (-not (Wait-Processor 'http://127.0.0.1:8765' $Configuration.token)) { throw 'The restored processor did not become healthy.' }
-            }
-        } catch {
-            throw "$Failure Recovery also needs attention: $($_.Exception.Message) Protected backup: $BackupDirectory"
-        }
-        throw "$Failure Previous application and configuration restored."
-    }
-    Remove-Item -LiteralPath $BackupDirectory -Recurse -Force
+    Set-ProcessorUpdate $Configuration $StageDirectory $false $false $false $false $Enabled
 }
 function Install-LocalTranscription {
     $Configuration = Read-Configuration
@@ -658,6 +650,20 @@ try {
         throw 'This installer needs 64-bit Windows on an Intel/AMD computer and 64-bit Windows PowerShell.'
     }
     if ($SourceRef -notmatch '^[A-Za-z0-9._-]+$') { throw 'Invalid source revision.' }
+    # Re-running Setup on an installed server uses the same staged, backed-up update.
+    if ($Action -eq 'Setup' -and (Test-Path -LiteralPath $ConfigPath) -and (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { $Action = 'Update' }
+    if ($Action -in @('InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')) {
+        Assert-InstalledProcessor
+        $ContextHelper = Join-Path $InstallRoot 'Context-Tools.ps1'
+        if (-not (Test-Path -LiteralPath $ContextHelper)) { throw 'Run the reviewed updater with -Action Update first to install context tooling.' }
+        . $ContextHelper
+        if ($Action -eq 'Rollback') { Restore-ProcessorBackup $BackupDirectory }
+        elseif ($Action -eq 'InstallContextEngine') { Install-ContextEngine }
+        elseif ($Action -eq 'CheckContextEngine') { Test-ContextEngine }
+        elseif ($Action -eq 'EnableContextEngine') { Set-ContextEnabled $true }
+        else { Set-ContextEnabled $false }
+        exit 0
+    }
     if ($Action -eq 'EnableGoogleSignIn' -and $FirebaseProjectId -notmatch '^[a-z][a-z0-9-]{4,28}[a-z0-9]$') {
         throw 'Use the Firebase project ID, such as visionboard-api, rather than an app ID or URL.'
     }

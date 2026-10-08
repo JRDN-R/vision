@@ -29,7 +29,7 @@ def run():
     with sync_playwright() as pw:
         browser=pw.chromium.launch(headless=True,**({'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         try:
-            for width in [390,1280]:
+            for width in [int(value) for value in os.environ.get('VISION_TEST_WIDTHS', '390,1280').split(',')]:
                 conversations=[dict(id='v-test-conversation-001',title='Cowling inspection report',settings=settings,revision=1,createdAt=1791320000,updatedAt=1791320000,boardProject=False)]
                 runs=[dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create an inspection report and save the HTML.',text='## Your inspection report\n\nThe measurements are organized by panel and location.\n\n[Download the report](sandbox:/mnt/data/report.html)',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)]
                 funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[])
@@ -167,7 +167,7 @@ def run():
                 assert p.locator('#ventureTurns').inner_text()==''
                 assert not errors,errors
                 context.close()
-            print('Venture: history, rename, model settings, persistent settings, calibration, durable download, sandbox isolation and account reset passed at 390px and 1280px.')
+            print('Venture: history, rename, model settings, persistent settings, calibration, durable download, sandbox isolation and account reset passed at '+os.environ.get('VISION_TEST_WIDTHS', '390,1280')+'px.')
         finally:browser.close()
 
 if __name__=='__main__':run()

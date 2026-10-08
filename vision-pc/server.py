@@ -103,14 +103,30 @@ def configure(config_path, migrate_gemini=False):
     documents.initialize(config)
     sessions.venture.documents = documents
     sessions.venture.transcription = transcriptions
+    sessions.context.initialize(config)
     app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
     app.config['TRIALS'] = trials
     trials.initialize()
     return config
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Commit/rollback a scoped transaction and release its Windows file handle.
+
+    sqlite3's standard context manager does not close the connection. Nearly all
+    processor call sites own a fresh connection with ``with connect_db()``; leaving
+    these to cyclic garbage collection holds database/WAL handles unnecessarily.
+    Direct callers can still use the ordinary connection API and close explicitly.
+    """
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect_db():
-    db = sqlite3.connect(app.config['DATABASE'], timeout=30)
+    db = sqlite3.connect(app.config['DATABASE'], timeout=30, factory=_ClosingConnection)
     db.row_factory = sqlite3.Row
     return db
 
@@ -296,7 +312,8 @@ def health():
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
                    geminiTranscription=gemini,
                    ventureDictation=sessions.venture.dictation.capability(),
-                   capabilities={'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   intelligentContext=sessions.context.capability(),
+                   capabilities={'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -712,6 +729,7 @@ def main():
             WAKE.set()
             sessions.stop.set()
             sessions.wake.set()
+            sessions.context.close()
             transcriptions.stop.set()
             transcriptions.wake.set()
             documents.stop.set()
