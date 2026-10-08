@@ -1,0 +1,873 @@
+{
+  "schema": "vision-context-benchmark-v1",
+  "host": {
+    "platform": "Linux",
+    "python": "3.12.14",
+    "logicalCpus": 9,
+    "ramBytes": 10451464192,
+    "isUserWindowsServer": false
+  },
+  "limitations": [
+    "These are local text-retrieval measurements, not paid model quality or official API billing measurements.",
+    "o200k_base is an explicit reference encoding; tokenizer compatibility for every selectable model is not assumed.",
+    "Memory includes this Python process and child converters sampled every 10 ms, not dedicated Windows hardware profiling.",
+    "No semantic quality claim applies unless a real local embedding model is explicitly configured."
+  ],
+  "cases": [
+    {
+      "dataset": {
+        "kind": "synthetic",
+        "expectedRecords": 13,
+        "originalGraphAvailable": true,
+        "limitations": [
+          "Records are fictional benchmark fixtures, not supplied project evidence."
+        ]
+      },
+      "tokenizer": {
+        "library": "tiktoken",
+        "encoding": "o200k_base",
+        "status": "exact-text-tokenization",
+        "providerModelTokenizerVerified": false
+      },
+      "baseline": {
+        "method": "Existing Preparation.index/retrieve on synthetic text sources, with its actual excerpt wrapper.",
+        "includeBoardPromptTokens": 15146,
+        "storedProjectPromptTokens": 15146,
+        "projectPromptSentDirectly": false,
+        "existingFtsExcerptTokens": 4675,
+        "textContextTokens": 4715,
+        "preparationAndRetrievalSeconds": 0.002851839999493677,
+        "excerptRecordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 9,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 9
+          },
+          "allComplete": false
+        },
+        "textContextRecordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 9,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 9
+          },
+          "allComplete": false
+        }
+      },
+      "fullContextReference": {
+        "textTokens": 15146,
+        "kind": "counterfactual single MAIN_PROMPT plus prepared page/OCR text, without duplicate module prompts or table projections",
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        }
+      },
+      "hybrid": {
+        "initialTextTokens": 8596,
+        "toolSchemaTokens": 199,
+        "reductionVersusFullTextReferencePercent": 43.246,
+        "changeVersusExistingInitialTextPercent": 82.312,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": false,
+        "instructionCoverage": {
+          "expected": 2,
+          "included": 2,
+          "allIncluded": true
+        },
+        "warningCount": 1,
+        "metrics": {
+          "retrievalOperations": 1,
+          "retrievalSeconds": 0.0018,
+          "contextCharacters": 41701,
+          "contextTokens": {
+            "value": 8537,
+            "kind": "tokenized",
+            "encoding": "o200k_base"
+          },
+          "baselineCharacters": 92827,
+          "retrievedUnits": 21,
+          "deduplicatedUnits": 0,
+          "fullContextFallback": true,
+          "index": {
+            "cpuSeconds": 14.8495,
+            "embeddedUnits": 37,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 8.8824,
+            "indexedSources": 4,
+            "originalBytes": 92827,
+            "reusedSources": 0,
+            "textCharacters": 92827
+          },
+          "contextDigest": "4a69bfb55b9f4ff30cee782be098062294634e4b93931215812e7587222e3cff"
+        },
+        "indexSeconds": 8.888142961000995,
+        "retrievalSeconds": 0.007617164999828674,
+        "peakProcessTreeRssBytes": 739266560,
+        "indexStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 1,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 14.8495,
+            "embeddedUnits": 37,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 8.8824,
+            "indexedSources": 4,
+            "originalBytes": 92827,
+            "reusedSources": 0,
+            "textCharacters": 92827
+          }
+        },
+        "incrementalSeconds": 0.03165323599750991,
+        "incrementalStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 2,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.0297,
+            "embeddedUnits": 37,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.0254,
+            "indexedSources": 0,
+            "originalBytes": 92827,
+            "reusedSources": 4,
+            "textCharacters": 92827
+          }
+        },
+        "changedSourceSeconds": 0.055372287999489345,
+        "changedSourceStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 3,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.0556,
+            "embeddedUnits": 38,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.0498,
+            "indexedSources": 1,
+            "originalBytes": 92863,
+            "reusedSources": 4,
+            "textCharacters": 92863
+          }
+        }
+      },
+      "fullSourceCheck": {
+        "textTokens": 17152,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": true,
+        "warningCount": 0
+      },
+      "targetedExpansion": {
+        "method": "Deterministic selection of PDF/operations source from server inventory, using actual integration tool outputs and pagination; not model-selected.",
+        "sourceCount": 1,
+        "toolCalls": 1,
+        "additionalToolOutputTokens": 4856,
+        "initialPlusToolOutputTokens": 13452,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": true,
+        "billingNote": "Evidence token count only. Continuation API input also includes retained conversation; it is not equal to this sum."
+      },
+      "focusedQuery": {
+        "kind": "exact-identifier",
+        "initialTextTokens": 4759,
+        "retrievalSeconds": 0.019804679999651853,
+        "recordCoverage": {
+          "expected": 1,
+          "idsPresent": 1,
+          "completeRecords": 1,
+          "fieldCoverage": {
+            "id": 1,
+            "wc": 1,
+            "description": 1,
+            "hours": 1,
+            "notes": 1
+          },
+          "allComplete": true
+        },
+        "baselineExcerptTokens": 4175,
+        "baselineRecordCoverage": {
+          "expected": 1,
+          "idsPresent": 1,
+          "completeRecords": 0,
+          "fieldCoverage": {
+            "id": 1,
+            "wc": 1,
+            "description": 1,
+            "hours": 1,
+            "notes": 0
+          },
+          "allComplete": false
+        },
+        "reductionVersusFullTextReferencePercent": 68.579
+      },
+      "cost": {
+        "kind": "counterfactual-input-only-estimate",
+        "catalogVersion": "2026-10-06",
+        "model": "gpt-6-astra",
+        "existingInitialUsd": 0.04715,
+        "fullTextReferenceUsd": 0.15146,
+        "hybridInitialUsd": 0.08596,
+        "actualProviderUsage": null,
+        "paidRequestsMade": 0,
+        "excludes": [
+          "output",
+          "reasoning output",
+          "image tokens",
+          "tool definitions",
+          "conversation history",
+          "continuation requests",
+          "provider cache effects",
+          "Code Interpreter"
+        ]
+      }
+    },
+    {
+      "dataset": {
+        "kind": "synthetic",
+        "expectedRecords": 100,
+        "originalGraphAvailable": true,
+        "limitations": [
+          "Records are fictional benchmark fixtures, not supplied project evidence."
+        ]
+      },
+      "tokenizer": {
+        "library": "tiktoken",
+        "encoding": "o200k_base",
+        "status": "exact-text-tokenization",
+        "providerModelTokenizerVerified": false
+      },
+      "baseline": {
+        "method": "Existing Preparation.index/retrieve on synthetic text sources, with its actual excerpt wrapper.",
+        "includeBoardPromptTokens": 123200,
+        "storedProjectPromptTokens": 46848,
+        "projectPromptSentDirectly": false,
+        "existingFtsExcerptTokens": 5235,
+        "textContextTokens": 5275,
+        "preparationAndRetrievalSeconds": 0.008075767000264022,
+        "excerptRecordCoverage": {
+          "expected": 100,
+          "idsPresent": 19,
+          "completeRecords": 11,
+          "fieldCoverage": {
+            "id": 19,
+            "wc": 100,
+            "description": 24,
+            "hours": 31,
+            "notes": 14
+          },
+          "allComplete": false
+        },
+        "textContextRecordCoverage": {
+          "expected": 100,
+          "idsPresent": 19,
+          "completeRecords": 11,
+          "fieldCoverage": {
+            "id": 19,
+            "wc": 100,
+            "description": 24,
+            "hours": 31,
+            "notes": 14
+          },
+          "allComplete": false
+        }
+      },
+      "fullContextReference": {
+        "textTokens": 123200,
+        "kind": "counterfactual single MAIN_PROMPT plus prepared page/OCR text, without duplicate module prompts or table projections",
+        "recordCoverage": {
+          "expected": 100,
+          "idsPresent": 100,
+          "completeRecords": 100,
+          "fieldCoverage": {
+            "id": 100,
+            "wc": 100,
+            "description": 100,
+            "hours": 100,
+            "notes": 100
+          },
+          "allComplete": true
+        }
+      },
+      "hybrid": {
+        "initialTextTokens": 9577,
+        "toolSchemaTokens": 199,
+        "reductionVersusFullTextReferencePercent": 92.226,
+        "changeVersusExistingInitialTextPercent": 81.555,
+        "recordCoverage": {
+          "expected": 100,
+          "idsPresent": 26,
+          "completeRecords": 26,
+          "fieldCoverage": {
+            "id": 26,
+            "wc": 100,
+            "description": 26,
+            "hours": 26,
+            "notes": 26
+          },
+          "allComplete": false
+        },
+        "engineComplete": false,
+        "instructionCoverage": {
+          "expected": 2,
+          "included": 2,
+          "allIncluded": true
+        },
+        "warningCount": 1,
+        "metrics": {
+          "retrievalOperations": 1,
+          "retrievalSeconds": 0.0098,
+          "contextCharacters": 39721,
+          "contextTokens": {
+            "value": 9518,
+            "kind": "tokenized",
+            "encoding": "o200k_base"
+          },
+          "baselineCharacters": 720941,
+          "retrievedUnits": 28,
+          "deduplicatedUnits": 0,
+          "fullContextFallback": true,
+          "index": {
+            "cpuSeconds": 66.6983,
+            "embeddedUnits": 269,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 32.7996,
+            "indexedSources": 4,
+            "originalBytes": 720941,
+            "reusedSources": 0,
+            "textCharacters": 720941
+          },
+          "contextDigest": "d79e99fb2c151b1b2fb355b819fc7b7cdd5e687a8f96c644d9101f6cf883d39a"
+        },
+        "indexSeconds": 32.82113900100012,
+        "retrievalSeconds": 0.014463252999121323,
+        "peakProcessTreeRssBytes": 830902272,
+        "indexStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 1,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 66.6983,
+            "embeddedUnits": 269,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 32.7996,
+            "indexedSources": 4,
+            "originalBytes": 720941,
+            "reusedSources": 0,
+            "textCharacters": 720941
+          }
+        },
+        "incrementalSeconds": 0.1916131790021609,
+        "incrementalStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 2,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.1714,
+            "embeddedUnits": 269,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.1714,
+            "indexedSources": 0,
+            "originalBytes": 720941,
+            "reusedSources": 4,
+            "textCharacters": 720941
+          }
+        },
+        "changedSourceSeconds": 0.22040924499742687,
+        "changedSourceStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 3,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.2078,
+            "embeddedUnits": 270,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.1969,
+            "indexedSources": 1,
+            "originalBytes": 720977,
+            "reusedSources": 4,
+            "textCharacters": 720977
+          }
+        }
+      },
+      "fullSourceCheck": {
+        "textTokens": 134836,
+        "recordCoverage": {
+          "expected": 100,
+          "idsPresent": 100,
+          "completeRecords": 100,
+          "fieldCoverage": {
+            "id": 100,
+            "wc": 100,
+            "description": 100,
+            "hours": 100,
+            "notes": 100
+          },
+          "allComplete": true
+        },
+        "engineComplete": true,
+        "warningCount": 0
+      },
+      "targetedExpansion": {
+        "method": "Deterministic selection of PDF/operations source from server inventory, using actual integration tool outputs and pagination; not model-selected.",
+        "sourceCount": 1,
+        "toolCalls": 4,
+        "additionalToolOutputTokens": 38998,
+        "initialPlusToolOutputTokens": 48575,
+        "recordCoverage": {
+          "expected": 100,
+          "idsPresent": 100,
+          "completeRecords": 100,
+          "fieldCoverage": {
+            "id": 100,
+            "wc": 100,
+            "description": 100,
+            "hours": 100,
+            "notes": 100
+          },
+          "allComplete": true
+        },
+        "engineComplete": false,
+        "billingNote": "Evidence token count only. Continuation API input also includes retained conversation; it is not equal to this sum."
+      },
+      "focusedQuery": {
+        "kind": "exact-identifier",
+        "initialTextTokens": 9544,
+        "retrievalSeconds": 0.04999054200015962,
+        "recordCoverage": {
+          "expected": 1,
+          "idsPresent": 1,
+          "completeRecords": 1,
+          "fieldCoverage": {
+            "id": 1,
+            "wc": 1,
+            "description": 1,
+            "hours": 1,
+            "notes": 1
+          },
+          "allComplete": true
+        },
+        "baselineExcerptTokens": 5185,
+        "baselineRecordCoverage": {
+          "expected": 1,
+          "idsPresent": 1,
+          "completeRecords": 1,
+          "fieldCoverage": {
+            "id": 1,
+            "wc": 1,
+            "description": 1,
+            "hours": 1,
+            "notes": 1
+          },
+          "allComplete": true
+        },
+        "reductionVersusFullTextReferencePercent": 92.253
+      },
+      "cost": {
+        "kind": "counterfactual-input-only-estimate",
+        "catalogVersion": "2026-10-06",
+        "model": "gpt-6-astra",
+        "existingInitialUsd": 0.05275,
+        "fullTextReferenceUsd": 1.232,
+        "hybridInitialUsd": 0.09577,
+        "actualProviderUsage": null,
+        "paidRequestsMade": 0,
+        "excludes": [
+          "output",
+          "reasoning output",
+          "image tokens",
+          "tool definitions",
+          "conversation history",
+          "continuation requests",
+          "provider cache effects",
+          "Code Interpreter"
+        ]
+      }
+    },
+    {
+      "dataset": {
+        "kind": "private-prompt-export",
+        "archiveBytes": 17008401,
+        "archiveSha256": "9989ae7d6684562c5b69e4108e4b9263f8e66bcfe86535314efe62fb80e8f274",
+        "moduleCount": 25,
+        "pdfPages": 10,
+        "expectedRecords": 13,
+        "originalGraphAvailable": false,
+        "limitations": [
+          "No editable board JSON was supplied. Module-folder identifiers and source contents are preserved in a derived benchmark schema.",
+          "No native graph, coordinates, revision history, or conditional edge state is claimed to be restored.",
+          "The ground-truth oracle checks PDF record fields and entire notes, not generated browser script correctness.",
+          "Screenshot interpretation, HAR-driven browser behavior, and generated outputs require a separate end-to-end evaluation."
+        ]
+      },
+      "tokenizer": {
+        "library": "tiktoken",
+        "encoding": "o200k_base",
+        "status": "exact-text-tokenization",
+        "providerModelTokenizerVerified": false
+      },
+      "baseline": {
+        "method": "Actual existing Preparation.prepare on the original ZIP; local document worker, FTS, notes and excerpt wrapper. Image token costs excluded.",
+        "includeBoardPromptTokens": 133221,
+        "storedProjectPromptTokens": 90558,
+        "projectPromptSentDirectly": false,
+        "existingFtsExcerptTokens": 6446,
+        "textContextTokens": 6553,
+        "preparationAndRetrievalSeconds": 6.480980276002811,
+        "excerptRecordCoverage": {
+          "expected": 13,
+          "idsPresent": 2,
+          "completeRecords": 2,
+          "fieldCoverage": {
+            "id": 2,
+            "wc": 9,
+            "description": 2,
+            "hours": 5,
+            "notes": 2
+          },
+          "allComplete": false
+        },
+        "textContextRecordCoverage": {
+          "expected": 13,
+          "idsPresent": 2,
+          "completeRecords": 2,
+          "fieldCoverage": {
+            "id": 2,
+            "wc": 9,
+            "description": 2,
+            "hours": 5,
+            "notes": 2
+          },
+          "allComplete": false
+        }
+      },
+      "fullContextReference": {
+        "textTokens": 141897,
+        "kind": "counterfactual single MAIN_PROMPT plus prepared page/OCR text, without duplicate module prompts or table projections",
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        }
+      },
+      "hybrid": {
+        "initialTextTokens": 14758,
+        "toolSchemaTokens": 199,
+        "reductionVersusFullTextReferencePercent": 89.599,
+        "changeVersusExistingInitialTextPercent": 125.21,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": false,
+        "instructionCoverage": {
+          "expected": 12,
+          "included": 12,
+          "allIncluded": true
+        },
+        "warningCount": 5,
+        "metrics": {
+          "retrievalOperations": 1,
+          "retrievalSeconds": 0.0275,
+          "contextCharacters": 38992,
+          "contextTokens": {
+            "value": 14630,
+            "kind": "tokenized",
+            "encoding": "o200k_base"
+          },
+          "baselineCharacters": 537342,
+          "retrievedUnits": 41,
+          "deduplicatedUnits": 47,
+          "fullContextFallback": true,
+          "index": {
+            "cpuSeconds": 123.0114,
+            "embeddedUnits": 428,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 61.4315,
+            "indexedSources": 125,
+            "originalBytes": 16597906,
+            "reusedSources": 0,
+            "textCharacters": 537342
+          },
+          "contextDigest": "797d648bd71e0104166dda10916f15c3a754e6e961ce8f18cf45fb60df9d0331"
+        },
+        "indexSeconds": 61.65478477599754,
+        "retrievalSeconds": 0.06961939199754852,
+        "peakProcessTreeRssBytes": 1050587136,
+        "indexStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 1,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 123.0114,
+            "embeddedUnits": 428,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 61.4315,
+            "indexedSources": 125,
+            "originalBytes": 16597906,
+            "reusedSources": 0,
+            "textCharacters": 537342
+          }
+        },
+        "incrementalSeconds": 0.49101822600277956,
+        "incrementalStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 2,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.2745,
+            "embeddedUnits": 428,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.2747,
+            "indexedSources": 0,
+            "originalBytes": 16597906,
+            "reusedSources": 125,
+            "textCharacters": 537342
+          }
+        },
+        "changedSourceSeconds": 0.573634624000988,
+        "changedSourceStatus": {
+          "status": "ready",
+          "ready": true,
+          "revision": 3,
+          "semantic": {
+            "ready": true,
+            "model": "local-multiwindow-v2:8457b09e37db128307ea",
+            "status": "ready",
+            "warning": null
+          },
+          "metrics": {
+            "cpuSeconds": 0.3336,
+            "embeddedUnits": 429,
+            "embeddingModel": "local-multiwindow-v2:8457b09e37db128307ea",
+            "indexSeconds": 0.3262,
+            "indexedSources": 1,
+            "originalBytes": 16597942,
+            "reusedSources": 125,
+            "textCharacters": 537378
+          }
+        }
+      },
+      "fullSourceCheck": {
+        "textTokens": 178871,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": false,
+        "warningCount": 4
+      },
+      "targetedExpansion": {
+        "method": "Deterministic selection of PDF/operations source from server inventory, using actual integration tool outputs and pagination; not model-selected.",
+        "sourceCount": 1,
+        "toolCalls": 2,
+        "additionalToolOutputTokens": 27418,
+        "initialPlusToolOutputTokens": 42176,
+        "recordCoverage": {
+          "expected": 13,
+          "idsPresent": 13,
+          "completeRecords": 13,
+          "fieldCoverage": {
+            "id": 13,
+            "wc": 13,
+            "description": 13,
+            "hours": 13,
+            "notes": 13
+          },
+          "allComplete": true
+        },
+        "engineComplete": false,
+        "billingNote": "Evidence token count only. Continuation API input also includes retained conversation; it is not equal to this sum."
+      },
+      "focusedQuery": {
+        "kind": "semantic-paraphrase",
+        "initialTextTokens": 16081,
+        "retrievalSeconds": 0.07973224899978959,
+        "recordCoverage": {
+          "expected": 1,
+          "idsPresent": 1,
+          "completeRecords": 1,
+          "fieldCoverage": {
+            "id": 1,
+            "wc": 1,
+            "description": 1,
+            "hours": 1,
+            "notes": 1
+          },
+          "allComplete": true
+        },
+        "baselineExcerptTokens": 4962,
+        "baselineRecordCoverage": {
+          "expected": 1,
+          "idsPresent": 0,
+          "completeRecords": 0,
+          "fieldCoverage": {
+            "id": 0,
+            "wc": 0,
+            "description": 0,
+            "hours": 0,
+            "notes": 0
+          },
+          "allComplete": false
+        },
+        "reductionVersusFullTextReferencePercent": 88.667
+      },
+      "cost": {
+        "kind": "counterfactual-input-only-estimate",
+        "catalogVersion": "2026-10-06",
+        "model": "gpt-6-astra",
+        "existingInitialUsd": 0.06553,
+        "fullTextReferenceUsd": 1.41897,
+        "hybridInitialUsd": 0.14758,
+        "actualProviderUsage": null,
+        "paidRequestsMade": 0,
+        "excludes": [
+          "output",
+          "reasoning output",
+          "image tokens",
+          "tool definitions",
+          "conversation history",
+          "continuation requests",
+          "provider cache effects",
+          "Code Interpreter"
+        ]
+      }
+    }
+  ],
+  "implementationSha256": {
+    "context_engine.py": "391174a857b58eee09bfb7ef306249b161b00d05dd56c6834435f967b7d672f2",
+    "context_sources.py": "94109335884563c5ab1666199ab4b4ec068a56e9356830ef71848150af365adf",
+    "context_embeddings.py": "aba8b42f2f741c71c11d9dc4f280e40c56415e90f2241c3cb44d6efd402c4868",
+    "context_integration.py": "9b78cd88f525569b0fddd1c96e5d6ead5345fbd3657e752da4bb4f7f94c67720",
+    "venture_files.py": "31054ba5eede451a0d2a6d821c479a33a3406f064eead3b6c8f242dfffa7233c",
+    "venture_billing.py": "70cdae312274bce88d8a79b9d00d587efc08fd202f6efbaea0458add582ea0a4"
+  }
+}

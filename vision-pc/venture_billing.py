@@ -108,6 +108,36 @@ def estimate(response: dict, requested_model: str, catalog: dict, now: float | N
                 model=model, usage=usage, pricingVersion=catalog.get('version', 'unknown'))
 
 
+def estimate_responses(responses: list[dict], requested_model: str, catalog: dict,
+                       now: float | None = None) -> dict:
+    """Price individual Responses API hops before summing their reported usage.
+
+    A tool continuation is a separate billable response. Summing its input tokens
+    before pricing would incorrectly trigger long-context rates across requests.
+    Reasoning tokens remain part of output_tokens, and containers are charged by
+    the existing account-scoped session meter after taking the union here.
+    """
+    priced = [estimate(response, requested_model, catalog, now) for response in responses]
+    usage = {}
+    for field in ('input_tokens', 'output_tokens', 'total_tokens'):
+        values = [item['usage'].get(field) for item in priced]
+        if values and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in values):
+            usage[field] = sum(values)
+    for field, keys in (('input_tokens_details', ('cached_tokens', 'cache_write_tokens')),
+                        ('output_tokens_details', ('reasoning_tokens',))):
+        for key in keys:
+            values = [(item['usage'].get(field) or {}).get(key) for item in priced]
+            if values and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in values):
+                usage.setdefault(field, {})[key] = sum(values)
+    return dict(micro=sum(item['micro'] for item in priced),
+                problems=list(dict.fromkeys(problem for item in priced for problem in item['problems'])),
+                containers=sorted({cid for item in priced for cid in item['containers']}),
+                model=priced[-1]['model'] if priced else requested_model, usage=usage,
+                pricingVersion=catalog.get('version', 'unknown'), responseCount=len(priced),
+                responses=[dict(responseId=response.get('id'), model=item['model'], usage=item['usage'],
+                                micro=item['micro']) for response, item in zip(responses, priced)])
+
+
 class Funding:
     def __init__(self, sessions):
         self.sessions, self.db = sessions, sessions.db
@@ -134,6 +164,9 @@ class Funding:
                 CREATE TABLE IF NOT EXISTS venture_container_costs (
                     uid TEXT NOT NULL,key_id TEXT NOT NULL,container_id TEXT NOT NULL,
                     covered_until REAL NOT NULL,PRIMARY KEY(uid,key_id,container_id));
+                CREATE TABLE IF NOT EXISTS context_responses (
+                    run_id TEXT NOT NULL,response_id TEXT NOT NULL,response_json TEXT NOT NULL,
+                    PRIMARY KEY(run_id,response_id));
             ''')
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
             for name, declaration in [('venture_key_id', 'TEXT'), ('venture_pricing_json', 'TEXT')]:
@@ -151,14 +184,24 @@ class Funding:
             return  # Historical runs precede accounting; never retroactively debit them.
         with self.db() as db:
             owner = db.execute('SELECT owner_uid FROM projects WHERE id=?', (row['project_id'],)).fetchone()
+            hops = db.execute('SELECT response_id,response_json FROM context_responses WHERE run_id=? ORDER BY rowid',
+                              (row['id'],)).fetchall()
         if not owner or not owner[0]:
             return
         uid, kid = owner[0], row['venture_key_id']
         response = json.loads(row.get('response_json') or '{}')
         catalog = json.loads(row.get('venture_pricing_json') or '{}') or self.catalog
-        result = estimate(response, row['model'], catalog)
+        # Last-hop JSON is also kept on project_runs for existing conversation
+        # consumers. It must never be charged twice when it is in the hop table.
+        responses = {}
+        for hop in hops:
+            value = json.loads(hop['response_json'])
+            responses[hop['response_id']] = {**value, 'id': hop['response_id']}
+        if response:
+            responses[response.get('id') or row.get('response_id') or '__final__'] = response
+        result = estimate_responses(list(responses.values()), row['model'], catalog) if responses else estimate(response, row['model'], catalog)
         # Cancelled before any provider submission is known to be free.
-        if row['status'] == 'cancelled' and not row['response_id'] and not row.get('response_json'):
+        if row['status'] == 'cancelled' and not row['response_id'] and not row.get('response_json') and not hops:
             result.update(micro=0, problems=[], containers=[])
         rid = row.get('response_id') or None
         now = time.time()

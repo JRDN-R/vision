@@ -103,6 +103,7 @@ def configure(config_path, migrate_gemini=False):
     documents.initialize(config)
     sessions.venture.documents = documents
     sessions.venture.transcription = transcriptions
+    sessions.context.initialize(config)
     app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
     app.config['TRIALS'] = trials
     trials.initialize()
@@ -296,7 +297,8 @@ def health():
                    localTranscription=local, localSoundEvents=sounds, videoMedia=video, documentProcessing=document,
                    geminiTranscription=gemini,
                    ventureDictation=sessions.venture.dictation.capability(),
-                   capabilities={'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   intelligentContext=sessions.context.capability(),
+                   capabilities={'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -712,6 +714,7 @@ def main():
             WAKE.set()
             sessions.stop.set()
             sessions.wake.set()
+            sessions.context.close()
             transcriptions.stop.set()
             transcriptions.wake.set()
             documents.stop.set()

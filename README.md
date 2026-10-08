@@ -7,6 +7,21 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+## Intelligent Context Engine (review build)
+
+This branch adds a local, derived project index for Venture's **Include board**.
+The original editable board, attachments, autosave, and portable exports remain
+the source of truth. Venture pins a saved revision, receives relevant evidence
+with source references, and can request more through authenticated retrieval.
+Exact search, SQLite FTS5, complete record groups, and graph relationships work
+locally; the optional CPU MiniLM model adds semantic retrieval without a paid
+embedding API. Incomplete extraction or context coverage is reported explicitly.
+
+The Windows processor must be updated separately after review. No server install
+or production merge is performed by this branch. Read the
+[installation, safeguards, limits, and rollback guide](vision-pc/CONTEXT-ENGINE.md)
+and [verification report](vision-pc/CONTEXT-VERIFICATION.md) before deploying.
+
 **v1.0.2.4** fixes Venture's **Include board** submission for boards containing
 images, transcripts, and file attachments. It uses Vision's bundled ZIP exporter
 and preserves the board instructions and attachment bytes. Preparation errors

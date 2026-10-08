@@ -79,6 +79,7 @@ async function projectStoreGet(id,scope=projectStorageScope){
 }
 function projectStatus(message,kind='local'){
  projectMessage=message;const el=$('saveState');if(el){el.textContent=message;el.dataset.projectStatus=kind;el.title='Open projects and save status';}
+ if(typeof ventureContextSchedule==='function')ventureContextSchedule();
  const status=$('projectSyncStatus');if(status){status.textContent=message;status.dataset.projectStatus=kind;}
  if($('projectConflictActions'))$('projectConflictActions').hidden=!projectConflict;
  if($('projectUpdateHelp'))$('projectUpdateHelp').hidden=kind!=='update';
