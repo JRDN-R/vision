@@ -98,7 +98,7 @@ async function navigationOpenVortex(event){
 }
 function navigationVortexLink(id){
  const link=document.createElement('a');link.id=id;link.className='workspace-vortex-link';link.href=navigationVortexURL();
- link.innerHTML=ventureIcon('download')+'<span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
+ link.innerHTML='<img class="workspace-vortex-icon" src="vortex_menu_icon.png" alt="" aria-hidden="true" width="20" height="20"><span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
 }
 function navigationInstall(){
  document.documentElement.classList.add('compact-navigation');
