@@ -308,20 +308,29 @@ def run():
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
-            assert page.locator('.brand img').get_attribute('src') == '../vortex_character.png'
-            assert page.locator('.brand span').evaluate('el=>getComputedStyle(el).fontFamily').startswith('"Lilita One"')
+            # The header uses one scalable combined lockup, not a separate head and text.
+            brand_logo = page.locator('.topbar .brand .brand-lockup')
+            assert brand_logo.count() == 1
+            assert brand_logo.get_attribute('src') == './brand-lockup.svg'
+            assert page.locator('.topbar .brand span').count() == 0
+            assert page.locator('.topbar .brand').get_attribute('aria-label') == 'Vortex home'
             assert page.locator('html').evaluate('el=>getComputedStyle(el).backgroundColor') == 'rgb(16, 19, 20)'
-            # The moving silver finish follows the transparent mascot, not a rectangle.
-            page.wait_for_function("document.querySelector('.brand img').naturalWidth > 0")
+            page.wait_for_function("document.querySelector('.brand-lockup').naturalWidth > 0")
+            dimensions = brand_logo.evaluate('el=>({width:el.naturalWidth,height:el.naturalHeight})')
+            assert dimensions == {'width': 1901, 'height': 620}, dimensions
+            logo_bounds = brand_logo.bounding_box()
+            expected_height = 44 if width <= 380 else 48 if width <= 600 else 56
+            assert abs(logo_bounds['height'] - expected_height) < 1, logo_bounds
+            # The moving silver finish remains clipped to the character portion of the lockup.
             shimmer = page.locator('.brand').evaluate("""element => {
                 const effect = getComputedStyle(element, '::after');
                 return {animation:effect.animationName, mask:effect.webkitMaskImage || effect.maskImage,
                         width:effect.width, pointerEvents:effect.pointerEvents};
             }""")
             assert shimmer['animation'] == 'vortex-character-shimmer'
-            assert 'vortex_character.png' in shimmer['mask']
+            assert 'vortex/brand-lockup.svg' in shimmer['mask']
             assert shimmer['pointerEvents'] == 'none'
-            assert shimmer['width'] == ('38px' if width <= 380 else '40px' if width <= 600 else '44px')
+            assert abs(float(shimmer['width'].removesuffix('px')) - logo_bounds['width'] * .26) < 1, shimmer
 
             # URL inspection is a persistent server job; unknown progress has no number.
             page.locator('#sourceInput').fill(VIDEO['url'])
@@ -645,7 +654,7 @@ def run():
             font = page.locator('#navigation .nav-brand-name').evaluate(
                 "el=>({family:getComputedStyle(el).fontFamily,size:getComputedStyle(el).fontSize,color:getComputedStyle(el).color})")
             assert 'Lilita One' in font['family'] and font['size'] == '30px', font
-            assert font['color'] == page.locator('.brand span').evaluate('el=>getComputedStyle(el).color')
+            assert font['color'] == page.locator('#navigation nav a').first.evaluate('el=>getComputedStyle(el).color')
             assert page.locator('#mainContent').evaluate('el=>el.inert')
             no_overflow(page)
             page.screenshot(path=str(SHOTS/f'vortex-menu-{width}.png'), full_page=True)
