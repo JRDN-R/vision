@@ -82,14 +82,25 @@ class HealthHTTPTests(unittest.TestCase):
     def probe(self, **response):
         with self.lock:
             self.response.update(response)
-        # An actual .NET default proxy catches reliance on inherited proxy
-        # settings, including Windows PowerShell 5.1's system proxy behavior.
-        # Port 1 is deliberately unreachable; the local request must bypass it.
+        # An explicit IWebProxy avoids .NET Framework's automatic loopback
+        # exemption, which differs from .NET Core's WebProxy behavior. Port 1
+        # is deliberately unreachable; the request must set Proxy to null.
         path = str(SERVICES_SCRIPT).replace("'", "''")
         script = f"""
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-$Proxy = New-Object System.Net.WebProxy('http://127.0.0.1:1/', $false)
+Add-Type -TypeDefinition @'
+public sealed class VortexRequiredProxy : System.Net.IWebProxy
+{{
+    public System.Net.ICredentials Credentials {{ get; set; }}
+    public System.Uri GetProxy(System.Uri destination)
+    {{
+        return new System.Uri("http://127.0.0.1:1/");
+    }}
+    public bool IsBypassed(System.Uri destination) {{ return false; }}
+}}
+'@
+$Proxy = New-Object VortexRequiredProxy
 if ($Proxy.IsBypassed([Uri]'http://127.0.0.1:9000/')) {{ throw 'Fixture proxy unexpectedly bypasses the target.' }}
 [System.Net.WebRequest]::DefaultWebProxy = $Proxy
 . '{path}'
@@ -115,7 +126,12 @@ try {{
         )
         with self.lock:
             observed = list(self.requests)
-        self.assertEqual([path for path, _headers in observed], ["/"], "Probe must make exactly one direct loopback request")
+        diagnostics = (result.stdout + result.stderr).replace(SENSITIVE_MARKER, "[redacted]")[:4000]
+        self.assertEqual(
+            [path for path, _headers in observed],
+            ["/"],
+            f"Probe must make exactly one direct loopback request; child exit={result.returncode}\n{diagnostics}",
+        )
         for _path, headers in observed:
             for header in ("authorization", "proxy-authorization", "cookie"):
                 self.assertNotIn(header, headers, "Health probe must not forward credentials")
