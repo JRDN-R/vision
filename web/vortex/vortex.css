@@ -165,6 +165,7 @@ body::before {
 /* Paint Vortex's shell during Firebase hydration, without flashing its sign-in form. */
 .auth-restoring{position:fixed;z-index:10;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--surface);box-shadow:0 8px 28px #0006;color:var(--muted);font-size:11px;white-space:nowrap;pointer-events:none}
 .auth-restoring-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--beige)}
+.auth-content a.primary{display:flex;align-items:center;justify-content:center;text-decoration:none}
 
 /* The sidebar is a compact, account-owned download archive. Only the list scrolls. */
 .navigation .nav-history{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;margin-top:15px}

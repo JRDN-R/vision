@@ -33,26 +33,17 @@
   <link rel="stylesheet" href="../web/vortex/header-lockup.css">
   <script defer src="../web/vendor/firebase.js"></script>
   <script defer src="../web/vendor/lottie_svg.min.js"></script>
-  <script type="module" src="../web/vortex/app.js?v=1.0.1"></script>
+  <script type="module" src="../web/vortex/app.js?v=shared-login-1"></script>
 </head>
 <body>
   <!-- Restore the shared Vision session before deciding whether sign-in is needed. -->
   <div id="authRestoring" class="auth-restoring" role="status" aria-live="polite"><span class="auth-restoring-dot" aria-hidden="true"></span>Connecting to your Vision account…</div>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle" hidden>
     <div class="auth-content">
-      <h1 id="authTitle">Sign in to Vortex</h1>
-      <p>Use your Vision account to open your media and downloads.</p>
-      <button id="googleSignIn" class="primary" type="button">Continue with Google</button>
-      <div class="auth-divider"><span>or</span></div>
-      <form id="emailSignIn">
-        <label for="authEmail">Email</label>
-        <input id="authEmail" type="email" inputmode="email" autocomplete="email" required>
-        <label for="authPassword">Password</label>
-        <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
-        <button class="primary" type="submit">Sign in with email</button>
-      </form>
-      <div class="auth-links"><button id="createAccount" type="button">Create account</button><button id="resetPassword" type="button">Forgot password?</button></div>
-      <p id="authStatus" class="auth-status" role="status">Restoring your account…</p>
+      <h1 id="authTitle">Your Vision account</h1>
+      <p>Sign in through Vision to open Vortex.</p>
+      <a id="visionSignIn" class="primary" href="../?continue=vortex">Open Vision sign-in</a>
+      <p id="authStatus" class="auth-status" role="status"></p>
     </div>
   </section>
 

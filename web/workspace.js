@@ -188,7 +188,7 @@ function workspaceInstall() {
   host.append(div);$(id).onchange=()=>void workspaceSave({launchView:$(id).value});};
  preference($('accountDialog'),'workspaceAccountView','workspaceAccountStatus');preference($('ventureAccount'),'workspaceVentureView','workspaceVentureStatus');
  for(const [host,view,label] of [[$('accountDialog'),'venture','Open Venture'],[$('ventureAccount'),'vision','Return to Vision board']])if(host){const button=document.createElement('button');button.type='button';button.textContent=label;button.onclick=()=>workspaceSwitch(view);host.append(button);}
- const gate=$('accountGateSignIn');if(gate){const label=document.createElement('label');label.className='workspace-login-choice';label.textContent='After sign-in';const select=document.createElement('select');select.id='workspaceLoginView';
+ const gate=$('accountGateSignIn');if(gate&&!accountContinueURL){const label=document.createElement('label');label.className='workspace-login-choice';label.textContent='After sign-in';const select=document.createElement('select');select.id='workspaceLoginView';
   select.innerHTML='<option value="">Use my account preference</option><option value="vision">Open Vision</option><option value="venture">Open Venture</option>';label.append(select);gate.before(label);
   select.onchange=()=>{try{if(select.value)sessionStorage.setItem('vision-launch-pending',select.value);else sessionStorage.removeItem('vision-launch-pending');}catch{}};}
  workspaceNavIcons();

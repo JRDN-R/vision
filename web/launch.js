@@ -10,7 +10,10 @@ function trialActive(){return !!(trialSession&&trialRemaining()>0&&cloudAuth?.ki
 function accountCanUseApp(){return !accountGateLocked&&(accountSignedIn()||trialActive());}
 function trialPaint(){
  const button=$('accountGateTrial'),receipt=trialRead();
- button.hidden=location.protocol==='file:';button.disabled=accountBusy||trialStarting||!!receipt?.consumed;
+ const gateway=!!accountContinueURL;
+ button.hidden=location.protocol==='file:'||gateway;button.disabled=accountBusy||trialStarting||!!receipt?.consumed;
+ $('accountTrialWarning').hidden=gateway;
+ for(const details of document.querySelectorAll('#accountGate .trial-details'))details.hidden=gateway;
  button.textContent=trialStarting?'Starting your trial…':receipt?.consumed?'Trial used · sign in to continue':'Or try for five minutes';
  $('trialBanner').hidden=!trialActive();
  if(trialActive()){
@@ -21,7 +24,7 @@ function trialPaint(){
 }
 async function trialStart({resume=false}={}){
  await accountReady;
- if(accountSignedIn()||accountBusy||trialStarting||trialSession)return;
+ if(accountContinueURL||accountSignedIn()||accountBusy||trialStarting||trialSession)return;
  trialStarting=true;accountError='';accountPaint();
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
  try{
@@ -88,4 +91,4 @@ $('whyVisionDone').onclick=()=>$('whyVisionDialog').close();
 $('whyVisionDialog').addEventListener('click',event=>{if(event.target===$('whyVisionDialog')){const r=event.target.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)event.target.close();}});
 window.addEventListener('storage',event=>{if(event.key===TRIAL_RECEIPT&&trialSession&&trialRead()?.consumed)void trialFinish();});
 document.addEventListener('visibilitychange',()=>{if(trialSession&&!trialActive())void trialFinish();});
-Promise.resolve().then(async()=>{await accountReady;const receipt=trialRead();if(!accountSignedIn()&&receipt?.started&&!receipt.consumed)await trialStart({resume:true});else trialPaint();});
+Promise.resolve().then(async()=>{await accountReady;const receipt=trialRead();if(!accountContinueURL&&!accountSignedIn()&&receipt?.started&&!receipt.consumed)await trialStart({resume:true});else trialPaint();});

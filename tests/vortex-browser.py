@@ -30,11 +30,12 @@ FIREBASE = r'''
  const auth={currentUser:identity(localStorage.getItem('__fixtureUID')),authStateReady:async()=>{}};
  window.__switchUser=uid=>{auth.currentUser=identity(uid);if(uid)localStorage.setItem('__fixtureUID',uid);else localStorage.removeItem('__fixtureUID');listeners.forEach(fn=>fn(auth.currentUser));};
  window.__firebaseCalls=[];
- const login=async()=>{window.__switchUser('alice');return {user:auth.currentUser};};
+ const login=async()=>{if(window.__loginError)throw {code:window.__loginError};window.__switchUser('alice');return {user:auth.currentUser};};
+ window.addEventListener('storage',event=>{if(event.key==='__fixtureUID'){auth.currentUser=identity(event.newValue);listeners.forEach(fn=>fn(auth.currentUser));}});
  window.VisionFirebaseSDK={app:{getApps:()=>[],initializeApp:(config,name)=>{__firebaseCalls.push({config,name});return {name};}},auth:{
    getAuth:()=>auth,useDeviceLanguage:()=>{},onAuthStateChanged:(_,fn)=>{listeners.push(fn);return ()=>{};},
-   setPersistence:async(_,value)=>{window.__persistence=value;},browserLocalPersistence:'LOCAL',
-   GoogleAuthProvider:class{setCustomParameters(value){window.__providerOptions=value;}},
+   setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},browserLocalPersistence:'LOCAL',
+   GoogleAuthProvider:class{setCustomParameters(value){window.__providerOptions=value;localStorage.setItem('__fixtureProvider',JSON.stringify(value));}},
    signInWithPopup:login,signInWithEmailAndPassword:login,createUserWithEmailAndPassword:login,
    sendPasswordResetEmail:async()=>{},signOut:async()=>window.__switchUser(null)
  }};
@@ -42,9 +43,14 @@ FIREBASE = r'''
 '''
 
 
+VISION = (ROOT/'Vision.html').read_text().replace((ROOT/'web/vendor/firebase.js').read_text(), FIREBASE, 1)
+GATEWAY = URL.replace('vortex/', '?continue=vortex')
+
+
 class Fixture:
     def __init__(self):
         self.jobs = {'alice': [], 'bob': []}
+        self.vision_calls = []
         self.calls = []
         self.unexpected = []
         self.held = None
@@ -152,12 +158,24 @@ class Fixture:
             else:
                 self.respond(route, job)
             return
+        if request.url.startswith(BACKEND + '/api/'):
+            self.vision_calls.append(url.path)
+            if url.path == '/api/venture/workspace-preferences':
+                self.respond(route, dict(launchView='venture', swipeNoticeVersion=1))
+            elif url.path == '/api/health':
+                self.respond(route, dict(capabilities=dict(accountProjects=True, persistentProjects=True, ventureV2=True)))
+            else:
+                self.respond(route, dict(projects=[], conversations=[], items=[], runs=[], saved=False))
+            return
         if request.url.startswith('http://127.0.0.1:8899/vision/'):
+
             relative = url.path.removeprefix('/vision/') or 'index.html'
             relative = relative + 'index.html' if relative.endswith('/') else relative
             path = ROOT / relative
             if relative == 'web/vendor/firebase.js':
                 route.fulfill(body=FIREBASE, content_type='application/javascript')
+            elif relative == 'Vision.html':
+                route.fulfill(body=VISION, content_type='text/html')
             elif path.is_file() and path.resolve().is_relative_to(ROOT.resolve()):
                 route.fulfill(body=path.read_bytes(), content_type=mimetypes.guess_type(str(path))[0] or 'application/octet-stream')
             else:
@@ -178,6 +196,20 @@ class Fixture:
             self.respond(route, result)
         except Exception:
             pass  # Switching identities aborts the old account's fetch.
+
+
+def sign_in(page, method='google'):
+    page.wait_for_url(GATEWAY)
+    page.locator('#accountGateSignIn').wait_for(state='visible')
+    page.locator('#accountGateStatus').get_by_text('Sign in or create an account to continue to Vortex.', exact=True).wait_for()
+    if method == 'google':
+        page.locator('#accountGateSignIn').click()
+    else:
+        page.locator('#accountGateEmail').fill('alice@example.test')
+        page.locator('#accountGatePassword').fill('fixture-password')
+        page.locator('#accountGateEmailCreate' if method == 'create' else '#accountGateEmailSignIn').click()
+    page.wait_for_url(URL)
+    page.wait_for_function("document.querySelector('#application') && !document.querySelector('#application').inert")
 
 
 def refresh(page):
@@ -243,7 +275,7 @@ def verify_lookup_feedback(browser):
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(URL)
-    page.locator('#googleSignIn').click()
+    sign_in(page)
     page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
 
     def lookup(value):
@@ -383,17 +415,18 @@ def verify_delayed_auth_restore(browser):
             assert page.locator('#application').get_attribute('aria-busy') is None
             page.wait_for_function("document.querySelector('#accountEmail').textContent === 'alice@example.test'")
         else:
-            page.locator('#authGate').wait_for(state='visible')
-            assert page.locator('#application').is_hidden()
-            assert page.locator('#authRestoring').is_hidden()
+            page.wait_for_url(GATEWAY)
+            page.locator('#accountGateSignIn').wait_for(state='visible')
+            assert page.locator('#accountGateTitle').inner_text() == 'Continue to Vortex'
             assert not api.calls, 'Signed-out user accessed a private endpoint'
         assert not errors, errors
         context.close()
 
-    # Broken SDK still exposes a usable sign-in screen and a meaningful error.
+    # Broken Vortex SDK offers a link to the working shared sign-in page.
     class BrokenSDKFixture(Fixture):
         def route(self, route):
-            if route.request.url == URL.replace('vortex/', 'web/vendor/firebase.js'):
+            if route.request.url == URL.replace('vortex/', 'web/vendor/firebase.js') and not getattr(self, 'failed_once', False):
+                self.failed_once = True
                 route.fulfill(body='', content_type='application/javascript')
             else:
                 super().route(route)
@@ -408,8 +441,123 @@ def verify_delayed_auth_restore(browser):
     assert page.locator('#application').is_hidden()
     assert page.locator('#authRestoring').is_hidden()
     assert not api.calls
+    assert page.locator('#authGate input').count() == 0
+    page.locator('#visionSignIn').click()
+    sign_in(page)
     context.close()
     print('Vortex auth hydration: no login flash, no premature access, signed-out and SDK failure paths passed', flush=True)
+
+
+def verify_login_gateway(browser):
+    """Exercise the real Vision gate and Vortex navigation; mock only I/O."""
+    for method in ('google', 'signin', 'create'):
+        api = Fixture()
+        context = browser.new_context(viewport={'width':390, 'height':844}, has_touch=True)
+        context.route('**/*', api.route)
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(URL)
+        page.wait_for_url(GATEWAY)
+        page.locator('#accountGateSignIn').wait_for(state='visible')
+        assert page.locator('#accountGateTitle').inner_text() == 'Continue to Vortex'
+        assert page.locator('#accountGateTrial').is_hidden()
+        assert page.locator('#accountTrialWarning').is_hidden()
+        assert page.locator('#accountGate .trial-details').is_hidden()
+        assert page.locator('#workspaceLoginView').count() == 0
+        assert not api.calls and not api.vision_calls
+        if method == 'google':
+            page.screenshot(path=str(SHOTS / 'vision-login-gateway-390.png'))
+
+        # A reset request and a failed login leave the destination intact.
+        if method == 'signin':
+            page.locator('#accountGateEmail').fill('alice@example.test')
+            page.locator('#accountGatePasswordReset').click()
+            page.locator('#accountGateStatus').get_by_text('Password reset email sent', exact=False).wait_for()
+            assert page.url == GATEWAY
+        if method == 'google':
+            page.evaluate("window.__loginError='auth/popup-closed-by-user'")
+            page.locator('#accountGateSignIn').click()
+            page.locator('#accountGateStatus').get_by_text('Google sign-in was closed', exact=False).wait_for()
+            assert page.url == GATEWAY
+        page.reload()
+        sign_in(page, method)
+        assert page.locator('#authGate').is_hidden()
+        assert not api.vision_calls, 'Vortex login opened Vision projects or preferences'
+        assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
+
+        # Returning to Vortex with a saved identity needs no login or gateway.
+        visits = []
+        page.on('framenavigated', lambda frame: visits.append(frame.url) if frame == page.main_frame else None)
+        page.reload()
+        page.wait_for_function("document.querySelector('#application') && !document.querySelector('#application').inert")
+        assert page.url == URL and GATEWAY not in visits
+
+        # An explicit gateway visit with an existing session also returns.
+        page.goto(GATEWAY)
+        page.wait_for_url(URL)
+        page.wait_for_function("document.querySelector('#application') && !document.querySelector('#application').inert")
+
+        # Vision/Venture links share the session and keep their own destination.
+        for view in ('vision', 'venture'):
+            target = URL.replace('vortex/', '?view=' + view)
+            page.goto(target)
+            page.locator('#accountGate').wait_for(state='hidden')
+            if view == 'venture':
+                page.locator('#visionVenture').wait_for(state='visible')
+            else:
+                assert page.locator('#visionVenture').is_hidden()
+            assert page.url == target
+        assert not errors, errors
+        context.close()
+
+    # Stale trial receipts cannot divert a Vortex visitor into a Vision trial.
+    api = Fixture()
+    context = browser.new_context()
+    context.route('**/*', api.route)
+    context.add_init_script("localStorage.setItem('vision-guest-receipt-v1',JSON.stringify({deviceId:'a'.repeat(64),started:true,consumed:false}))")
+    page = context.new_page()
+    page.goto(GATEWAY)
+    page.locator('#accountGateSignIn').wait_for(state='visible')
+    assert '/api/trial/start' not in api.vision_calls
+    context.close()
+
+    class FailedLoaderFixture(Fixture):
+        def route(self, route):
+            if '/Vision.html?v=' in route.request.url:
+                route.fulfill(status=503, body='Fixture loading failure')
+            else:
+                super().route(route)
+
+    api = FailedLoaderFixture()
+    context = browser.new_context()
+    context.route('**/*', api.route)
+    page = context.new_page()
+    page.goto(GATEWAY)
+    page.locator('#fallback a').click()
+    page.locator('#accountGateSignIn').wait_for(state='visible')
+    page.locator('#accountGateStatus').get_by_text('Sign in or create an account to continue to Vortex.', exact=True).wait_for()
+    assert page.url == URL.replace('vortex/', 'Vision.html?continue=vortex')
+    page.locator('#accountGateSignIn').click()
+    page.wait_for_url(URL)
+    context.close()
+
+    # No arbitrary redirect URLs or previous Vortex visit can take over Vision.
+    for query in ('', '?continue=https://example.org/', '?continue=//example.org/', '?continue=venture'):
+        api = Fixture()
+        context = browser.new_context()
+        context.route('**/*', api.route)
+        page = context.new_page()
+        target = URL.replace('vortex/', query)
+        page.goto(target)
+        page.locator('#workspaceLoginView').wait_for(state='visible')
+        assert page.locator('#accountGateTrial').is_visible()
+        page.locator('#accountGateSignIn').click()
+        page.locator('#accountGate').wait_for(state='hidden')
+        assert page.url == target
+        assert not any(call['path'].startswith('/api/vortex/') for call in api.calls)
+        context.close()
+    print('Vision gateway: Google, email, signup, reset, failure/retry, reload, restored sessions, app destinations, trial isolation and redirect allowlist passed', flush=True)
 
 
 def run():
@@ -418,6 +566,7 @@ def run():
         options = {'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}
         browser = pw.chromium.launch(headless=True, **options)
         verify_delayed_auth_restore(browser)
+        verify_login_gateway(browser)
         verify_lookup_feedback(browser)
         for width in (320, 390, 1280):
             api = Fixture()
@@ -428,20 +577,19 @@ def run():
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(URL)
-            page.locator('#authStatus').get_by_text('Sign in to open your private media history.').wait_for()
-            assert page.locator('#application').is_hidden()
-            assert page.locator('#application').evaluate('el=>el.inert')
+            page.wait_for_url(GATEWAY)
+            page.locator('#accountGateSignIn').wait_for(state='visible')
             assert not api.calls, 'Unauthenticated page accessed private backend'
             config = page.evaluate('__firebaseCalls[0]')
             assert config['name'] == 'vision-account-login'
             assert config['config']['projectId'] == 'visionboard-api'
             assert config['config']['appId'] == '1:150865729216:web:554423d0c7602d3a47bf25'
             no_overflow(page)
-            page.locator('#googleSignIn').click()
+            sign_in(page)
             page.locator('#application').wait_for(state='visible')
             page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
-            assert page.evaluate('__persistence') == 'LOCAL'
-            assert page.evaluate('__providerOptions.prompt') == 'select_account'
+            assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
+            assert page.evaluate("JSON.parse(localStorage.getItem('__fixtureProvider')).prompt") == 'select_account'
             page.wait_for_function("document.querySelector('#profileImage').src.startsWith('blob:') && document.querySelector('#profileImage').naturalWidth > 0")
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
@@ -717,7 +865,8 @@ def run():
             page.locator('#cancelJob').click()
             page.locator('#actionDialog').wait_for(state='hidden')
             assert api.jobs['alice'][0]['status'] == 'cancelled'
-            assert page.locator(f'#activityList [data-id="{cancelled["id"]}"] .item-status').inner_text() == 'Cancelled'
+            # The dialog closes before the refreshed job list finishes loading.
+            page.locator(f'#activityList [data-id="{cancelled["id"]}"] .item-status').get_by_text('Cancelled', exact=True).wait_for()
             page.locator('input[name=downloadMode][value=video]').check()
             page.locator(f'#activityList [data-id="{cancelled["id"]}"] .icon-button').click()
             page.locator('#retryJob').click()
@@ -907,9 +1056,9 @@ def run():
             page.locator('#profileButton').click()
             page.locator('#accountSignOut').click()
             page.locator('#confirmYes').click()
-            page.locator('#authGate').wait_for(state='visible')
-            assert page.locator('#application').is_hidden()
-            assert page.locator('#serverVersion').text_content() == 'Vortex server version unavailable.'
+            page.wait_for_url(GATEWAY)
+            page.locator('#accountGateSignIn').wait_for(state='visible')
+            assert page.locator('#accountGateTitle').inner_text() == 'Continue to Vortex'
             assert not errors, errors
             assert not api.unexpected, api.unexpected
             assert all(call['token'].startswith('Bearer fixture-') for call in api.calls if not (call['path'].endswith('/file') and not call['token']))

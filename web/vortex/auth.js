@@ -30,21 +30,6 @@ export async function initAuth(callback) {
   })().catch(error => { loading = null; throw error; });
   return loading;
 }
-export async function googleSignIn() {
-  const instance = await initAuth(onUser);
-  await sdk.setPersistence(instance, sdk.browserLocalPersistence);
-  const provider = new sdk.GoogleAuthProvider();
-  provider.setCustomParameters({prompt:'select_account'});
-  return sdk.signInWithPopup(instance, provider);
-}
-export async function emailAction(action, email, password) {
-  const instance = await initAuth(onUser);
-  if (!email) throw new Error('Enter your email address.');
-  if (action === 'reset') return sdk.sendPasswordResetEmail(instance, email);
-  if (password.length < 6) throw new Error('Enter a password with at least 6 characters.');
-  await sdk.setPersistence(instance, sdk.browserLocalPersistence);
-  return action === 'create' ? sdk.createUserWithEmailAndPassword(instance, email, password) : sdk.signInWithEmailAndPassword(instance, email, password);
-}
 export async function signOut() { if (auth) await sdk.signOut(auth); }
 export function authError(error) {
   return ({'auth/popup-blocked':'Allow the sign-in popup, then try again.','auth/popup-closed-by-user':'Sign-in was closed. Try again when ready.','auth/cancelled-popup-request':'A sign-in window is already open.','auth/invalid-credential':'Email or password is incorrect.','auth/wrong-password':'Email or password is incorrect.','auth/user-not-found':'Email or password is incorrect.','auth/email-already-in-use':'This email already has a Vision account. Sign in instead.','auth/invalid-email':'Enter a valid email address.','auth/weak-password':'Use a password with at least 6 characters.','auth/network-request-failed':'Check your connection and try again.','auth/too-many-requests':'Too many attempts. Wait a little and try again.'})[error?.code] || error?.message || 'Sign-in could not finish.';
