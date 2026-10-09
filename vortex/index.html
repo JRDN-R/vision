@@ -29,6 +29,7 @@
   <meta name="twitter:image:alt" content="Vortex hero graphic.">
   <link rel="icon" type="image/png" href="../vortex_character.png">
   <link rel="stylesheet" href="../web/vortex/vortex.css">
+  <link rel="stylesheet" href="../web/vortex/sidebar-brand.css">
   <script defer src="../web/vendor/firebase.js"></script>
   <script defer src="../web/vendor/lottie_svg.min.js"></script>
   <script type="module" src="../web/vortex/app.js"></script>
@@ -100,8 +101,8 @@
     </main>
     <button id="menuScrim" class="menu-scrim" type="button" aria-label="Close menu" tabindex="-1" hidden></button>
     <aside id="navigation" class="navigation" aria-label="Main navigation" tabindex="-1" hidden inert>
-      <div class="nav-heading"><span>Explore</span><button id="closeMenu" class="icon-button" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
-      <nav><a href="../?view=vision"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="5" width="7" height="7" rx="1"/><rect x="8" y="15" width="7" height="6" rx="1"/></svg>Vision</a><a href="../?view=venture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 9-9 9-9-9Z"/><path d="m9 15 2-4 4-2-2 4Z"/></svg>Venture</a><a class="current" href="./" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 7a8 8 0 1 0 1 9M19 7h-5m5 0V2M15 9a4 4 0 1 0 0 6"/></svg>Vortex</a></nav>
+      <div class="nav-heading"><div class="nav-brand"><span class="nav-brand-head" aria-hidden="true"><img src="../vortex_character.png" alt="" width="33" height="45"></span><span class="nav-brand-name">Vortex</span></div><button id="closeMenu" class="icon-button" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <nav aria-label="Other apps"><a href="../?view=vision">Vision</a><a href="../?view=venture">Venture</a></nav>
       <div class="nav-footer"><button id="menuAccount" class="text-button" type="button">Your account</button><button id="menuSignOut" class="icon-button" type="button" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/></svg></button></div>
     </aside>
   </div>

@@ -1,0 +1,48 @@
+/* Match Vision/Venture's sidebar brand proportions and head entrance.
+ * Keep Vortex's own character artwork and warm accent color.
+ */
+.navigation .nav-heading {
+  min-height: 56px;
+  padding-left: 8px;
+  margin-bottom: 20px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.navigation .nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+.navigation .nav-brand-head {
+  display: block;
+  width: 33px;
+  height: 45px;
+  flex: none;
+  transform-origin: 50% 75%;
+}
+.navigation .nav-brand-head img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.navigation .nav-brand-name {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 400;
+  letter-spacing: .2px;
+  color: var(--beige);
+}
+.navigation:not([hidden]) .nav-brand-head {
+  animation: vortex-head-enter .65s .2s both cubic-bezier(.2,.8,.2,1);
+}
+@keyframes vortex-head-enter {
+  0% { opacity: 0; transform: translateY(5px) rotate(-7deg) scale(.94); }
+  65% { opacity: 1; transform: translateY(-1px) rotate(2deg); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .navigation .nav-brand-head { animation: none; }
+}
