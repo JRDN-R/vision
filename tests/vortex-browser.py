@@ -461,7 +461,7 @@ def run():
             page.screenshot(path=str(SHOTS/f'vortex-processing-{width}.png'), full_page=True)
             # Accepted work remains in the sidebar archive after a page reload.
             page.reload()
-            page.locator('#historyList .history-item').wait_for(state='attached')
+            page.locator(f'#historyList [data-id="{downloaded["id"]}"]').wait_for(state='attached')
             assert page.locator('#authGate').is_hidden()
             assert page.locator('#activityList .activity-item').count() == 0, 'Past sessions must not appear in current activity'
             assert page.locator('#historyList').get_by_text(VIDEO['title'], exact=True).count() == 1
@@ -651,7 +651,9 @@ def run():
                 page.locator('#loadOlder').click()
                 page.wait_for_function('count=>document.querySelectorAll("#historyList .history-item").length===count', arg=expected)
                 assert page.locator('#loadOlder').is_hidden()
+                page.locator('#closeMenu').click()
                 refresh(page)
+                page.locator('#menuButton').click()
                 assert page.locator('#historyList .history-item').count() == expected, 'Refresh collapsed loaded history'
                 assert page.locator('#activityList .activity-item').count() < expected, 'Older history leaked into main activity'
                 page.locator('#closeMenu').click()
