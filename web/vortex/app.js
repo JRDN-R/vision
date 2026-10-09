@@ -3,7 +3,7 @@ import {BACKEND, accountEpoch, authError, emailAction, googleSignIn, initAuth, r
 const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
+const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', inspectInput:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
 Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selectedQuality:'balanced', qualityTimer:0, quietInspection:false, qualityRefreshing:false});
 Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a', searchQuery:'', searchNextPage:null, searchSeen:new Set(), searchBusy:false, appendSearch:false, searchFailed:false, lookupGeneration:0});
 Object.assign(state, {queuedDownload:null, submittingDownload:null, autoSaveJobs:new Map(), readyDownload:null, downloadError:''});
@@ -31,7 +31,7 @@ function showServerVersion(value, connected = false) {
   const valid = typeof value === 'string' && /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(value);
   $('serverVersion').textContent = valid ? 'Vortex server: v' + value : connected ? 'Vortex server version not reported.' : 'Vortex server version unavailable.';
 }
-function rememberInspection(id) { state.inspectId = id; try { if (user()) sessionStorage.setItem('vortex-inspection:' + user().uid, id); } catch {} }
+function rememberInspection(id, input = '') { state.inspectId = id; state.inspectInput = id ? input : ''; try { if (user()) sessionStorage.setItem('vortex-inspection:' + user().uid, id); } catch {} }
 function upsert(job) { if (!job?.id) throw new Error('FUPCJ Server did not confirm this media job.'); const i = state.jobs.findIndex(item => item.id === job.id); if (i < 0) state.jobs.unshift(job); else state.jobs[i] = job; }
 function imageSource(image, value) { const url = safeURL(value); image.hidden = !url; if (url && image.getAttribute('src') !== url) { image.src = url; image.referrerPolicy = 'no-referrer'; } if (!url) image.removeAttribute('src'); image.onerror = () => { image.hidden = true; }; }
 
@@ -47,7 +47,7 @@ function settleAuth(identity) {
 function accountChanged(identity) {
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
-  state.jobs = []; state.selected = null; state.inspectId = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
+  state.jobs = []; state.selected = null; state.inspectId = ''; state.inspectInput = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
   // A click-to-save intent belongs only to the account and tab that created it.
   state.queuedDownload = null; state.submittingDownload = null; state.autoSaveJobs.clear(); state.readyDownload = null; state.downloadError = '';
   state.olderJobs.clear(); state.cursor = null; state.olderLoaded = false; state.sessionJobs.clear(); state.deletedIds.clear(); state.historyLoaded = false; state.visitEpoch++; $('loadOlder').hidden = true; $('loadOlder').disabled = false;
@@ -159,7 +159,13 @@ async function refresh() {
     if (state.inspectId !== inspectId) { const selectedInspection = getJob(state.inspectId); if (selectedInspection) merged.set(selectedInspection.id, selectedInspection); }
     state.jobs = [...merged.values()]; state.failures = 0; state.historyLoaded = true; $('historyStatus').textContent = '';
     if (inspection.status === 'fulfilled' && inspection.value && state.inspectId === inspectId) upsert(inspection.value);
-    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) { rememberInspection(''); finishQualityRefresh(false); if (state.appendSearch) searchFailure('This search page is unavailable. Try loading it again.'); } else if (!state.appliedInspect) notice(inspection.reason.message, true); }
+    else if (inspection.status === 'rejected' && state.inspectId === inspectId) {
+      if (inspection.reason?.status === 404) {
+        rememberInspection(''); finishQualityRefresh(false);
+        if (state.appendSearch) searchFailure('This search page is unavailable. Try loading it again.');
+        else notice('This media lookup is no longer available. Find the media again.', true);
+      } else if (!state.appliedInspect) notice(inspection.reason.message, true);
+    }
     if (!state.olderLoaded) state.cursor = data.nextCursor || null;
     $('loadOlder').hidden = !state.cursor;
     $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
@@ -196,7 +202,7 @@ async function submitJob(kind, input, quality = state.quality, options = {}) {
 async function inspect(input = $('sourceInput').value.trim(), {background = false, append = false, searchPage = 0} = {}) {
   if (!input || state.pending || !user()) return;
   const epoch = accountEpoch(), previous = getJob(state.inspectId), quality = state.quality, generation = ++state.lookupGeneration;
-  state.pending = true; state.appliedInspect = ''; state.inspectId = ''; state.quietInspection = background;
+  state.pending = true; state.appliedInspect = ''; state.inspectId = ''; state.inspectInput = ''; state.quietInspection = background;
   if (!append) resetSearch();
   state.appendSearch = append;
   $('sourceSubmit').disabled = true; $('searchResults').hidden = !append;
@@ -211,7 +217,7 @@ async function inspect(input = $('sourceInput').value.trim(), {background = fals
     }
     const job = await submitJob('inspect', input, quality, {searchPage});
     if (epoch !== accountEpoch() || generation !== state.lookupGeneration) return;
-    rememberInspection(job.id); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
+    rememberInspection(job.id, input); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
   } catch (error) { if (epoch === accountEpoch() && generation === state.lookupGeneration) { finishQualityRefresh(false); if (append) searchFailure(error.message); else notice(error.message, true); scheduleRefresh(1000); } }
   finally { if (epoch === accountEpoch() && generation === state.lookupGeneration) { state.pending = false; $('sourceSubmit').disabled = false; void flushDownloadQueue(); } }
 }
@@ -248,7 +254,11 @@ function applyInspection() {
   if (receipt === state.appliedInspect) return;
   if (state.quietInspection && job.quality !== state.quality) return;
   if (job.status === 'complete') {
-    if ($('sourceInput').value.trim() && $('sourceInput').value.trim() !== job.input) return;
+    // The server canonicalizes shared/short URLs before storing job.input.
+    // Match this accepted job to its submitted text as well as its canonical
+    // input, while keeping late results from replacing a genuinely edited link.
+    const input = $('sourceInput').value.trim();
+    if (input && input !== state.inspectInput && input !== job.input) return;
     if (!$('sourceInput').value.trim()) $('sourceInput').value = job.input || '';
     if (['small', 'balanced', 'max'].includes(job.quality)) { state.quality = job.quality; for (const radio of document.querySelectorAll('input[name=quality]')) radio.checked = radio.value === job.quality; }
     state.appliedInspect = receipt;

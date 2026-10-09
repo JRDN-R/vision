@@ -354,6 +354,40 @@ class VortexAccountTests(unittest.TestCase):
         with server.connect_db() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM vortex_jobs').fetchone()[0], 4)
 
+    def test_inspection_receipts_expose_canonical_input_without_duplicate_jobs(self):
+        # Queue/HTTP contract only: the fixture mocks DNS and never runs a provider.
+        cases = (
+            ('https://x.com/moviehub222/status/2104675740168155503/video/1?s=46',
+             'https://x.com/moviehub222/status/2104675740168155503'),
+            ('https://youtu.be/abcdefghijk?t=30',
+             'https://www.youtube.com/watch?v=abcdefghijk&t=30'),
+        )
+        for index, (submitted, canonical) in enumerate(cases):
+            with self.subTest(submitted=submitted):
+                request_id = f'normalized-inspection-{index}'
+                accepted = self.submit(kind='inspect', input=submitted, requestId=request_id)
+                self.assertEqual(accepted.status_code, 202, accepted.json)
+                job_id = accepted.json['id']
+                self.assertEqual(accepted.json['input'], canonical)
+                self.assertEqual(accepted.json['requestId'], request_id)
+                self.assertEqual(accepted.json['kind'], 'inspect')
+                polled = self.client.get('/api/vortex/jobs/' + job_id, headers=self.alice)
+                self.assertEqual(polled.status_code, 200, polled.json)
+                self.assertEqual(polled.json['id'], job_id)
+                self.assertEqual(polled.json['input'], canonical)
+                self.assertEqual(polled.json['requestId'], request_id)
+                for value in (submitted, canonical):
+                    repeated = self.submit(kind='inspect', input=value, requestId=request_id)
+                    self.assertEqual(repeated.status_code, 202, repeated.json)
+                    self.assertEqual(repeated.json['id'], job_id)
+                    self.assertEqual(repeated.json['input'], canonical)
+                with server.connect_db() as db:
+                    self.assertEqual(db.execute(
+                        'SELECT COUNT(*) FROM vortex_jobs WHERE request_id=?',
+                        (request_id,)).fetchone()[0], 1)
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM vortex_jobs').fetchone()[0], len(cases))
+
     def test_shared_global_queue_and_storage_limits_are_not_per_engine(self):
         with patch.object(vortex, 'MAX_GLOBAL_ACTIVE', 1):
             self.accepted()
