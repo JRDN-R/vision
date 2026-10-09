@@ -49,7 +49,7 @@ class Fixture:
         self.unexpected = []
         self.held = None
         self.hold_list = False
-        self.server_version = '1.0.0'
+        self.server_version = '1.0.1'
         self.list_error = False
         self.profile_version = 'saved-vision-avatar'
         self.hold_avatar = False
@@ -212,6 +212,137 @@ def no_overflow(page):
     assert overflow is None, f'Horizontal page overflow: {overflow}'
 
 
+def verify_lookup_feedback(browser):
+    """Canonical server receipts must not silently discard a successful lookup.
+
+    These are browser contract fixtures, not evidence that any source is
+    available to the real extraction engines or FUPCJ Server.
+    """
+    canonical_x = 'https://x.com/moviehub222/status/2104675740168155503'
+    canonical_youtube = 'https://www.youtube.com/watch?v=BaW_jenozKc&t=30'
+    cases = (
+        ('https://x.com/moviehub222/status/2104675740168155503/video/1?s=46', canonical_x),
+        ('https://mobile.twitter.com/moviehub222/status/2104675740168155503?s=20', canonical_x),
+        ('https://youtu.be/BaW_jenozKc?t=30', canonical_youtube),
+        ('x.com/moviehub222/status/2104675740168155503', canonical_x),
+    )
+
+    class NormalizingFixture(Fixture):
+        def new_job(self, uid='alice', **fields):
+            # Match the API contract: even the POST receipt already contains
+            # the normalized input, rather than echoing the submitted text.
+            if fields.get('kind') == 'inspect':
+                fields['input'] = dict(cases).get(fields.get('input'), fields.get('input'))
+            return super().new_job(uid, **fields)
+
+    api = NormalizingFixture()
+    context = browser.new_context(viewport={'width':390, 'height':844}, has_touch=True)
+    context.route('**/*', api.route)
+    page = context.new_page()
+    page.set_default_timeout(7000)
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.goto(URL)
+    page.locator('#googleSignIn').click()
+    page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
+
+    def lookup(value):
+        previous = api.serial
+        page.locator('#sourceInput').fill(value)
+        page.locator('#sourceInput').press('Enter')
+        submitted(page)
+        assert api.serial == previous + 1, 'One Find action must create one inspection'
+        job = api.jobs['alice'][0]
+        assert job['kind'] == 'inspect'
+        page.locator('#processing').wait_for(state='visible')
+        return job
+
+    def complete(job, title='Normalized media'):
+        media = {**VIDEO, 'url':job['input'], 'title':title}
+        job.update(status='complete', phase='Media ready', media=media, results=[media])
+        refresh(page)
+
+    for raw, canonical in cases:
+        job = lookup(raw)
+        assert job['input'] == canonical and raw != canonical
+        assert page.locator('#sourceInput').input_value() == raw
+        complete(job)
+        assert page.locator('#selection').is_visible(), 'Canonical input hid successful media'
+        assert page.locator('#selectionTitle').inner_text() == 'Normalized media'
+        assert page.locator('#selectionSourceLink').get_attribute('href') == canonical
+        assert page.locator('#notice').is_hidden()
+        assert page.locator('#processing').is_hidden()
+        assert page.locator('#activityList .activity-item').count() == 0
+        assert page.locator('#historyList .history-item').count() == 0
+
+    # Equality with the canonical input is also valid, but editing the field
+    # to a different source must not let an older result replace that choice.
+    job = lookup(cases[0][0])
+    page.locator('#sourceInput').fill(canonical_x)
+    complete(job, 'Canonical field accepted')
+    assert page.locator('#selectionTitle').inner_text() == 'Canonical field accepted'
+    old = lookup(cases[0][0])
+    page.locator('#sourceInput').fill(cases[2][0])
+    complete(old, 'Do not display this old source')
+    assert page.locator('#selection').is_hidden()
+    assert page.locator('#sourceInput').input_value() == cases[2][0]
+    replacement = lookup(cases[2][0])
+    complete(replacement, 'Replacement source')
+    assert page.locator('#selection').is_visible()
+    assert page.locator('#selectionTitle').inner_text() == 'Replacement source'
+
+    # Once a new lookup has been submitted, a late old completion cannot win.
+    old = lookup(cases[0][0])
+    replacement = lookup(cases[2][0])
+    assert old['status'] == 'cancelled'
+    old.update(status='complete', media={**VIDEO, 'title':'Late old result', 'url':canonical_x})
+    complete(replacement, 'Newest lookup wins')
+    assert page.locator('#selectionTitle').inner_text() == 'Newest lookup wins'
+
+    # Reload restores the persisted receipt, without requiring the raw input
+    # from the previous page's in-memory state.
+    page.reload()
+    page.locator('#selection').wait_for(state='visible')
+    assert page.locator('#sourceInput').input_value() == canonical_youtube
+    assert page.locator('#selectionTitle').inner_text() == 'Newest lookup wins'
+
+    failed = lookup(cases[0][0])
+    failure = 'Vortex could not retrieve this media. It may be unavailable or require sign-in.'
+    failed.update(status='error', phase='Unable to finish', error=failure)
+    refresh(page)
+    assert page.locator('#notice').is_visible()
+    assert page.locator('#notice').inner_text() == failure
+    assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
+    refresh(page)
+    assert page.locator('#notice').is_visible(), 'A history refresh erased the lookup error'
+
+    empty = lookup(cases[0][0])
+    empty.update(status='complete', phase='Media ready', media=None, results=[])
+    refresh(page)
+    assert page.locator('#notice').is_visible()
+    assert page.locator('#notice').inner_text() == 'No downloadable media was found for that input. Try another link.'
+    assert page.locator('#processing').is_hidden()
+
+    missing = lookup(cases[0][0])
+    api.jobs['alice'].remove(missing)
+    refresh(page)
+    assert page.locator('#notice').is_visible()
+    assert page.locator('#notice').inner_text() == 'This media lookup is no longer available. Find the media again.'
+    assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
+    assert page.locator('#connectionStatus').inner_text() == 'Connected to FUPCJ Server'
+    refresh(page)
+    assert page.locator('#notice').is_visible(), 'A missing lookup was silently cleared'
+    recovered = lookup(cases[2][0])
+    complete(recovered, 'Lookup recovered')
+    assert page.locator('#selectionTitle').inner_text() == 'Lookup recovered'
+    assert page.locator('#notice').is_hidden()
+    no_overflow(page)
+    assert not errors, errors
+    assert not api.unexpected, api.unexpected
+    context.close()
+    print('Vortex normalized lookup: raw/canonical receipts, stale edits, replacement, restore, failures, empty results and 404 feedback passed', flush=True)
+
+
 def verify_delayed_auth_restore(browser):
     """A shared Vision session must never flash Vortex's sign-in form."""
     slow_sdk = FIREBASE.replace(
@@ -287,6 +418,7 @@ def run():
         options = {'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}
         browser = pw.chromium.launch(headless=True, **options)
         verify_delayed_auth_restore(browser)
+        verify_lookup_feedback(browser)
         for width in (320, 390, 1280):
             api = Fixture()
             context = browser.new_context(viewport={'width':width, 'height':844}, has_touch=width < 760, accept_downloads=True)
@@ -315,22 +447,22 @@ def run():
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
             # The menu reports the web release, not an assumed Windows version.
-            assert page.locator('#vortexVersion').text_content() == 'v1.0.0'
-            assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.0'
+            assert page.locator('#vortexVersion').text_content() == 'v1.0.1'
+            assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
             if width == 390:
-                api.server_version = '1.0.1'
+                api.server_version = '1.0.2'
                 refresh(page)
-                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
-                assert page.locator('#vortexVersion').text_content() == 'v1.0.0'
+                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.2'
+                assert page.locator('#vortexVersion').text_content() == 'v1.0.1'
                 # Missing versions on older servers and malformed data
                 # are neutral; they neither block history nor inject markup.
-                for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.0'}):
+                for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.1'}):
                     api.server_version = value
                     refresh(page)
                     assert page.locator('#serverVersion').text_content() == 'Vortex server version not reported.'
                     assert page.locator('#serverVersion *').count() == 0
                     assert page.locator('#connectionStatus').inner_text() == 'Connected to FUPCJ Server'
-                api.server_version = '1.0.0'
+                api.server_version = '1.0.1'
                 refresh(page)
                 api.list_error = True
                 refresh(page)
@@ -342,7 +474,7 @@ def run():
                 refresh(page)
                 page.locator('#profileButton').click()
                 assert page.locator('#serverVersion').is_visible()
-                assert page.locator('#serverVersion').inner_text() == 'Vortex server: v1.0.0'
+                assert page.locator('#serverVersion').inner_text() == 'Vortex server: v1.0.1'
                 page.locator('#accountDialog .close-dialog').click()
             # The header uses one scalable combined lockup, not a separate head and text.
             brand_logo = page.locator('.topbar .brand .brand-lockup')
@@ -681,8 +813,8 @@ def run():
             assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             version = page.locator('#navigation #vortexVersion')
-            assert version.inner_text() == 'v1.0.0'
-            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.0'
+            assert version.inner_text() == 'v1.0.1'
+            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.1'
             name_box = page.locator('#navigation .nav-brand-name').bounding_box()
             version_box = version.bounding_box()
             links_box = page.locator('#navigation nav').bounding_box()
@@ -744,7 +876,7 @@ def run():
                 page.wait_for_timeout(20)
             assert api.held_avatar is not None
             page.locator('#accountDialog .close-dialog').click()
-            api.server_version = '1.0.1'
+            api.server_version = '1.0.2'
             api.hold_list = True
             # A scheduled refresh may consume the held request and disable the
             # button first. Dispatch without waiting for actionability: either

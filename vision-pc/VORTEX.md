@@ -7,6 +7,16 @@ Opening Vortex in the same tab saves pending board changes first.
 
 ## Version
 
+Current release: **v1.0.1**. This patch fixes successful normalized URL lookups
+being silently discarded by the webpage and adds visible feedback when an
+inspection receipt is no longer available. The active job retains its original
+submitted text so shared/short URLs can match the server's canonical response
+without allowing late results to overwrite a genuinely edited input.
+The fix is in the webpage and works with the existing backend; no engine or
+Docker reinstall is required. Updating the Windows processor is only needed
+to advance its separately reported version. This does not make unavailable
+provider media accessible or bypass authentication requirements.
+
 Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
 version. Open the side menu to see the web version directly beneath the Vortex
 name. **Your account** also shows the connected Vortex server's version, reported
