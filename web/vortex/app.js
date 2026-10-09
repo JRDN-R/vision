@@ -5,6 +5,10 @@ const ACTIVE = new Set(['queued', 'processing']);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
 Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selectedQuality:'balanced', qualityTimer:0, quietInspection:false, qualityRefreshing:false});
+Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a', searchQuery:'', searchNextPage:null, searchSeen:new Set(), searchBusy:false, appendSearch:false, searchFailed:false, lookupGeneration:0});
+const searchObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  if (entries.some(entry => entry.isIntersecting) && !state.searchFailed) void loadMoreResults();
+}, {rootMargin:'240px'}) : null;
 const icons = {
   media:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 8 6 4-6 4Z"/></svg>',
   more:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>'
@@ -24,6 +28,7 @@ function upsert(job) { if (!job?.id) throw new Error('FUPCJ Server did not confi
 function imageSource(image, value) { const url = safeURL(value); image.hidden = !url; if (url && image.getAttribute('src') !== url) { image.src = url; image.referrerPolicy = 'no-referrer'; } if (!url) image.removeAttribute('src'); image.onerror = () => { image.hidden = true; }; }
 
 function accountChanged(identity) {
+  state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
   state.jobs = []; state.selected = null; state.inspectId = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
   state.olderJobs.clear(); state.cursor = null; state.olderLoaded = false; $('loadOlder').hidden = true; $('loadOlder').disabled = false;
@@ -133,7 +138,7 @@ async function refresh() {
     if (state.inspectId !== inspectId) { const selectedInspection = getJob(state.inspectId); if (selectedInspection) merged.set(selectedInspection.id, selectedInspection); }
     state.jobs = [...merged.values()]; state.failures = 0;
     if (inspection.status === 'fulfilled' && inspection.value && state.inspectId === inspectId) upsert(inspection.value);
-    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) { rememberInspection(''); finishQualityRefresh(false); } else if (!state.appliedInspect) notice(inspection.reason.message, true); }
+    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) { rememberInspection(''); finishQualityRefresh(false); if (state.appendSearch) searchFailure('This search page is unavailable. Try loading it again.'); } else if (!state.appliedInspect) notice(inspection.reason.message, true); }
     if (!state.olderLoaded) state.cursor = data.nextCursor || null;
     $('loadOlder').hidden = !state.cursor;
     $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
@@ -157,31 +162,34 @@ async function loadOlder() {
   } catch (error) { if (epoch === accountEpoch()) notice(error.message, true); }
   finally { if (epoch === accountEpoch()) $('loadOlder').disabled = false; }
 }
-async function submitJob(kind, input, quality = state.quality) {
-  const key = JSON.stringify([kind, input, quality]);
+async function submitJob(kind, input, quality = state.quality, options = {}) {
+  const key = JSON.stringify([kind, input, quality, options]);
   let requestId = state.requestIds.get(key);
   if (!requestId) { requestId = crypto.randomUUID ? crypto.randomUUID() : 'vx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2); state.requestIds.set(key, requestId); }
-  const job = await request('/vortex/jobs', {method:'POST', body:{kind, input, quality, requestId}});
+  const job = await request('/vortex/jobs', {method:'POST', body:{kind, input, quality, ...options, requestId}});
   state.requestIds.delete(key); state.revision++; upsert(job); return job;
 }
-async function inspect(input = $('sourceInput').value.trim(), {background = false} = {}) {
+async function inspect(input = $('sourceInput').value.trim(), {background = false, append = false, searchPage = 0} = {}) {
   if (!input || state.pending || !user()) return;
-  const epoch = accountEpoch(), previous = getJob(state.inspectId), quality = state.quality;
+  const epoch = accountEpoch(), previous = getJob(state.inspectId), quality = state.quality, generation = ++state.lookupGeneration;
   state.pending = true; state.appliedInspect = ''; state.inspectId = ''; state.quietInspection = background;
-  $('sourceSubmit').disabled = true; $('searchResults').hidden = true;
+  if (!append) resetSearch();
+  state.appendSearch = append;
+  $('sourceSubmit').disabled = true; $('searchResults').hidden = !append;
   if (background) { state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); $('downloadButton').disabled = true; }
-  else { clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
+  else if (!append) { clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
+  if (append) { state.searchBusy = true; state.searchFailed = false; renderSearchFooter(); }
   try {
     // Replaced lookups no longer need a queue slot. Download jobs are untouched.
     if (previous?.kind === 'inspect' && ACTIVE.has(previous.status)) {
       try { await request(jobPath(previous.id) + '/cancel', {method:'POST'}); } catch { /* The lookup may already have finished. */ }
-      if (epoch !== accountEpoch()) return;
+      if (epoch !== accountEpoch() || generation !== state.lookupGeneration) return;
     }
-    const job = await submitJob('inspect', input, quality);
-    if (epoch !== accountEpoch()) return;
+    const job = await submitJob('inspect', input, quality, {searchPage});
+    if (epoch !== accountEpoch() || generation !== state.lookupGeneration) return;
     rememberInspection(job.id); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
-  } catch (error) { if (epoch === accountEpoch()) { finishQualityRefresh(false); notice(error.message, true); scheduleRefresh(1000); } }
-  finally { if (epoch === accountEpoch()) { state.pending = false; $('sourceSubmit').disabled = false; } }
+  } catch (error) { if (epoch === accountEpoch() && generation === state.lookupGeneration) { finishQualityRefresh(false); if (append) searchFailure(error.message); else notice(error.message, true); scheduleRefresh(1000); } }
+  finally { if (epoch === accountEpoch() && generation === state.lookupGeneration) { state.pending = false; $('sourceSubmit').disabled = false; } }
 }
 function finishQualityRefresh(success = true) {
   if (!state.qualityRefreshing) return;
@@ -215,17 +223,42 @@ function applyInspection() {
     // A direct lookup also includes results:[media]. Prefer its full metadata;
     // search-only results have no selected media and require another lookup.
     if (job.media && safeURL(job.media.url)) selectMedia(job.media);
-    else if (Array.isArray(job.results) && job.results.length) renderResults(job.results);
+    else if (Array.isArray(job.results) && (job.results.length || state.appendSearch)) renderResults(job.results, job);
     else { finishQualityRefresh(false); notice('No downloadable media was found for that input. Try another link.', true); }
   } else if (job.status === 'error' || job.status === 'cancelled' || job.status === 'expired') {
     finishQualityRefresh(false);
-    state.appliedInspect = receipt; notice(job.error || (job.status === 'cancelled' ? 'Media lookup cancelled.' : 'This lookup is no longer available. Search again.'), job.status === 'error');
+    state.appliedInspect = receipt;
+    const message = job.error || (job.status === 'cancelled' ? 'Media lookup cancelled.' : 'This lookup is no longer available. Search again.');
+    if (state.appendSearch) searchFailure(message); else notice(message, job.status === 'error');
   }
 }
-function renderResults(results) {
-  const list = $('resultList'); list.replaceChildren(); $('searchResults').hidden = false;
+function resetSearch() {
+  searchObserver?.disconnect(); state.searchQuery = ''; state.searchNextPage = null; state.searchSeen.clear(); state.searchBusy = false; state.appendSearch = false; state.searchFailed = false;
+  $('loadMoreResults').hidden = true; $('searchStatus').textContent = '';
+}
+function renderSearchFooter() {
+  searchObserver?.disconnect();
+  $('searchStatus').textContent = state.searchBusy ? 'Loading more results…' : state.searchFailed ? $('searchStatus').textContent : state.searchNextPage === null ? 'No more results for this search.' : '';
+  $('loadMoreResults').hidden = state.searchNextPage === null;
+  $('loadMoreResults').disabled = state.searchBusy;
+  $('loadMoreResults').textContent = state.searchFailed ? 'Try loading more again' : 'Load more results';
+  if (!state.searchBusy && !state.searchFailed && state.searchNextPage !== null) searchObserver?.observe($('loadMoreResults'));
+}
+function searchFailure(message) {
+  state.searchBusy = false; state.searchFailed = true; $('searchStatus').textContent = message; renderSearchFooter();
+}
+async function loadMoreResults() {
+  if (!user() || state.pending || state.searchBusy || state.searchNextPage === null || $('searchResults').hidden || !state.searchQuery) return;
+  await inspect(state.searchQuery, {append:true, searchPage:state.searchNextPage});
+}
+function renderResults(results, job) {
+  const list = $('resultList');
+  if (!state.appendSearch) { list.replaceChildren(); state.searchSeen.clear(); }
+  state.searchQuery = job.input; state.searchNextPage = Number.isInteger(job.searchNextPage) && job.searchNextPage > (job.searchPage || 0) ? job.searchNextPage : null;
+  state.searchBusy = false; state.searchFailed = false; $('searchResults').hidden = false;
   for (const result of results) {
-    const url = safeURL(result.url || result.webpage_url); if (!url) continue;
+    const url = safeURL(result.url || result.webpage_url); if (!url || state.searchSeen.has(url)) continue;
+    state.searchSeen.add(url);
     const row = document.createElement('button'); row.type = 'button'; row.className = 'search-result';
     row.append(thumbnail(result.thumbnail));
     const detail = document.createElement('span'); detail.className = 'item-detail';
@@ -233,14 +266,18 @@ function renderResults(results) {
     const meta = document.createElement('span'); meta.className = 'item-meta'; meta.style.display = 'block'; meta.textContent = [sourceLabel(result), result.uploader, durationLabel(result.duration)].filter(Boolean).join(' · ');
     detail.append(title, meta); row.append(detail); row.onclick = () => { $('sourceInput').value = url; void inspect(url); }; list.append(row);
   }
+  renderSearchFooter();
   if (!list.children.length) { $('searchResults').hidden = true; notice('No matching media was found. Try another search.', true); }
 }
 function gcd(a, b) { return b ? gcd(b, a % b) : a; }
 function codec(value) { if (!value || value === 'none' || value === 'unknown') return ''; const text = String(value); return /^avc[13]/i.test(text) ? 'H.264' : /^(hevc|hev1|hvc1)/i.test(text) ? 'H.265' : /^av01/i.test(text) ? 'AV1' : /^mp4a/i.test(text) ? 'AAC' : /^vp0?9/i.test(text) ? 'VP9' : text; }
 function selectMedia(media) {
   finishQualityRefresh(); state.selectedQuality = state.quality;
+  const sameMedia = state.selected?.url === media.url;
+  if (!sameMedia) state.downloadMode = media.mediaType === 'audio' ? 'audio' : 'video';
   state.selected = media; $('selection').hidden = false; $('searchResults').hidden = true;
   $('selectionTitle').textContent = media.title || 'Selected media'; $('selectionSource').textContent = [sourceLabel(media), durationLabel(media.duration)].filter(Boolean).join(' · '); imageSource($('selectionImage'), media.thumbnail);
+  sourceLink($('selectionSourceLink'), media.url, media.title);
   const info = $('mediaInfo'); info.replaceChildren(); const entries = [];
   const audio = media.mediaType === 'audio' || (media.vcodec === 'none' && media.acodec && media.acodec !== 'none');
   if (!audio && Number(media.width) > 0 && Number(media.height) > 0) { const w = Math.round(media.width), h = Math.round(media.height), factor = gcd(w, h); entries.push(['Aspect ratio', w / factor + ':' + h / factor], ['Resolution', w + ' × ' + h]); }
@@ -252,15 +289,33 @@ function selectMedia(media) {
   if (audio && Number(media.audioChannels) > 0) entries.push(['Channels', Number(media.audioChannels) === 2 ? 'Stereo' : Number(media.audioChannels) === 1 ? 'Mono' : String(media.audioChannels)]);
   if (!entries.length) { const empty = document.createElement('div'); empty.className = 'metadata-empty'; empty.textContent = 'This source did not report technical details.'; info.append(empty); }
   for (const [label, value] of entries) { const cell = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; cell.append(dt, dd); info.append(cell); }
-  const originalOnly = audio || ['image', 'gallery'].includes(media.mediaType);
-  $('qualityControls').hidden = originalOnly; $('originalAudio').hidden = !originalOnly; $('originalAudio').textContent = audio ? 'Highest available audio quality' : 'Original source files'; $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; $('downloadButton').disabled = false; notice();
+  renderOutputControls();
+  $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; $('downloadButton').disabled = false; notice();
 }
-async function downloadSelected(input = state.selected?.url, quality = state.quality) {
+function renderOutputControls() {
+  const media = state.selected; if (!media) return;
+  const original = ['image', 'gallery'].includes(media.mediaType), audio = media.mediaType === 'audio' || state.downloadMode === 'audio';
+  if (media.mediaType === 'audio') state.downloadMode = 'audio';
+  $('downloadModeControls').hidden = original || media.mediaType === 'audio';
+  for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio.checked = radio.value === state.downloadMode;
+  $('outputFormatControl').hidden = original;
+  const formats = audio ? ['m4a', 'mp3', 'wav'] : ['mp4', 'mov'];
+  $('outputFormat').replaceChildren(...formats.map(value => { const option = document.createElement('option'); option.value = value; option.textContent = value.toUpperCase(); return option; }));
+  $('outputFormat').value = audio ? state.audioFormat : state.videoFormat;
+  $('qualityControls').hidden = audio || original; $('originalAudio').hidden = !audio && !original;
+  $('originalAudio').textContent = original ? media.mediaType === 'image' ? 'Original image' : 'Images stay original · videos use MP4' : 'Highest available audio source';
+}
+async function downloadSelected(input = state.selected?.url, quality = state.quality, options = null) {
   if (!input || !user() || state.pending || state.qualityRefreshing) return;
   const epoch = accountEpoch(); state.pending = true; $('downloadButton').disabled = true;
   try {
-    const audio = state.selected?.mediaType === 'audio';
-    const job = await submitJob('download', input, audio ? 'max' : quality);
+    options ||= {downloadMode:state.selected?.mediaType === 'audio' ? 'audio' : state.downloadMode, videoFormat:state.selected?.mediaType === 'gallery' ? 'mp4' : state.videoFormat, audioFormat:state.audioFormat};
+    // Older PC workers ignore unknown JSON fields and may deliver MKV/Opus.
+    // Require the export contract before submitting a newly selected format.
+    const capability = await request('/vortex/capabilities');
+    if (epoch !== accountEpoch()) return;
+    if (!capability.videoFormats?.includes(options.videoFormat) || !capability.audioFormats?.includes(options.audioFormat)) throw new Error('Update Vision PC on FUPCJ Server to enable MP4/MOV video and M4A/MP3/WAV audio downloads, then try again.');
+    const job = await submitJob('download', input, options.downloadMode === 'audio' ? 'max' : quality, options);
     if (epoch !== accountEpoch()) return;
     notice('Accepted. You can leave this page while FUPCJ Server works.'); renderJobs(); renderProcessing(); scheduleRefresh(500);
   } catch (error) { if (epoch === accountEpoch()) { notice(error.message, true); scheduleRefresh(1000); } }
@@ -273,6 +328,11 @@ function thumbnail(value) {
   if (url) { const img = document.createElement('img'); img.className = 'thumbnail'; img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.src = url; img.onerror = () => img.replaceWith(wrap); return img; }
   return wrap;
 }
+function sourceLink(link, value, title) {
+  const url = safeURL(value); link.className = 'source-thumbnail'; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  if (url) { link.href = url; link.setAttribute('aria-label', 'Open ' + (title || 'original media') + ' at its source (new tab)'); }
+  else { link.removeAttribute('href'); link.removeAttribute('aria-label'); }
+}
 function renderJobs() {
   const jobs = state.jobs.filter(job => job.kind !== 'inspect').sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
   $('emptyActivity').hidden = jobs.length > 0;
@@ -281,24 +341,26 @@ function renderJobs() {
     let row = existing.get(job.id);
     if (!row) {
       row = document.createElement('article'); row.className = 'activity-item'; row.dataset.id = job.id;
-      row.append(thumbnail(job.media?.thumbnail || job.thumbnail));
+      row.append(document.createElement('a'));
       const detail = document.createElement('div'); detail.className = 'item-detail';
       for (const cls of ['item-title', 'item-meta', 'item-status', 'item-expiry']) { const line = document.createElement('p'); line.className = cls; detail.append(line); }
       const more = document.createElement('button'); more.className = 'icon-button'; more.type = 'button'; more.innerHTML = icons.more; more.setAttribute('aria-haspopup', 'dialog'); more.onclick = () => void openActions(job.id);
       row.append(detail, more);
       let timer = 0, origin = null;
-      row.addEventListener('pointerdown', event => { if (event.pointerType === 'mouse' || event.target.closest('button')) return; origin = [event.clientX, event.clientY]; timer = setTimeout(() => { timer = 0; void openActions(job.id); }, 600); });
+      row.addEventListener('pointerdown', event => { if (event.pointerType === 'mouse' || event.target.closest('button,a')) return; origin = [event.clientX, event.clientY]; timer = setTimeout(() => { timer = 0; void openActions(job.id); }, 600); });
       const stop = () => { clearTimeout(timer); timer = 0; };
       row.addEventListener('pointermove', event => { if (origin && Math.hypot(event.clientX - origin[0], event.clientY - origin[1]) > 8) stop(); });
       row.addEventListener('pointerup', stop); row.addEventListener('pointercancel', stop);
-      row.addEventListener('contextmenu', event => { if (event.target.closest('button')) return; event.preventDefault(); stop(); void openActions(job.id); });
+      row.addEventListener('contextmenu', event => { if (event.target.closest('button,a')) return; event.preventDefault(); stop(); void openActions(job.id); });
     }
     existing.delete(job.id);
     const thumbURL = safeURL(job.media?.thumbnail || job.thumbnail);
-    if (row.dataset.thumbnail !== thumbURL) { row.firstElementChild.replaceWith(thumbnail(thumbURL)); row.dataset.thumbnail = thumbURL; }
+    sourceLink(row.firstElementChild, job.media?.url || job.input, titleFor(job));
+    if (row.dataset.thumbnail !== thumbURL) { row.firstElementChild.replaceChildren(thumbnail(thumbURL)); row.dataset.thumbnail = thumbURL; }
     row.classList.toggle('active', ACTIVE.has(job.status));
     row.querySelector('.item-title').textContent = titleFor(job);
-    row.querySelector('.item-meta').textContent = [sourceLabel(job.media) || job.source || job.engine, job.format || (job.filename?.includes('.') ? job.filename.split('.').pop().toUpperCase() : ''), job.media?.mediaType === 'audio' ? 'Original audio' : job.quality ? {small:'Small', balanced:'Balanced', max:'Max'}[job.quality] || job.quality : '', sizeLabel(job.size)].filter(Boolean).join(' · ');
+    const audio = job.downloadMode === 'audio' || job.media?.mediaType === 'audio';
+    row.querySelector('.item-meta').textContent = [sourceLabel(job.media) || job.source || job.engine, (job.format || job.filename?.split('.').pop() || (audio ? job.audioFormat : job.videoFormat) || '').toUpperCase(), audio ? 'Audio' : job.quality ? {small:'Small', balanced:'Balanced', max:'Max'}[job.quality] || job.quality : '', sizeLabel(job.size)].filter(Boolean).join(' · ');
     const status = row.querySelector('.item-status'); status.classList.toggle('error', job.status === 'error');
     const progress = typeof job.progress === 'number' && Number.isFinite(job.progress) ? ' · ' + Math.round(job.progress) + '%' : '';
     status.textContent = job.status === 'error' ? job.error || 'Download failed' : job.status === 'complete' ? 'Ready to save' : job.status === 'expired' ? 'File deleted after five days' : job.status === 'cancelled' ? 'Cancelled' : (job.phase || (job.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress;
@@ -318,7 +380,7 @@ function terminalText(text) {
   state.terminalTimer = setTimeout(() => { line.textContent = state.terminal; line.className = 'arrive'; }, 180);
 }
 function renderProcessing() {
-  const inspectJob = getJob(state.inspectId), job = (!state.quietInspection && inspectJob && ACTIVE.has(inspectJob.status) ? inspectJob : null) || state.jobs.find(item => item.kind !== 'inspect' && ACTIVE.has(item.status));
+  const inspectJob = getJob(state.inspectId), job = (!state.quietInspection && !state.appendSearch && inspectJob && ACTIVE.has(inspectJob.status) ? inspectJob : null) || state.jobs.find(item => item.kind !== 'inspect' && ACTIVE.has(item.status));
   $('processing').hidden = !job;
   if (!job) return;
   terminalText(job.phase || (job.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing media on FUPCJ Server'));
@@ -402,13 +464,16 @@ document.addEventListener('keydown', event => {
 });
 $('sourceForm').onsubmit = event => { event.preventDefault(); void inspect(); };
 $('sourceInput').addEventListener('paste', () => { setTimeout(() => { const value = $('sourceInput').value.trim(); if (safeURL(value)) void inspect(value); }, 0); });
-$('sourceInput').addEventListener('input', () => { if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { clearTimeout(state.qualityTimer); finishQualityRefresh(); state.selected = null; $('selection').hidden = true; } });
-$('clearResults').onclick = () => { $('searchResults').hidden = true; };
+$('sourceInput').addEventListener('input', () => { if (state.searchQuery && $('sourceInput').value.trim() !== state.searchQuery) { resetSearch(); $('searchResults').hidden = true; } if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { clearTimeout(state.qualityTimer); finishQualityRefresh(); state.selected = null; $('selection').hidden = true; } });
+$('clearResults').onclick = () => { state.lookupGeneration++; state.pending = false; $('sourceSubmit').disabled = false; resetSearch(); rememberInspection(''); $('searchResults').hidden = true; };
+$('loadMoreResults').onclick = () => void loadMoreResults();
 for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { state.quality = radio.value; if (state.selected?.url) queueQualityRefresh(); };
+for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio.onchange = () => { state.downloadMode = radio.value; renderOutputControls(); };
+$('outputFormat').onchange = () => { state[state.downloadMode === 'audio' ? 'audioFormat' : 'videoFormat'] = $('outputFormat').value; };
 $('downloadButton').onclick = () => void downloadSelected(); $('refreshButton').onclick = () => void refresh();
 $('loadOlder').onclick = () => void loadOlder();
 $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
-$('retryJob').onclick = () => { const job = getJob(state.actionId); if (!job) return; $('actionDialog').close(); void downloadSelected(job.media?.url || job.input, job.quality || 'balanced'); };
+$('retryJob').onclick = () => { const job = getJob(state.actionId); if (!job) return; $('actionDialog').close(); void downloadSelected(job.media?.url || job.input, job.quality || 'balanced', {downloadMode:job.downloadMode || (job.media?.mediaType === 'audio' ? 'audio' : 'video'), videoFormat:job.videoFormat || 'mp4', audioFormat:job.audioFormat || 'm4a'}); };
 $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { void refresh(); void loadProfile(); } });

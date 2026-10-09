@@ -53,6 +53,8 @@ class Fixture:
         self.hold_avatar = False
         self.held_avatar = None
         self.serial = 0
+        self.source_visits = []
+        self.compatible_exports = True
 
     def new_job(self, uid='alice', **fields):
         self.serial += 1
@@ -107,6 +109,9 @@ class Fixture:
                 self.respond(route, {'error': 'Unauthorized'}, 401)
                 return
             tail = url.path.removeprefix('/api/vortex/')
+            if tail == 'capabilities':
+                self.respond(route, dict(ready=True, videoFormats=['mp4','mov'], audioFormats=['m4a','mp3','wav'], searchPagination=True) if self.compatible_exports else dict(ready=True))
+                return
             if tail == 'jobs':
                 query = parse_qs(url.query)
                 jobs = [job for job in self.jobs[uid] if not query.get('kind') or job['kind'] == query['kind'][0]]
@@ -152,6 +157,10 @@ class Fixture:
             else:
                 self.unexpected.append(request.url)
                 route.abort()
+            return
+        if request.is_navigation_request() and request.url.startswith('https://www.youtube.com/watch?'):
+            self.source_visits.append(request.url)
+            route.fulfill(body='<title>Original media source</title>', content_type='text/html')
             return
         self.unexpected.append(request.url)
         route.abort()
@@ -253,6 +262,24 @@ def run():
             for value in ('16:9', '3840 × 2160', '60 fps', 'H.264', 'AAC'):
                 assert value in page.locator('#mediaInfo').inner_text()
             assert page.locator('#processing').is_hidden()
+            assert page.locator('#outputFormat').input_value() == 'mp4'
+            assert page.locator('#outputFormat option').all_text_contents() == ['MP4', 'MOV']
+            assert page.locator('#selectionSourceLink').get_attribute('href') == VIDEO['url']
+            assert page.locator('#selectionSourceLink').get_attribute('rel') == 'noopener noreferrer'
+            with page.expect_popup() as popup:
+                page.locator('#selectionSourceLink').click()
+            popup.value.wait_for_load_state()
+            assert api.source_visits[-1] == VIDEO['url']
+            popup.value.close()
+            page.locator('input[name=downloadMode][value=audio]').check()
+            assert page.locator('#qualityControls').is_hidden()
+            assert page.locator('#outputFormat option').all_text_contents() == ['M4A', 'MP3', 'WAV']
+            page.locator('#outputFormat').select_option('mp3')
+            assert page.locator('#selection').is_visible()
+            page.locator('input[name=downloadMode][value=video]').check()
+            page.locator('#outputFormat').select_option('mov')
+            no_overflow(page)
+            page.screenshot(path=str(SHOTS/f'vortex-formats-{width}.png'), full_page=True)
             page.locator('input[name=quality][value=max]').check()
             assert page.locator('input[name=quality][value=max]+span').evaluate('el=>getComputedStyle(el).backgroundColor') == 'rgb(209, 186, 162)'
             page.wait_for_function("document.querySelector('#selection').getAttribute('aria-busy')==='true'")
@@ -287,13 +314,21 @@ def run():
             refresh(page)
             assert page.locator('input[name=quality][value=max]').is_checked()
             assert page.locator('#selection').is_visible()
+            api.compatible_exports = False
+            before = len(api.jobs['alice'])
+            page.locator('#downloadButton').click()
+            page.locator('#notice').get_by_text('Update Vision PC on FUPCJ Server', exact=False).wait_for()
+            assert len(api.jobs['alice']) == before, 'An outdated worker must not silently return MKV'
+            api.compatible_exports = True
             page.locator('#downloadButton').click()
             page.locator('#activityList .activity-item').wait_for()
             downloaded = api.jobs['alice'][0]
             assert downloaded['kind'] == 'download' and downloaded['quality'] == 'max'
+            assert downloaded['downloadMode'] == 'video' and downloaded['videoFormat'] == 'mov'
             assert downloaded['requestId'] != inspected['requestId']
             downloaded.update(status='processing', phase='Downloading source media', progress=27, media=VIDEO)
             refresh(page)
+            assert page.locator(f'[data-id="{downloaded["id"]}"] .source-thumbnail').get_attribute('href') == VIDEO['url']
             assert page.locator('#progressPercent').inner_text() == '27%'
             page.locator('#terminalLine').get_by_text('Downloading source media', exact=True).wait_for()
             page.wait_for_timeout(350)
@@ -311,6 +346,8 @@ def run():
             refresh(page)
             row = page.locator(f'[data-id="{downloaded["id"]}"]')
             assert row.locator('.item-status').inner_text() == 'Ready to save'
+            assert row.locator('.source-thumbnail').get_attribute('target') == '_blank'
+            assert row.locator('.source-thumbnail').get_attribute('href') == VIDEO['url']
             assert row.locator('.item-expiry').inner_text().startswith('Deletes in ')
             assert '5d' in row.locator('.item-expiry').inner_text() or '4d' in row.locator('.item-expiry').inner_text()
             page.screenshot(path=str(SHOTS/f'vortex-ready-{width}.png'), full_page=True)
@@ -358,15 +395,25 @@ def run():
             assert downloaded not in api.jobs['alice']
 
             # Cancel active work; completed/expired work exposes different actions.
+            page.locator('input[name=downloadMode][value=audio]').check()
+            page.locator('#outputFormat').select_option('mp3')
             page.locator('#downloadButton').click()
             page.locator('#activityList .activity-item').wait_for()
             cancelled = api.jobs['alice'][0]
+            assert cancelled['downloadMode'] == 'audio' and cancelled['audioFormat'] == 'mp3'
+            assert cancelled['quality'] == 'max'
             page.locator(f'[data-id="{cancelled["id"]}"] button').click()
             assert page.locator('#deleteJob').is_hidden()
             page.locator('#cancelJob').click()
             page.locator('#actionDialog').wait_for(state='hidden')
             assert api.jobs['alice'][0]['status'] == 'cancelled'
             assert page.locator(f'[data-id="{cancelled["id"]}"] .item-status').inner_text() == 'Cancelled'
+            page.locator('input[name=downloadMode][value=video]').check()
+            page.locator(f'[data-id="{cancelled["id"]}"] button').click()
+            page.locator('#retryJob').click()
+            retried = next_job(page, api, cancelled['id'])
+            assert retried['downloadMode'] == 'audio' and retried['audioFormat'] == 'mp3', 'Repeat downloads must keep the original output choice'
+            retried.update(status='cancelled')
             expired = api.new_job(status='expired', phase='File expired', media={**VIDEO, 'title':'Expired archive'}, expiresAt=time.time()-1)
             refresh(page)
             page.locator(f'[data-id="{expired["id"]}"] button').click()
@@ -380,11 +427,39 @@ def run():
             submitted(page)
             search = api.jobs['alice'][0]
             assert search['input'] == 'evening music' and search['kind'] == 'inspect'
-            search.update(status='complete', phase='Search complete', results=[{**AUDIO, 'title':'Evening <img onerror=alert(1)> soundtrack'}])
+            matches = [{**AUDIO, 'title':'Evening <img onerror=alert(1)> soundtrack', 'thumbnail':VIDEO['thumbnail']}]
+            matches += [{**VIDEO, 'title':f'Video result {i}', 'url':f'https://www.youtube.com/watch?v=video{i:06}'} for i in range(15)]
+            search.update(status='complete', phase='Search complete', results=matches, searchNextPage=1)
             refresh(page)
-            assert page.locator('#resultList .search-result').count() == 1
+            assert page.locator('#resultList .search-result').count() == 16
             assert page.locator('#resultList .item-title img').count() == 0
-            page.locator('#resultList .search-result').click()
+            page.locator('#resultList .search-result').first.scroll_into_view_if_needed()
+            page.wait_for_function("document.querySelector('#resultList img').naturalWidth>0")
+            page.locator('#loadMoreResults').scroll_into_view_if_needed()
+            more = next_job(page, api, search['id'])
+            assert more['searchPage'] == 1 and more['input'] == search['input']
+            assert page.locator('#resultList .search-result').count() == 16
+            assert page.locator('#searchResults').is_visible()
+            more.update(status='complete', results=[matches[-1], {**VIDEO, 'title':'A later result', 'url':'https://www.youtube.com/watch?v=later000001'}], searchNextPage=2)
+            refresh(page)
+            assert page.locator('#resultList .search-result').count() == 17, 'Later pages must append without duplicates'
+            page.locator('#loadMoreResults').scroll_into_view_if_needed()
+            failed_more = next_job(page, api, more['id'])
+            failed_more.update(status='error', error='Search temporarily unavailable')
+            refresh(page)
+            assert page.locator('#searchStatus').inner_text() == 'Search temporarily unavailable'
+            assert page.locator('#resultList .search-result').count() == 17
+            page.locator('#loadMoreResults').click()
+            last = next_job(page, api, failed_more['id'])
+            assert last['searchPage'] == 2
+            last.update(status='complete', results=[], searchNextPage=None)
+            refresh(page)
+            assert page.locator('#loadMoreResults').is_hidden()
+            assert page.locator('#resultList .search-result').count() == 17
+            no_overflow(page)
+            page.locator('#resultList .search-result').first.scroll_into_view_if_needed()
+            page.screenshot(path=str(SHOTS/f'vortex-search-{width}.png'), full_page=True)
+            page.locator('#resultList .search-result').first.click()
             submitted(page)
             audio = api.jobs['alice'][0]
             assert audio['input'] == AUDIO['url'] and audio['kind'] == 'inspect'

@@ -44,6 +44,11 @@ YouTube videos and YouTube Music songs together; prefix a Spotify search with
 YouTube search source does not discard matches from the other. Long or live
 search results can be listed; the duration/live restrictions apply when an
 individual result is selected, never to the whole search.
+Search results display source thumbnails and append another page as you scroll.
+A Load more button also supports keyboard access and retries. Each request reads
+up to eight videos and eight songs, plus a look-ahead result; searches stop when
+the source has no next page (or after 50 bounded pages). Existing results stay
+visible if a later page fails, and repeated URLs are not added twice.
 Select a result to load actual source properties, choose Small,
 Balanced or Max, then Download. Source details remain blank until supplied by
 the engine. Unknown progress stays indeterminate; a percentage appears only
@@ -54,11 +59,28 @@ keeping the current media visible. A failed quality refresh retains the last
 confirmed properties and preset. The profile button uses the saved Vision
 account photo from the shared authenticated profile endpoint.
 
-Small prefers source video up to 480p, Balanced up to 1080p, and Max the highest
-available source quality. Audio downloads retain the best available source
-audio without a default lossy compatibility conversion. Video/audio streams
-may be packaged in MKV to preserve their original codecs. The actual resulting
-format appears in history; device playback support depends on that format.
+Small selects video up to 480p, Balanced up to 1080p, and Max the highest
+available source resolution. Video exports are explicitly **MP4** (default) or
+**MOV**, with H.264 video and AAC audio. Compatible streams are copied; other
+codecs are converted locally by FFmpeg. Smaller presets also downscale when a
+source has no suitably small stream. Conversion can take longer than downloading
+and can change the original encoding, but never invents higher source quality.
+
+Choose **Audio only** on a video to discard its picture. Videos, YouTube Music
+and other audio sources export as **M4A** (default), **MP3** or **WAV**. The worker
+starts with the highest available audio source; AAC can be copied into M4A,
+other M4A audio uses AAC, MP3 uses high-quality VBR, and WAV uses 16-bit PCM.
+WAV is larger and does not restore information lost in the source. New video
+and audio exports never deliver MKV, WebM or Opus files. Gallery images remain
+original; gallery videos are converted before single-file or ZIP delivery.
+Existing completed files are retained until their normal expiry; Download again
+creates a new compatible export. Repeat downloads retain the chosen output type
+and format independently of the current selection.
+
+Click the selected thumbnail, or a thumbnail in Recent Activity, to open its
+original source in a new tab. This remains available during and after conversion.
+Conversion progress uses actual encoded timestamps when the duration is known;
+otherwise it stays indeterminate. Final technical properties come from ffprobe.
 
 Open an item's overflow menu, or hold the item on a touch screen, to save,
 share, cancel, download again or delete it. Native file sharing is offered when
@@ -72,7 +94,7 @@ Files workflow, without holding a large video in page memory.
 | Input | Engine | Behavior |
 | --- | --- | --- |
 | YouTube searches and supported public video/audio URLs | yt-dlp | One media item, native download, local stream packaging |
-| YouTube Music songs and selected music search results | yt-dlp | Highest available original audio; music identity stays attached to the result |
+| YouTube Music songs and selected music search results | yt-dlp + FFmpeg | Highest available audio source exported as M4A, MP3 or WAV; music identity stays attached |
 | Instagram Reel/video links | yt-dlp, then gallery-dl if public metadata lookup fails | Video-specific inspection first; sharing query parameters are removed |
 | Supported public gallery/post URLs, including Instagram, Reddit, Imgur, Flickr, DeviantArt and Pixiv | gallery-dl | One file or a ZIP for a bounded collection |
 | Spotify track URLs and `spotify:` searches | spotDL + yt-dlp | Spotify metadata matched to public YouTube Music/YouTube audio |
@@ -125,6 +147,7 @@ database remain included in the existing backup process.
 | Account / total Vortex storage | 10 / 40 GiB, including reserved jobs |
 | Media duration | 2 hours |
 | Gallery contents | 50 files |
+| Search page size / maximum pages | 8 videos + 8 songs / 50 pages |
 | Lookup / download timeout | 3 / 45 minutes |
 | File delivery URL lifetime | At most 5 minutes and never beyond file expiry |
 
