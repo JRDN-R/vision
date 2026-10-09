@@ -93,11 +93,10 @@
         <p id="mediaNote" class="fine-print" hidden></p>
       </section>
       <section class="activity" aria-labelledby="activityTitle">
-        <div class="section-heading"><h2 id="activityTitle">Recent Activity</h2><button id="refreshButton" class="icon-button" type="button" aria-label="Refresh activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div>
-        <p id="emptyActivity" class="empty-activity">Your downloads will appear here.</p>
+        <div class="section-heading"><h2 id="activityTitle">Current session</h2><button id="refreshButton" class="icon-button" type="button" aria-label="Refresh activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div>
+        <p id="emptyActivity" class="empty-activity">Downloads started while this page is open will appear here. Your full history is in the menu.</p>
         <div id="activityList" class="activity-list"></div>
-        <button id="loadOlder" class="text-button" type="button" hidden>Load older activity</button>
-        <p class="retention-note">Files are kept for five days. Accepted downloads continue when you leave.</p>
+        <p class="retention-note">Accepted downloads continue on FUPCJ Server after you leave this page.</p>
         <p id="connectionStatus" class="connection-status" role="status"></p>
       </section>
     </main>
@@ -105,12 +104,21 @@
     <aside id="navigation" class="navigation" aria-label="Main navigation" tabindex="-1" hidden inert>
       <div class="nav-heading"><div class="nav-brand"><span class="nav-brand-head" aria-hidden="true"><img src="../vortex_character.png" alt="" width="33" height="45"></span><span class="nav-brand-name">Vortex</span></div><button id="closeMenu" class="icon-button" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
       <nav aria-label="Other apps"><a href="../?view=vision">Vision</a><a href="../?view=venture">Venture</a></nav>
+      <section class="nav-history" aria-labelledby="historyTitle">
+        <div class="nav-history-divider" aria-hidden="true"></div>
+        <div class="nav-history-heading"><h2 id="historyTitle">Download history</h2><span id="historyCount" class="history-count"></span></div>
+        <p id="historyEmpty" class="history-empty">Loading history…</p>
+        <div id="historyList" class="history-list" role="list" aria-label="Past downloads"></div>
+        <button id="loadOlder" class="text-button history-more" type="button" hidden>Load older history</button>
+        <p id="historyStatus" class="history-status" role="status"></p>
+        <p class="history-retention">Files remain available for five days. History remains until you delete it.</p>
+      </section>
       <div class="nav-footer"><button id="menuAccount" class="text-button" type="button">Your account</button><button id="menuSignOut" class="icon-button" type="button" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/></svg></button></div>
     </aside>
   </div>
 
   <dialog id="accountDialog" class="modal"><div class="modal-heading"><h2>Your account</h2><button class="icon-button close-dialog" type="button" aria-label="Close account">×</button></div><p id="accountName"></p><p id="accountEmail" class="fine-print"></p><p class="fine-print">Your media and history belong to this account.</p><button id="accountSignOut" class="secondary" type="button">Sign out</button></dialog>
-  <dialog id="actionDialog" class="modal action-dialog"><div class="modal-heading"><h2 id="actionTitle">Media actions</h2><button class="icon-button close-dialog" type="button" aria-label="Close media actions">×</button></div><p id="actionStatus" class="fine-print" role="status"></p><div class="action-list"><a id="saveFile" class="primary action-link" hidden>Save file</a><button id="shareFile" class="secondary" type="button" hidden>Prepare to share</button><button id="retryJob" class="secondary" type="button" hidden>Download again</button><button id="cancelJob" class="secondary" type="button" hidden>Cancel download</button><button id="deleteJob" class="danger" type="button">Delete</button></div></dialog>
+  <dialog id="actionDialog" class="modal action-dialog"><div class="modal-heading"><h2 id="actionTitle">Media actions</h2><button class="icon-button close-dialog" type="button" aria-label="Close media actions">×</button></div><p id="actionStatus" class="fine-print" role="status"></p><div class="action-list"><a id="saveFile" class="primary action-link" hidden>Download</a><button id="shareFile" class="secondary" type="button" hidden>Prepare to share</button><button id="retryJob" class="secondary" type="button" aria-expanded="false" aria-controls="reexportPanel" hidden>Re-export · change format</button><section id="reexportPanel" class="reexport-panel" aria-label="Re-export options" hidden><p class="fine-print">Create a new export from the original source. Your existing file stays unchanged.</p><label id="reexportModeRow" class="reexport-field"><span>Media type</span><select id="reexportMode"><option value="video">Video</option><option value="audio">Audio only</option></select></label><label id="reexportFormatRow" class="reexport-field"><span>File format</span><select id="reexportFormat"></select></label><label id="reexportQualityRow" class="reexport-field"><span>Quality</span><select id="reexportQuality"><option value="small">Small</option><option value="balanced">Balanced</option><option value="max">Max</option></select></label><button id="reexportSubmit" class="primary" type="button">Queue re-export</button></section><button id="cancelJob" class="secondary" type="button" hidden>Cancel download</button><button id="deleteJob" class="danger" type="button">Delete</button></div></dialog>
   <dialog id="confirmDialog" class="modal"><h2 id="confirmTitle">Are you sure?</h2><p id="confirmDescription" class="fine-print"></p><div class="confirm-actions"><button id="confirmNo" class="secondary" type="button">No</button><button id="confirmYes" class="primary" type="button">Yes</button></div></dialog>
   <noscript><p class="noscript">Enable JavaScript to sign in and use Vortex.</p></noscript>
 </body>
