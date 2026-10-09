@@ -35,6 +35,19 @@
   letter-spacing: .2px;
   color: var(--beige);
 }
+.navigation .nav-brand-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+.navigation .nav-brand-version {
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 400;
+  letter-spacing: .02em;
+  color: var(--muted);
+}
 .navigation:not([hidden]) .nav-brand-head {
   animation: vortex-head-enter .65s .2s both cubic-bezier(.2,.8,.2,1);
 }

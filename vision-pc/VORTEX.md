@@ -5,6 +5,22 @@ independent of the Vision board and Venture conversation interface. The only
 changes to those interfaces are their two Vortex links and release notes.
 Opening Vortex in the same tab saves pending board changes first.
 
+## Version
+
+Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
+version. Open the side menu to see the web version directly beneath the Vortex
+name. **Your account** also shows the connected Vortex server's version, reported
+by the authenticated jobs response without an extra request or extraction job.
+Older servers show "version not reported"; unavailable connections do not keep
+showing an earlier server version. The web and Windows versions can differ:
+publishing GitHub Pages does not update FUPCJ Server. A version number confirms
+the software release, not that any particular provider or media link works.
+
+For a release, update `VORTEX_VERSION` in `vision-pc/vortex.py` and the sidebar
+label, accessible label, and asset revision queries in `vortex/index.html`.
+Keep browser fixture expectations in sync; the backend regression test checks
+that the shipped web label and asset revisions match the backend release.
+
 ## Activate on FUPCJ Server
 
 Merge the reviewed Vortex change into `main`, then let **Build portable Vision**
