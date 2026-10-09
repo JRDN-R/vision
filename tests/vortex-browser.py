@@ -542,7 +542,17 @@ def run():
             retried = next_job(page, api, cancelled['id'])
             assert retried['downloadMode'] == 'audio' and retried['audioFormat'] == 'wav', 'New format must be applied'
             assert cancelled['audioFormat'] == 'mp3', 'Original export must remain unchanged'
-            retried.update(status='cancelled')
+            # Deleting a queued re-export removes both the history record and
+            # the pending automatic save instead of leaving a ghost download.
+            page.locator('#menuButton').click()
+            new_row = page.locator(f'#historyList [data-id="{retried["id"]}"]')
+            new_row.locator('.history-actions').click()
+            assert page.locator('#cancelJob').is_visible() and page.locator('#deleteJob').is_visible()
+            page.locator('#deleteJob').click()
+            page.locator('#confirmYes').click()
+            new_row.wait_for(state='detached')
+            assert retried not in api.jobs['alice']
+            page.locator('#closeMenu').click()
             expired = api.new_job(status='expired', phase='File expired', media={**VIDEO, 'title':'Expired archive'}, expiresAt=time.time()-1)
             refresh(page)
             assert page.locator(f'#activityList [data-id="{expired["id"]}"]').count() == 0
