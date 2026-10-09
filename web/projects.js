@@ -63,8 +63,26 @@ function projectRemember(meta,title,updatedAt=new Date().toISOString()){
  const entries=projectRecentList().filter(r=>r.id!==meta.id);entries.unshift({...meta,title:String(title||'Untitled project').slice(0,100),updatedAt});projectRecentMemory=entries.slice(0,30);projectLocalSet(PROJECT_RECENT,JSON.stringify(entries.slice(0,30)));projectLocalSet(PROJECT_ACTIVE,meta.id);
 }
 function projectDatabase(){
- if(!projectDBPromise)projectDBPromise=new Promise((resolve,reject)=>{if(!globalThis.indexedDB){reject(new Error('Browser storage is unavailable.'));return;}const request=indexedDB.open(PROJECT_STORE,1);request.onupgradeneeded=()=>request.result.createObjectStore('projects',{keyPath:'id'});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error||new Error('Browser storage is unavailable.'));request.onblocked=()=>reject(new Error('Browser storage is blocked by another Vision tab.'));});
+ if(!projectDBPromise)projectDBPromise=new Promise((resolve,reject)=>{
+  if(!globalThis.indexedDB){reject(new Error('Browser storage is unavailable.'));return;}
+  let settled=false;
+  const finish=(error,db)=>{if(settled){db?.close();return;}settled=true;clearTimeout(timer);if(error)reject(error);else resolve(db);};
+  const timer=setTimeout(()=>finish(new Error('Browser recovery storage did not respond.')),3000);
+  let request;try{request=indexedDB.open(PROJECT_STORE,1);}catch(error){finish(error);return;}
+  request.onupgradeneeded=()=>{if(settled){request.transaction.abort();return;}request.result.createObjectStore('projects',{keyPath:'id'});};
+  request.onsuccess=()=>finish(null,request.result);
+  request.onerror=()=>finish(request.error||new Error('Browser storage is unavailable.'));
+  request.onblocked=()=>finish(new Error('Browser storage is blocked by another Vision tab.'));
+ });
  return projectDBPromise;
+}
+function projectStorageOperation(start){
+ return new Promise((resolve,reject)=>{
+  let settled=false,cancel;
+  const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);if(error)reject(error);else resolve(value);};
+  const timer=setTimeout(()=>{finish(new Error('Browser recovery storage did not respond.'));try{cancel?.();}catch{}},3000);
+  try{cancel=start(value=>finish(null,value),error=>finish(error||new Error('Browser storage is unavailable.')));}catch(error){finish(error);}
+ });
 }
 async function projectStorePut(record,{activate=true,scope=projectStorageScope}={}){
  if(projectIsTemporary(scope))return false;
@@ -74,7 +92,7 @@ async function projectStorePut(record,{activate=true,scope=projectStorageScope}=
 }
 async function projectStoreGet(id,scope=projectStorageScope){
  if(projectIsTemporary(scope))return null;
- try{const db=await projectDatabase();const record=await new Promise((resolve,reject)=>{const request=db.transaction('projects').objectStore('projects').get(projectScopedKey(id,scope));request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);});if(record)return{...record,id};}catch{}
+ try{const db=await projectDatabase();const record=await projectStorageOperation((resolve,reject)=>{const tx=db.transaction('projects'),request=tx.objectStore('projects').get(projectScopedKey(id,scope));request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);tx.onabort=()=>reject(tx.error);return()=>tx.abort();});if(record)return{...record,id};}catch{}
  try{return JSON.parse(projectLocalGet(PROJECT_STORE+':'+id,scope)||'null');}catch{return null;}
 }
 function projectStatus(message,kind='local'){
