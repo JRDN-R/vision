@@ -58,9 +58,16 @@ class PublicMediaBoundaryTests(unittest.TestCase):
                 network.validate_input(value, 'inspect')
         for value, engine in [('https://youtube.com/watch?v=abc', 'yt-dlp'),
                               ('https://instagram.com/p/example', 'gallery-dl'),
+                              ('https://www.instagram.com/reel/DeOrpiojEW2/?cplk=example', 'yt-dlp'),
+                              ('https://www.instagram.com/reels/DeOrpiojEW2/', 'yt-dlp'),
+                              ('https://www.instagram.com/creator/reel/DeOrpiojEW2/', 'yt-dlp'),
+                              ('https://www.instagram.com/creator/reels/', 'gallery-dl'),
+                              ('https://instagram.com.evil.example/reel/DeOrpiojEW2/', 'yt-dlp'),
+                              ('https://music.youtube.com/watch?v=abc', 'yt-dlp'),
                               ('https://open.spotify.com/track/example', 'spotdl'),
                               ('https://open.spotify.com.evil.example/video', 'yt-dlp')]:
             self.assertEqual(network.engine_for(value), engine)
+        self.assertFalse(network.is_instagram_reel('https://instagram.com.evil.example/reel/DeOrpiojEW2/'))
 
     def test_worker_guard_checks_redirect_and_direct_socket_targets(self):
         connections = []

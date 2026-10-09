@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
+Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selectedQuality:'balanced', qualityTimer:0, quietInspection:false, qualityRefreshing:false});
 const icons = {
   media:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 8 6 4-6 4Z"/></svg>',
   more:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>'
@@ -26,6 +27,9 @@ function accountChanged(identity) {
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
   state.jobs = []; state.selected = null; state.inspectId = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
   state.olderJobs.clear(); state.cursor = null; state.olderLoaded = false; $('loadOlder').hidden = true; $('loadOlder').disabled = false;
+  clearTimeout(state.qualityTimer); state.quietInspection = false; state.qualityRefreshing = false; $('selection').removeAttribute('aria-busy');
+  if (state.avatarURL) URL.revokeObjectURL(state.avatarURL);
+  state.avatarURL = ''; state.profile = null; state.profileLoading = false;
   closeMenu(false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   $('sourceInput').value = ''; $('activityList').replaceChildren(); $('resultList').replaceChildren();
@@ -35,10 +39,29 @@ function accountChanged(identity) {
   $('authGate').hidden = !!identity; $('application').hidden = !identity; $('application').inert = !identity;
   if (!identity) { $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
   $('profileInitial').textContent = (identity.displayName || identity.email || 'V').slice(0, 1).toUpperCase();
-  imageSource($('profileImage'), identity.photoURL);
   $('accountName').textContent = identity.displayName || 'Your Vision account'; $('accountEmail').textContent = identity.email || '';
   try { state.inspectId = sessionStorage.getItem('vortex-inspection:' + identity.uid) || ''; } catch {}
-  void refresh();
+  void refresh(); void loadProfile();
+}
+async function loadProfile() {
+  if (!user() || state.profileLoading) return;
+  const epoch = accountEpoch(); state.profileLoading = true;
+  try {
+    const profile = await request('/venture/profile');
+    if (epoch !== accountEpoch()) return;
+    if (profile.hasAvatar && (profile.avatarVersion !== state.profile?.avatarVersion || !state.avatarURL)) {
+      const blob = await request('/venture/profile/avatar', {binary:true});
+      if (epoch !== accountEpoch()) return;
+      if (state.avatarURL) URL.revokeObjectURL(state.avatarURL);
+      state.avatarURL = URL.createObjectURL(blob);
+    } else if (!profile.hasAvatar && state.avatarURL) {
+      URL.revokeObjectURL(state.avatarURL); state.avatarURL = '';
+    }
+    state.profile = profile;
+    if (state.avatarURL) { $('profileImage').src = state.avatarURL; $('profileImage').hidden = false; }
+    else imageSource($('profileImage'), user()?.photoURL);
+  } catch { /* Keep this account's initials or saved photo when the PC is offline. */ }
+  finally { if (epoch === accountEpoch()) state.profileLoading = false; }
 }
 async function authenticate(action) {
   if (state.authBusy) return;
@@ -75,7 +98,7 @@ function setMenu(open, focus = true) {
   if (focus) (state.menu ? $('closeMenu') : $('menuButton')).focus({preventScroll:true});
 }
 function closeMenu(focus = true) { setMenu(false, focus); }
-function openAccount() { closeMenu(false); $('accountDialog').showModal(); }
+function openAccount() { closeMenu(false); $('accountDialog').showModal(); void loadProfile(); }
 function confirmAction(description, title = 'Are you sure?') {
   const dialog = $('confirmDialog'); $('confirmTitle').textContent = title; $('confirmDescription').textContent = description;
   return new Promise(resolve => {
@@ -110,7 +133,7 @@ async function refresh() {
     if (state.inspectId !== inspectId) { const selectedInspection = getJob(state.inspectId); if (selectedInspection) merged.set(selectedInspection.id, selectedInspection); }
     state.jobs = [...merged.values()]; state.failures = 0;
     if (inspection.status === 'fulfilled' && inspection.value && state.inspectId === inspectId) upsert(inspection.value);
-    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) rememberInspection(''); else if (!state.appliedInspect) notice(inspection.reason.message, true); }
+    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) { rememberInspection(''); finishQualityRefresh(false); } else if (!state.appliedInspect) notice(inspection.reason.message, true); }
     if (!state.olderLoaded) state.cursor = data.nextCursor || null;
     $('loadOlder').hidden = !state.cursor;
     $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
@@ -141,22 +164,49 @@ async function submitJob(kind, input, quality = state.quality) {
   const job = await request('/vortex/jobs', {method:'POST', body:{kind, input, quality, requestId}});
   state.requestIds.delete(key); state.revision++; upsert(job); return job;
 }
-async function inspect(input = $('sourceInput').value.trim()) {
+async function inspect(input = $('sourceInput').value.trim(), {background = false} = {}) {
   if (!input || state.pending || !user()) return;
-  const epoch = accountEpoch(); state.pending = true; state.selected = null; state.appliedInspect = ''; state.inspectId = '';
-  $('sourceSubmit').disabled = true; $('selection').hidden = true; $('searchResults').hidden = true; notice('Sending to FUPCJ Server…');
+  const epoch = accountEpoch(), previous = getJob(state.inspectId), quality = state.quality;
+  state.pending = true; state.appliedInspect = ''; state.inspectId = ''; state.quietInspection = background;
+  $('sourceSubmit').disabled = true; $('searchResults').hidden = true;
+  if (background) { state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); $('downloadButton').disabled = true; }
+  else { clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
   try {
-    const job = await submitJob('inspect', input);
+    // Replaced lookups no longer need a queue slot. Download jobs are untouched.
+    if (previous?.kind === 'inspect' && ACTIVE.has(previous.status)) {
+      try { await request(jobPath(previous.id) + '/cancel', {method:'POST'}); } catch { /* The lookup may already have finished. */ }
+      if (epoch !== accountEpoch()) return;
+    }
+    const job = await submitJob('inspect', input, quality);
     if (epoch !== accountEpoch()) return;
     rememberInspection(job.id); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
-  } catch (error) { if (epoch === accountEpoch()) { notice(error.message, true); scheduleRefresh(1000); } }
+  } catch (error) { if (epoch === accountEpoch()) { finishQualityRefresh(false); notice(error.message, true); scheduleRefresh(1000); } }
   finally { if (epoch === accountEpoch()) { state.pending = false; $('sourceSubmit').disabled = false; } }
+}
+function finishQualityRefresh(success = true) {
+  if (!state.qualityRefreshing) return;
+  state.qualityRefreshing = false; $('selection').removeAttribute('aria-busy'); $('downloadButton').disabled = false;
+  if (!success && state.selected) {
+    state.quality = state.selectedQuality;
+    for (const radio of document.querySelectorAll('input[name=quality]')) radio.checked = radio.value === state.quality;
+  }
+}
+function queueQualityRefresh() {
+  clearTimeout(state.qualityTimer);
+  state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); $('downloadButton').disabled = true;
+  state.qualityTimer = setTimeout(() => {
+    if (!state.selected?.url || !user()) return;
+    if (state.pending) { queueQualityRefresh(); return; }
+    $('sourceInput').value = state.selected.url;
+    void inspect(state.selected.url, {background:true});
+  }, 150);
 }
 function applyInspection() {
   if (!state.inspectId) return;
   const job = getJob(state.inspectId); if (!job) return;
   const receipt = job.id + ':' + job.status;
   if (receipt === state.appliedInspect) return;
+  if (state.quietInspection && job.quality !== state.quality) return;
   if (job.status === 'complete') {
     if ($('sourceInput').value.trim() && $('sourceInput').value.trim() !== job.input) return;
     if (!$('sourceInput').value.trim()) $('sourceInput').value = job.input || '';
@@ -166,8 +216,9 @@ function applyInspection() {
     // search-only results have no selected media and require another lookup.
     if (job.media && safeURL(job.media.url)) selectMedia(job.media);
     else if (Array.isArray(job.results) && job.results.length) renderResults(job.results);
-    else notice('No downloadable media was found for that input. Try another link.', true);
+    else { finishQualityRefresh(false); notice('No downloadable media was found for that input. Try another link.', true); }
   } else if (job.status === 'error' || job.status === 'cancelled' || job.status === 'expired') {
+    finishQualityRefresh(false);
     state.appliedInspect = receipt; notice(job.error || (job.status === 'cancelled' ? 'Media lookup cancelled.' : 'This lookup is no longer available. Search again.'), job.status === 'error');
   }
 }
@@ -187,6 +238,7 @@ function renderResults(results) {
 function gcd(a, b) { return b ? gcd(b, a % b) : a; }
 function codec(value) { if (!value || value === 'none' || value === 'unknown') return ''; const text = String(value); return /^avc[13]/i.test(text) ? 'H.264' : /^(hevc|hev1|hvc1)/i.test(text) ? 'H.265' : /^av01/i.test(text) ? 'AV1' : /^mp4a/i.test(text) ? 'AAC' : /^vp0?9/i.test(text) ? 'VP9' : text; }
 function selectMedia(media) {
+  finishQualityRefresh(); state.selectedQuality = state.quality;
   state.selected = media; $('selection').hidden = false; $('searchResults').hidden = true;
   $('selectionTitle').textContent = media.title || 'Selected media'; $('selectionSource').textContent = [sourceLabel(media), durationLabel(media.duration)].filter(Boolean).join(' · '); imageSource($('selectionImage'), media.thumbnail);
   const info = $('mediaInfo'); info.replaceChildren(); const entries = [];
@@ -204,7 +256,7 @@ function selectMedia(media) {
   $('qualityControls').hidden = originalOnly; $('originalAudio').hidden = !originalOnly; $('originalAudio').textContent = audio ? 'Highest available audio quality' : 'Original source files'; $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; $('downloadButton').disabled = false; notice();
 }
 async function downloadSelected(input = state.selected?.url, quality = state.quality) {
-  if (!input || !user() || state.pending) return;
+  if (!input || !user() || state.pending || state.qualityRefreshing) return;
   const epoch = accountEpoch(); state.pending = true; $('downloadButton').disabled = true;
   try {
     const audio = state.selected?.mediaType === 'audio';
@@ -266,7 +318,7 @@ function terminalText(text) {
   state.terminalTimer = setTimeout(() => { line.textContent = state.terminal; line.className = 'arrive'; }, 180);
 }
 function renderProcessing() {
-  const inspectJob = getJob(state.inspectId), job = (inspectJob && ACTIVE.has(inspectJob.status) ? inspectJob : null) || state.jobs.find(item => ACTIVE.has(item.status));
+  const inspectJob = getJob(state.inspectId), job = (!state.quietInspection && inspectJob && ACTIVE.has(inspectJob.status) ? inspectJob : null) || state.jobs.find(item => item.kind !== 'inspect' && ACTIVE.has(item.status));
   $('processing').hidden = !job;
   if (!job) return;
   terminalText(job.phase || (job.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing media on FUPCJ Server'));
@@ -350,15 +402,15 @@ document.addEventListener('keydown', event => {
 });
 $('sourceForm').onsubmit = event => { event.preventDefault(); void inspect(); };
 $('sourceInput').addEventListener('paste', () => { setTimeout(() => { const value = $('sourceInput').value.trim(); if (safeURL(value)) void inspect(value); }, 0); });
-$('sourceInput').addEventListener('input', () => { if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { state.selected = null; $('selection').hidden = true; } });
+$('sourceInput').addEventListener('input', () => { if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { clearTimeout(state.qualityTimer); finishQualityRefresh(); state.selected = null; $('selection').hidden = true; } });
 $('clearResults').onclick = () => { $('searchResults').hidden = true; };
-for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { state.quality = radio.value; if (state.selected?.url) { const url = state.selected.url; $('sourceInput').value = url; void inspect(url); } };
+for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { state.quality = radio.value; if (state.selected?.url) queueQualityRefresh(); };
 $('downloadButton').onclick = () => void downloadSelected(); $('refreshButton').onclick = () => void refresh();
 $('loadOlder').onclick = () => void loadOlder();
 $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
 $('retryJob').onclick = () => { const job = getJob(state.actionId); if (!job) return; $('actionDialog').close(); void downloadSelected(job.media?.url || job.input, job.quality || 'balanced'); };
 $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
-document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else void refresh(); }); window.addEventListener('pageshow', () => { if (user()) void refresh(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { void refresh(); void loadProfile(); } });
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { $('authStatus').textContent = authError(error); });

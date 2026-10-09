@@ -18,8 +18,10 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import zipfile
+
+from vortex_network import is_instagram_reel
 
 GALLERY_HOSTS = ("reddit.com", "redd.it", "imgur.com", "flickr.com", "deviantart.com", "pixiv.net", "instagram.com")
 MEDIA_EXTENSIONS = {"mp4", "mkv", "webm", "mov", "m4v", "m4a", "mp3", "opus", "ogg", "flac", "wav", "aac", "jpg", "jpeg", "png", "webp", "gif", "avif", "heic"}
@@ -34,6 +36,27 @@ SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == 
 
 class WorkerError(Exception):
     """A safe, deliberately authored message that may be shown to the user."""
+
+
+class SourceError(WorkerError):
+    """The provider failed before any file download; another adapter may try."""
+
+
+def source_error_message(value, error):
+    host = (urlparse(value).hostname or '').lower()
+    source = 'Instagram' if host == 'instagram.com' or host.endswith('.instagram.com') else 'YouTube' if host == 'youtube.com' or host.endswith('.youtube.com') or host == 'youtu.be' or not host else 'The media provider'
+    detail = str(error).lower()
+    if any(word in detail for word in ('certificate_verify_failed', 'certificate verify failed', 'ssl:')):
+        return f'FUPCJ Server could not verify the secure connection to {source}. Check the server clock, certificate trust and media-tool updates.'
+    if any(word in detail for word in ('429', 'rate-limit', 'rate limit', 'too many requests')):
+        return f'{source} is limiting requests from FUPCJ Server. Wait a few minutes, then try again.'
+    if any(word in detail for word in ('login', 'log in', 'sign in', 'sign-in', 'authentication', 'cookies', 'registered users', 'private video', 'private account', 'private post')):
+        return f'{source} requires a signed-in session for this item or this server. Vortex currently downloads public media without source-account cookies.'
+    if any(word in detail for word in ('timed out', 'timeout', 'connection', 'network', 'resolve', 'dns')):
+        return f'{source} could not be reached from FUPCJ Server. Try again shortly.'
+    if source == 'Instagram':
+        return 'Instagram did not return public media for this item. Check that it opens while signed out; Instagram may also be restricting requests from FUPCJ Server.'
+    return f'{source} could not return this media. It may be unavailable or require sign-in. Try again or update the Vortex media tools.'
 
 
 class QuietLogger:
@@ -215,6 +238,8 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     except ImportError as exc:
         raise WorkerError("The yt-dlp media engine is not installed. Update Vision PC setup.") from exc
     value = input_value or request["input"]
+    music = (urlparse(value).hostname or '').lower() == 'music.youtube.com'
+    audio = audio or music
     directory = Path(request["directory"]).resolve()
     configure_ytdlp_safety(directory, request.get("ffmpeg"))
     inspect = request["kind"] == "inspect"
@@ -274,28 +299,25 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if event.get("status") == "started":
             emit(phase="Packaging original media streams", progress=None)
 
-    options.update(match_filter=check_media, progress_hooks=[progress], postprocessor_hooks=[postprocess])
-    emit(phase="Searching YouTube" if search else "Reading media details", progress=None)
+    # Search snippets can contain long/live items. Download restrictions apply
+    # only after selection; one such result must never abort the whole search.
+    options.update(match_filter=None if search else check_media, progress_hooks=[progress], postprocessor_hooks=[postprocess])
+    if search:
+        return search_youtube(value, options, engine)
+    emit(phase="Reading media details", progress=None)
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info("ytsearch5:" + value if search else value, download=False)
+        try:
+            info = ydl.extract_info(value, download=False)
+        except yt_dlp.utils.DownloadError as exc:
+            raise SourceError(source_error_message(value, exc)) from exc
         if not info:
-            raise WorkerError("No downloadable public media was found.")
-        if search:
-            results = []
-            for entry in info.get("entries") or []:
-                if entry:
-                    result = media_from_info(entry, fallback_url=entry.get("url"), engine=engine)
-                    if result.get("url"):
-                        results.append(result)
-                if len(results) >= 5:
-                    break
-            if not results:
-                raise WorkerError("No matching public media was found. Try a different search.")
-            return {"complete": True, "results": results}
+            raise SourceError("No downloadable public media was found.")
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise WorkerError("Paste a single media link. Video playlists are not downloaded as a batch.")
         check_media(info)
         media = media_from_info(info, fallback_url=value, engine=engine)
+        if music:
+            media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
         media["quality"] = request.get("quality", "balanced")
         if inspect:
             return {"complete": True, "media": media, "results": [media]}
@@ -311,10 +333,52 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         raise WorkerError("This file exceeds the server download size limit.")
     emit(phase="Verifying media properties", progress=None)
     media = apply_probe(media_from_info(info, fallback_url=value, engine=engine), probe_file(artifact, request.get("ffmpeg"), directory))
+    if music:
+        media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
         raise WorkerError("This media exceeds the server's two-hour duration limit.")
     media.update(ext=artifact.suffix.lstrip("."), quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
+
+
+def search_youtube(query, options, engine="yt-dlp"):
+    """Bounded video and song searches through yt-dlp's public extractors."""
+    import yt_dlp
+    groups, failures = [], []
+    sources = [("YouTube", "ytsearch5:" + query),
+               ("YouTube Music", "https://music.youtube.com/search?" + urlencode({"q": query}) + "#songs")]
+    for source, target in sources:
+        emit(phase="Searching " + source, progress=None)
+        results = []
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(target, download=False) or {}
+                for entry in info.get("entries") or []:
+                    if not entry:
+                        continue
+                    result = media_from_info(entry, fallback_url=entry.get("url"), engine=engine)
+                    result["source"] = source
+                    if source == "YouTube Music":
+                        video_id = entry.get("id") or (parse_qs(urlparse(result.get("url") or '').query).get("v") or [''])[0]
+                        if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
+                            continue
+                        result.update(url="https://music.youtube.com/watch?" + urlencode({"v": video_id}), mediaType="audio")
+                    if result.get("url"):
+                        results.append(result)
+                    if len(results) >= 5:
+                        break
+        except yt_dlp.utils.DownloadError as exc:
+            failures.append(source_error_message(target, exc))
+        groups.append(results)
+    # Alternate video and music matches so both are visible on a narrow phone.
+    results, seen = [], set()
+    for index in range(5):
+        for group in groups:
+            if index < len(group) and group[index]["url"] not in seen:
+                results.append(group[index]); seen.add(group[index]["url"])
+    if not results:
+        raise SourceError(failures[0] if failures else "No matching public media was found. Try a different search.")
+    return {"complete": True, "results": results}
 
 
 def run_spotify(request):
@@ -428,14 +492,21 @@ def collect_gallery(value, max_items):
     if pending:
         raise WorkerError("This gallery has too many linked pages. Use a single gallery or post.")
     if not files:
-        raise WorkerError("No public gallery media was found. This source may require login or a direct post link.")
+        raise SourceError("No public gallery media was found. This source may require login or a direct post link.")
     return files
 
 
 def run_gallery(request):
     value = request["input"]
     emit(phase="Reading gallery media", progress=None)
-    files = collect_gallery(value, int(request.get("maxItems", 50)))
+    try:
+        files = collect_gallery(value, int(request.get("maxItems", 50)))
+    except WorkerError:
+        raise
+    except Exception as exc:
+        # Extraction has not started writing files. Return a safe provider
+        # explanation without exposing signed URLs or engine internals.
+        raise SourceError(source_error_message(value, exc)) from exc
     first = files[0]
     metadata = first["metadata"]
     media = {
@@ -514,6 +585,17 @@ def run(request):
         raise WorkerError("Invalid media operation.")
     value = request["input"]
     host = (urlparse(value).hostname or "").lower()
+    if is_instagram_reel(value):
+        # Sharing parameters carry no media identity and are unnecessary here.
+        request = dict(request, input=urlunparse(urlparse(value)._replace(query='', fragment='')))
+        try:
+            return run_ytdlp(request)
+        except SourceError as primary:
+            emit(phase="Trying alternate Instagram media lookup", progress=None)
+            try:
+                return run_gallery(request)
+            except SourceError:
+                raise primary
     if host in ("open.spotify.com", "www.open.spotify.com", "spotify.link", "spoti.fi") or value.lower().startswith("spotify:"):
         return run_spotify(request)
     if is_gallery(value):
