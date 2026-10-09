@@ -702,6 +702,12 @@ def run_gallery(request):
                 raise WorkerError("This media exceeds the server's two-hour duration limit.")
             properties = apply_probe(dict(media), probe)
             artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
+            if len(files) > 1:
+                # ZIP integrity alone cannot establish that every contained
+                # video is complete/playable. Verify each before packaging,
+                # using that item's own expected duration, not the first one.
+                verify_result(dict(complete=True, media=properties, filename=artifact.name),
+                              dict(request, kind='download', expectedDuration=number(item['metadata'].get('duration'))))
             if len(files) == 1:
                 media = properties
         artifacts.append(artifact)

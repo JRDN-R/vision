@@ -236,6 +236,30 @@ class RaceTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')
 class VerificationTests(unittest.TestCase):
+    def test_gallery_verifies_each_video_before_zip_and_rejects_truncation(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(worker, 'EVENT_STREAM', io.StringIO()):
+            root = Path(temporary)
+            source = root / 'fixture.mp4'
+            ffmpeg = shutil.which('ffmpeg')
+            subprocess.run([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=96x64:rate=12',
+                            '-t', '0.4', '-c:v', 'libx264', '-y', str(source)], check=True)
+            data = source.read_bytes()
+            class Response:
+                headers = {'Content-Type': 'video/mp4', 'Content-Length': str(len(data))}
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def raise_for_status(self): pass
+                def iter_content(self, size): yield data
+            session = SimpleNamespace(get=lambda *args, **kwargs: Response())
+            files = [dict(url='https://cdn.example.com/video', extension='mp4', session=session,
+                          metadata={'title': 'Gallery', 'duration': duration}) for duration in (.4, 60)]
+            request = dict(directory=str(root), input='https://www.instagram.com/p/example', kind='download',
+                           maxBytes=1000000, maxDuration=7200, quality='max', ffmpeg=ffmpeg)
+            with patch.object(worker, 'collect_gallery', return_value=files), patch.object(worker, 'safe_url', side_effect=lambda value: value):
+                with self.assertRaisesRegex(worker.WorkerError, 'incomplete'):
+                    worker.run_gallery(request)
+            self.assertFalse((root / 'gallery.zip').exists())
+
     def test_real_video_audio_exports_and_corrupt_file_rejection(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(worker, 'EVENT_STREAM', io.StringIO()):
             root = Path(temporary)
