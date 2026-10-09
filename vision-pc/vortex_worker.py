@@ -34,12 +34,20 @@ IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif", "avif", "heic"}
 MEDIA_DEMUXERS = "mov,matroska,webm,ogg,mp3,aac,flac,wav,avi,mpegts,mpeg,m4v,h264,hevc,ape,asf,flv,amr,aiff"
 SPOTIFY_NOTE = "Spotify supplies track metadata. Audio is matched from YouTube Music or YouTube; it is not the original Spotify stream."
 SEARCH_PAGE_SIZE = 8
+DEFAULT_MAX_DURATION = 4 * 60 * 60
 EVENT_STREAM = sys.stdout
 SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 class WorkerError(Exception):
     """A safe, deliberately authored message that may be shown to the user."""
+
+
+class DurationLimitError(WorkerError):
+    """A known local restriction, distinct from provider retrieval failures."""
+
+    def __init__(self, limit):
+        super().__init__(f"This media exceeds Vortex's {int(limit) / 3600:g}-hour duration limit.")
 
 
 class SourceError(WorkerError):
@@ -232,8 +240,8 @@ def export_media(artifact, media, request, *, stem='export'):
     if streams and ((audio and audio_stream is None) or (not audio and video is None)):
         raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
     duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
-    if duration and duration > int(request.get('maxDuration', 7200)):
-        raise WorkerError("This media exceeds the server's two-hour duration limit.")
+    if duration and duration > int(request.get('maxDuration', DEFAULT_MAX_DURATION)):
+        raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
     output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
@@ -357,7 +365,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if search and not inspect:
         raise WorkerError("Select a search result before downloading.")
     cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
-    duration_limit = int(request.get("maxDuration", 7200))
+    duration_limit = int(request.get("maxDuration", DEFAULT_MAX_DURATION))
     options = {
         "quiet": True, "no_warnings": True, "logger": QuietLogger(),
         "noplaylist": True, "playlistend": 5 if search else 1,
@@ -383,7 +391,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise WorkerError("Wait until this live broadcast has finished before downloading.")
         if (number(info.get("duration")) or 0) > duration_limit:
-            raise WorkerError("This media exceeds the server's two-hour duration limit.")
+            raise DurationLimitError(duration_limit)
         if info.get("has_drm"):
             raise WorkerError("DRM-protected media cannot be downloaded.")
 
@@ -455,7 +463,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if music:
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
-        raise WorkerError("This media exceeds the server's two-hour duration limit.")
+        raise DurationLimitError(duration_limit)
     artifact = export_media(artifact, media, dict(request, downloadMode='audio' if audio else request.get('downloadMode', 'video')))
     media.update(quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
@@ -561,8 +569,8 @@ def run_spotify(request):
     if len(songs) != 1:
         raise WorkerError("Spotify could not identify one public track from that link.")
     song = songs[0]
-    if (number(song.duration) or 0) > int(request.get("maxDuration", 7200)):
-        raise WorkerError("This track exceeds the server duration limit.")
+    if (number(song.duration) or 0) > int(request.get("maxDuration", DEFAULT_MAX_DURATION)):
+        raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
     emit(phase="Matching track to a public audio source", progress=None)
     matched = client.get_download_urls([song])
     source = safe_url(matched[0]) if matched else None
@@ -698,8 +706,8 @@ def run_gallery(request):
         if item["extension"] not in IMAGE_EXTENSIONS:
             probe = probe_file(artifact, request.get("ffmpeg"), directory)
             measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
-            if measured_duration > int(request.get("maxDuration", 7200)):
-                raise WorkerError("This media exceeds the server's two-hour duration limit.")
+            if measured_duration > int(request.get("maxDuration", DEFAULT_MAX_DURATION)):
+                raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
             properties = apply_probe(dict(media), probe)
             artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
             if len(files) > 1:
@@ -733,8 +741,8 @@ def verify_result(result, request):
     media = result.get('media') or {}
     if result.get('complete') is not True or not media or media.get('mediaType') == 'unknown':
         raise WorkerError('No playable media was returned.')
-    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 7200)):
-        raise WorkerError('This media exceeds the server duration limit.')
+    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', DEFAULT_MAX_DURATION)):
+        raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
     if request['kind'] == 'download' or result.get('filename'):
         directory = Path(request['directory']).resolve()
         name = result.get('filename')
@@ -763,8 +771,10 @@ def verify_result(result, request):
         if artifact.suffix != '.' + expected or (audio_only and (not audio or video)) or (not audio_only and (not video or video.get('codec_name') != 'h264')):
             raise WorkerError('The requested media format could not be verified.')
         duration = number((data.get('format') or {}).get('duration'))
-        if not duration or duration > int(request.get('maxDuration', 7200)):
+        if not duration:
             raise WorkerError('The media duration could not be verified.')
+        if duration > int(request.get('maxDuration', DEFAULT_MAX_DURATION)):
+            raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
         expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
         if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
             raise WorkerError('The source returned an incomplete media file.')
@@ -826,6 +836,10 @@ def main():
             else:
                 emit(**run(request))
         return 0
+    except DurationLimitError as exc:
+        # Only this authored policy error crosses the process boundary. Raw
+        # provider failures remain hidden and other adapters can still succeed.
+        emit(error=str(exc), category='duration_limit')
     except WorkerError as exc:
         from vortex_race import PUBLIC_ERROR
         detail = str(exc).lower()

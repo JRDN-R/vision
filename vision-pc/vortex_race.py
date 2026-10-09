@@ -23,7 +23,7 @@ MAX_MEMORY = 2 * 1024**3
 MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
-              'authentication', 'rate_limited', 'network', 'unsupported'}
+              'authentication', 'rate_limited', 'network', 'unsupported', 'duration_limit'}
 
 
 def diagnostic(engine, category, started):
@@ -165,7 +165,7 @@ def quality_rank(result, request):
 
 
 def race(request, *, adapters=None, attempt_factory=Attempt):
-    from vortex_worker import WorkerError, emit
+    from vortex_worker import DEFAULT_MAX_DURATION, DurationLimitError, WorkerError, emit
     directory = Path(request['directory']).resolve()
     selected = [a for a in (ADAPTERS if adapters is None else adapters)
                 if a.compatible(request['input']) and a.configured(request)]
@@ -271,6 +271,10 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                         emit(**progress)
                         pending[0].progress_event = None
                     time.sleep(.05)
+        if any(attempt.category == 'duration_limit' for attempt in attempts):
+            # The request supplies the trusted server limit. Never forward an
+            # adapter's error string or reject before alternatives have tried.
+            raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
         raise WorkerError(PUBLIC_ERROR)
     finally:
         # Reap descendants before deleting files, including on Windows.
