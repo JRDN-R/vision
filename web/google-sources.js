@@ -76,7 +76,7 @@ async function driveAccessToken(run){
  }
  const provider=new accountSDK.GoogleAuthProvider();
  provider.addScope(DRIVE_SCOPE);provider.setCustomParameters({login_hint:user.email||'',prompt:'consent'});
- const result=await accountSDK.reauthenticateWithPopup(user,provider);
+ const result=await accountSDK.reauthenticateWithPopup(user,provider,accountSDK.browserPopupRedirectResolver);
  assertDriveCurrent(run);
  if(result.user.uid!==run.uid)throw new Error('Choose the same Google account you used to sign in to Vision.');
  const credential=accountSDK.GoogleAuthProvider.credentialFromResult(result);

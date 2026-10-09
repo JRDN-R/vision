@@ -32,7 +32,7 @@ function fixture(){
  const c={console,URL,URLSearchParams,Headers,Response,Blob,File,Uint8Array,ReadableStream,TextEncoder,AbortController,DOMException,setTimeout,clearTimeout,Date,Map,Set,Intl,
   window:{google},google,location:{origin:'https://vision.test'},document:{createElement:tag=>new Element(tag),body:new Element(),head:new Element()},$:el,
   VISION_FIREBASE:{apiKey:'public-test-key',appId:'1:123:web:abc'},accountFirebase:{currentUser:{uid:'user-a',email:'a@example.com',providerData:[{providerId:'google.com'}]}},accountAuthEpoch:1,accountSignedIn:()=>control.signedIn,
-  accountSDK:{GoogleAuthProvider:Provider,reauthenticateWithPopup:async(user,provider)=>{consents.push({user,provider});return control.reauth(user);}},
+  accountSDK:{GoogleAuthProvider:Provider,browserPopupRedirectResolver:{},reauthenticateWithPopup:async(user,provider,resolver)=>{assert.equal(resolver,c.accountSDK.browserPopupRedirectResolver,'Drive consent needs the explicit popup resolver');consents.push({user,provider});return control.reauth(user);}},
   state:{nodes:[]},selected:null,nodeById:id=>c.state.nodes.find(node=>node.id===id),busy:false,ioBusy:false,boardImportRunning:false,youtubeImportRunning:false,
   boardAsyncContext:()=>({project:c.state,epoch:c.accountAuthEpoch}),boardAsyncCurrent:context=>context.project===c.state&&context.epoch===c.accountAuthEpoch,
   boardImportContext:()=>c.boardAsyncContext(),boardImportCurrent:context=>c.boardAsyncCurrent(context),

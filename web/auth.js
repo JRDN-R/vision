@@ -5,7 +5,12 @@ const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='visio
 // Keep it in the URL so a refresh/reset attempt survives without sessionStorage.
 const accountContinueURL=(()=>{try{const url=new URL(location.href);return /^https?:$/.test(url.protocol)&&url.searchParams.get('continue')==='vortex'?new URL('./vortex/',url).href:'';}catch{return '';}})();
 let accountForwarding=false;
+let accountRestoring=true,accountRestoreFailed=false,accountObserver=null;
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
+async function accountWait(promise,message){
+ let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),12000);})]);}
+ finally{clearTimeout(timer);}
+}
 function accountContinue(user){
  if(!accountContinueURL||!user?.uid)return false;
  if(!accountForwarding){accountForwarding=true;accountGateLocked=true;accountUpdateGate();location.replace(accountContinueURL);}
@@ -15,18 +20,22 @@ function accountSignedIn(){return !!(!accountGateLocked&&accountFirebase?.curren
 function accountUpdateGate(){
  const gate=$('accountGate');if(!gate)return;const locked=!accountCanUseApp();
  document.documentElement.classList.toggle('account-locked',locked);gate.hidden=!locked;
+ document.documentElement.classList.toggle('account-restoring',accountRestoring);
+ document.documentElement.classList.toggle('account-restore-failed',accountRestoreFailed);
+ gate.setAttribute('aria-busy',String(accountRestoring));
  for(const el of document.querySelectorAll('body > :not(script):not(#accountGate)')){
   if(locked){if(!el.hasAttribute('data-account-inert'))el.setAttribute('data-account-inert',el.inert?'true':'false');el.inert=true;}
   else if(el.hasAttribute('data-account-inert')){el.inert=el.getAttribute('data-account-inert')==='true';el.removeAttribute('data-account-inert');}
  }
  if(locked)for(const dialog of document.querySelectorAll('dialog[open]:not(#whyVisionDialog)'))dialog.close();
- $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening Vortex…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to Vortex.':'Sign in to save your work, or explore without an account.');
- for(const id of ['accountGateSignIn','accountGateEmailSignIn','accountGateEmailCreate','accountGatePasswordReset']){const el=$(id);if(el)el.disabled=accountBusy||trialStarting;}
+ $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening Vortex…':accountRestoring?'Opening your workspace…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to Vortex.':'Sign in to save your work, or explore without an account.');
+ $('accountGateRetry').hidden=!accountRestoreFailed;
+ for(const id of ['accountGateSignIn','accountGateEmailSignIn','accountGateEmailCreate','accountGatePasswordReset']){const el=$(id);if(el)el.disabled=accountBusy||trialStarting||accountRestoring||accountRestoreFailed;}
  trialPaint();$('accountGateSignIn').hidden=false;$('accountGateEmailArea').hidden=false;
  $('accountGateOnline').hidden=true;
  $('accountGateDetail').textContent=location.protocol==='file:'?'The interface is stored in this HTML file. Connect online to sign in and use your FUPCJ Server projects. Google opens a secure sign-in window; the workspace stays here.':'Your projects, files, and saved settings are stored on FUPCJ Server. Sign in with Google or email/password.';
  if(accountContinueURL){$('accountGateTitle').textContent='Continue to Vortex';$('accountGateDetail').textContent='One Vision account for Vision, Venture, and Vortex. After sign-in, you’ll return to Vortex.';}
- if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountBusy?gate:$('accountGateSignIn');target.focus({preventScroll:true});}
+ if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountRestoring||accountBusy?gate:accountRestoreFailed?$('accountGateRetry'):$('accountGateSignIn');target.focus({preventScroll:true});}
 }
 function accountUsesGoogle(){try{return localStorage.getItem(ACCOUNT_MODE)==='google';}catch{return cloudAuth?.kind==='firebase-google';}}
 function accountMode(value){try{if(value)localStorage.setItem(ACCOUNT_MODE,value);else localStorage.removeItem(ACCOUNT_MODE);}catch{}}
@@ -60,7 +69,7 @@ async function accountSetUser(user){
  const uid=user?.uid||'';
  if(accountLastUID===uid)return;
  if(user&&(trialSession||cloudAuth?.kind==='trial'))await trialFinish({message:''});
- accountLastUID=uid;accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
+ accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
  if(typeof cancelGoogleSources==='function')cancelGoogleSources();
  accountClearRunKey();
  if(typeof consoleClosePreview==='function')consoleClosePreview();
@@ -69,27 +78,36 @@ async function accountSetUser(user){
  projectHealthCache=null;
  // Change the local recovery scope before any account requests resume.
  await projectSwitchAccountScope(user?uid:'signed-out');
+ accountLastUID=uid;
  accountGateLocked=false;
  accountPaint();
 }
 async function accountLoad(){
  if(accountLoadPromise)return accountLoadPromise;
+ accountRestoring=true;accountRestoreFailed=false;accountError='';accountUpdateGate();
  accountLoadPromise=(async()=>{
   const bundled=window.VisionFirebaseSDK;
   if(location.protocol==='file:'&&!bundled)throw new Error('This local copy is missing its bundled sign-in runtime. Download a fresh Vision-Local.html.');
-  const [appSDK,authSDK]=bundled?[bundled.app,bundled.auth]:await Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js')]);
+  const [appSDK,authSDK]=bundled?[bundled.app,bundled.auth]:await accountWait(Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js')]),'Sign-in could not load. Check your connection and retry.');
   accountSDK=authSDK;const app=appSDK.initializeApp(VISION_FIREBASE,'vision-account-login');
-  accountFirebase=location.protocol==='file:'?authSDK.initializeAuth(app,{persistence:[authSDK.indexedDBLocalPersistence,authSDK.browserLocalPersistence,authSDK.inMemoryPersistence]}):authSDK.getAuth(app);
+  // Restoring a local session must not wait for Google's popup iframe on iOS.
+  // Load that resolver only when the user actually asks to sign in with Google.
+  if(!accountFirebase)accountFirebase=authSDK.initializeAuth(app,{persistence:[authSDK.indexedDBLocalPersistence,authSDK.browserLocalPersistence,location.protocol==='file:'?authSDK.inMemoryPersistence:authSDK.browserSessionPersistence]});
   authSDK.useDeviceLanguage(accountFirebase);
-  await accountFirebase.authStateReady();
-  await accountSetUser(accountFirebase.currentUser);
-  authSDK.onAuthStateChanged(accountFirebase,user=>{
+  await accountWait(accountFirebase.authStateReady(),'Your sign-in could not be restored. Check your connection and retry.');
+  // Finish persistence setup before showing a login button, preserving the
+  // user's click for the popup instead of doing storage work after it.
+  if(location.protocol!=='file:'&&!accountFirebase.currentUser)await accountWait(authSDK.setPersistence(accountFirebase,authSDK.browserLocalPersistence),'Sign-in storage could not be prepared. Retry to reconnect.');
+  accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(accountFirebase.currentUser));
+  await accountWait(accountTransition,'Your workspace could not open. Retry to reconnect.');
+  if(!accountObserver)accountObserver=authSDK.onAuthStateChanged(accountFirebase,user=>{
    if(accountLastUID===(user?.uid||''))return;
    accountGateLocked=true;accountUpdateGate();accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(user));
    void accountTransition.then(()=>{if(user&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
   });
+  if(accountFirebase.currentUser&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();}
   return accountFirebase;
- })().catch(error=>{accountLoadPromise=null;throw error;});
+ })().catch(error=>{accountLoadPromise=null;accountRestoreFailed=true;accountError=accountErrorText(error);throw error;}).finally(()=>{accountRestoring=false;accountPaint();});
  return accountLoadPromise;
 }
 async function accountIdToken(){
@@ -102,9 +120,8 @@ async function accountIdToken(){
 async function accountGoogleSignIn(){
  if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
  try{const local=location.protocol==='file:'?localGoogleConnect('signin'):null;if(local)local.catch(()=>{});const auth=await accountLoad(),provider=new accountSDK.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});
-  await accountSDK.setPersistence(auth,accountSDK.browserLocalPersistence);
   const credential=local?await local:null;
-  const result=credential?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken)):await accountSDK.signInWithPopup(auth,provider);
+  const result=credential?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken)):await accountSDK.signInWithPopup(auth,provider,accountSDK.browserPopupRedirectResolver);
   await accountTransition;await accountSetUser(result.user);
   if(accountForwarding)return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
@@ -119,7 +136,6 @@ async function accountEmailAction(action,prefix){
  if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
  try{
   const auth=await accountLoad(),{email,password}=accountEmailFields(prefix);
-  await accountSDK.setPersistence(auth,accountSDK.browserLocalPersistence);
   if(action==='reset'){await accountSDK.sendPasswordResetEmail(auth,email);accountError='Password reset email sent to '+email+'.';return;}
   if(password.length<6)throw new Error('Enter a password with at least 6 characters.');
   const result=action==='create'?await accountSDK.createUserWithEmailAndPassword(auth,email,password):await accountSDK.signInWithEmailAndPassword(auth,email,password);
@@ -181,6 +197,7 @@ openCloudSettings=function(message=''){
 $('cloudSignIn').onclick=()=>openAccountDialog('Vision requires account sign-in.');
 $('cloudSignOut').onclick=()=>void accountGoogleSignOut();
 $('accountGateSignIn').onclick=()=>void accountGoogleSignIn();
+$('accountGateRetry').onclick=()=>{void accountLoad().catch(()=>{});};
 function accountGateEvent(event){
  if(accountCanUseApp())return;
  const inGate=!!event.target?.nodeType&&$('accountGate').contains(event.target);
@@ -193,9 +210,8 @@ new MutationObserver(()=>{if(!accountCanUseApp())accountUpdateGate();}).observe(
 accountUpdateGate();
 // Restore Firebase identity before opening any application controls or project recovery.
 const accountReady=Promise.resolve().then(async()=>{
- accountMode('google');cloudAuth=null;saveCloudSession();accountClearRunKey();await projectSwitchAccountScope('signed-out');
- let timer;
- try{await Promise.race([accountLoad(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Sign-in could not load. Check your connection, then press Sign in.')),12000);})]);}
- catch(error){accountError=accountErrorText(error);}finally{clearTimeout(timer);accountPaint();}
+ accountMode('google');cloudAuth=null;saveCloudSession();accountClearRunKey();
+ // accountSetUser selects and clears the account scope after identity restores.
+ // An unrelated recovery database must never prevent Firebase from starting.
+ try{await accountLoad();}catch(error){accountError=accountErrorText(error);accountPaint();}
 });
-void accountReady.then(()=>{if(projectAccountUID()){void projectRefreshAccountList();void accountRestoreRunKey();}});

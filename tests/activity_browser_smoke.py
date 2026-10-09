@@ -26,7 +26,7 @@ window.__vortex={available:true,jobs:[{id:'vortex-1',userId:'a'.repeat(64),kind:
 window.__owner={uid:'owner',email:'one@example.test',getIdToken:async force=>{window.__tokenCalls.push(!!force);return 'FAKE-TEST-TOKEN';}};
 window.__auth={currentUser:window.__owner};
 window.__appSDK={initializeApp:()=>({})};
-window.__authSDK={getAuth:()=>window.__auth,useDeviceLanguage:()=>{},setPersistence:async()=>{},browserLocalPersistence:'local',GoogleAuthProvider:class{setCustomParameters(){}},onAuthStateChanged:(auth,cb)=>{window.__callback=cb;queueMicrotask(()=>cb(auth.currentUser));},signOut:async()=>{window.__auth.currentUser=null;window.__callback(null);},signInWithPopup:async()=>{}};
+window.__authSDK={getAuth:()=>window.__auth,initializeAuth:()=>window.__auth,useDeviceLanguage:()=>{},setPersistence:async()=>{},browserLocalPersistence:'local',GoogleAuthProvider:class{setCustomParameters(){}},onAuthStateChanged:(auth,cb)=>{window.__callback=cb;queueMicrotask(()=>cb(auth.currentUser));},signOut:async()=>{window.__auth.currentUser=null;window.__callback(null);},signInWithPopup:async()=>{}};
 window.fetch=async(url,options)=>{
  window.__reads.push({url:String(url),headers:options.headers,credentials:options.credentials,method:options.method||'GET',body:options.body});
  if(window.__mode==='hold')return new Promise(resolve=>window.__held.push(()=>resolve(new Response(JSON.stringify(window.__data),{status:200}))));

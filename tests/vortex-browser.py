@@ -33,7 +33,7 @@ FIREBASE = r'''
  const login=async()=>{if(window.__loginError)throw {code:window.__loginError};window.__switchUser('alice');return {user:auth.currentUser};};
  window.addEventListener('storage',event=>{if(event.key==='__fixtureUID'){auth.currentUser=identity(event.newValue);listeners.forEach(fn=>fn(auth.currentUser));}});
  window.VisionFirebaseSDK={app:{getApps:()=>[],initializeApp:(config,name)=>{__firebaseCalls.push({config,name});return {name};}},auth:{
-   getAuth:()=>auth,useDeviceLanguage:()=>{},onAuthStateChanged:(_,fn)=>{listeners.push(fn);return ()=>{};},
+   getAuth:()=>{document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},initializeAuth:(_,options)=>{window.__authInitOptions=options;document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},browserPopupRedirectResolver:'POPUP',useDeviceLanguage:()=>{},onAuthStateChanged:(_,fn)=>{listeners.push(fn);return ()=>{};},
    setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},browserLocalPersistence:'LOCAL',
    GoogleAuthProvider:class{setCustomParameters(value){window.__providerOptions=value;localStorage.setItem('__fixtureProvider',JSON.stringify(value));}},
    signInWithPopup:login,signInWithEmailAndPassword:login,createUserWithEmailAndPassword:login,
@@ -502,6 +502,7 @@ def verify_login_gateway(browser):
         for view in ('vision', 'venture'):
             target = URL.replace('vortex/', '?view=' + view)
             page.goto(target)
+            page.locator('#accountGate').wait_for(state='attached')
             page.locator('#accountGate').wait_for(state='hidden')
             if view == 'venture':
                 page.locator('#visionVenture').wait_for(state='visible')

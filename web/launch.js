@@ -24,7 +24,7 @@ function trialPaint(){
 }
 async function trialStart({resume=false}={}){
  await accountReady;
- if(accountContinueURL||accountSignedIn()||accountBusy||trialStarting||trialSession)return;
+ if(accountContinueURL||accountRestoring||accountRestoreFailed||accountSignedIn()||accountBusy||trialStarting||trialSession)return;
  trialStarting=true;accountError='';accountPaint();
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
  try{
