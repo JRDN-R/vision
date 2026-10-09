@@ -98,8 +98,12 @@ function Invoke-VortexProgram([string]$File, [string[]]$Arguments, [int]$Timeout
                 throw (New-Object TimeoutException("Timed out waiting for $([IO.Path]::GetFileName($File)). Rerun setup after checking the installer."))
             }
         }
-        $Stdout = ([string](Get-Content -LiteralPath $OutPath -Raw -ErrorAction SilentlyContinue)).Replace("`0", '').Trim()
-        $Stderr = ([string](Get-Content -LiteralPath $ErrPath -Raw -ErrorAction SilentlyContinue)).Replace("`0", '').Trim()
+        # Get-Content -Raw on an empty file can produce AutomationNull in PS 5.1,
+        # even through an inline string cast. File.ReadAllText returns a string.
+        [string]$Stdout = [IO.File]::ReadAllText($OutPath)
+        [string]$Stderr = [IO.File]::ReadAllText($ErrPath)
+        $Stdout = $Stdout.Replace("`0", '').Trim()
+        $Stderr = $Stderr.Replace("`0", '').Trim()
         $Output = ($Stdout, $Stderr) -join "`n"
         if ($ShowOutput -and $Output.Trim()) { Write-Host $Output.Trim() }
         return [pscustomobject]@{ ExitCode = $Process.ExitCode; Output = $Output.Trim(); Stdout = $Stdout; Stderr = $Stderr }
