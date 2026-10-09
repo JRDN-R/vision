@@ -288,7 +288,8 @@ def run():
             assert page.locator('#selection').is_visible(), 'Changing quality hid selected media'
             assert '3840 × 2160' in page.locator('#mediaInfo').inner_text()
             assert page.locator('#processing').is_hidden(), 'Background quality lookup exposed the full processing display'
-            assert page.locator('#downloadButton').is_disabled()
+            assert page.locator('#downloadButton').is_enabled(), 'Background quality checks must not gray out Download'
+            assert 'Checking Max quality' in page.locator('#downloadStatus').inner_text()
             quality_inspect.update(status='complete', phase='Media ready', progress=None, media=VIDEO, results=[VIDEO])
             refresh(page)
             assert page.locator('#selection').get_attribute('aria-busy') is None
@@ -296,8 +297,15 @@ def run():
             # Failed refreshes retain the prior metadata and selected quality.
             page.locator('input[name=quality][value=small]').check()
             failed_quality = next_job(page, api, quality_inspect['id'])
+            page.locator('#downloadButton').click()
+            page.locator('#downloadButton').click()
+            assert 'Download queued' in page.locator('#downloadStatus').inner_text()
+            assert not [job for job in api.jobs['alice'] if job['kind'] == 'download'], 'A queued tap must wait for the quality lookup'
             failed_quality.update(status='error', error='Fixture provider temporarily unavailable')
             refresh(page)
+            assert not [job for job in api.jobs['alice'] if job['kind'] == 'download'], 'Failed quality lookup must not fall back to Balanced'
+            assert 'not started' in page.locator('#downloadStatus').inner_text()
+            assert page.locator('#downloadButton').is_enabled()
             assert page.locator('#selection').is_visible()
             assert page.locator('input[name=quality][value=max]').is_checked()
             assert '3840 × 2160' in page.locator('#mediaInfo').inner_text()
@@ -314,6 +322,53 @@ def run():
             refresh(page)
             assert page.locator('input[name=quality][value=max]').is_checked()
             assert page.locator('#selection').is_visible()
+
+            # Tap immediately after changing quality. The enabled button should
+            # remember the clicked format, submit once after inspection, and
+            # start the browser download once the conversion finishes.
+            page.locator('input[name=quality][value=balanced]').check()
+            assert page.locator('#downloadButton').is_enabled()
+            page.locator('#downloadButton').click()
+            page.locator('#downloadButton').click()
+            assert 'Download queued' in page.locator('#downloadStatus').inner_text()
+            preparing = next_job(page, api, latest_quality['id'])
+            assert preparing['kind'] == 'inspect' and preparing['quality'] == 'balanced'
+            assert not [job for job in api.jobs['alice'] if job['kind'] == 'download']
+            preparing.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
+            refresh(page)
+            queued_download = next_job(page, api, preparing['id'])
+            assert queued_download['kind'] == 'download' and queued_download['quality'] == 'balanced'
+            assert queued_download['downloadMode'] == 'video' and queued_download['videoFormat'] == 'mov'
+            page.locator('#downloadStatus').get_by_text('Saving automatically when ready', exact=False).wait_for()
+            page.locator('#downloadButton').click()
+            assert len([job for job in api.jobs['alice'] if job['kind'] == 'download']) == 1, 'Repeated taps duplicated queued jobs'
+            queued_download.update(status='processing', phase='Converting media', progress=36)
+            refresh(page)
+            assert '36%' in page.locator('#downloadStatus').inner_text()
+            queued_download.update(status='complete', phase='Ready', progress=100, filename='Harbor.mp4', size=24,
+                                   format='mp4', resultReady=True, completedAt=time.time(), expiresAt=time.time()+5*86400)
+            with page.expect_download() as auto_event:
+                refresh(page)
+            assert auto_event.value.suggested_filename == 'Harbor.mp4'
+            page.locator('#downloadFallback').wait_for(state='visible')
+            assert 'File ready' in page.locator('#downloadStatus').inner_text()
+            ticket_calls = len([call for call in api.calls if call['path'].endswith('/ticket')])
+            refresh(page)
+            assert len([call for call in api.calls if call['path'].endswith('/ticket')]) == ticket_calls, 'Auto-save requested a second ticket'
+            with page.expect_download() as manual_event:
+                page.locator('#downloadFallback').click()
+            assert manual_event.value.suggested_filename == 'Harbor.mp4'
+            before_manual = len(api.jobs['alice'])
+            with page.expect_download() as retry_event:
+                page.locator('#downloadButton').click()
+            assert retry_event.value.suggested_filename == 'Harbor.mp4'
+            assert len(api.jobs['alice']) == before_manual, 'Saving again should not re-encode a ready file'
+            page.locator('input[name=quality][value=max]').check()
+            restore_max = next_job(page, api, queued_download['id'])
+            restore_max.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
+            refresh(page)
+            assert page.locator('#downloadFallback').is_hidden()
+
             api.compatible_exports = False
             before = len(api.jobs['alice'])
             page.locator('#downloadButton').click()
@@ -321,8 +376,8 @@ def run():
             assert len(api.jobs['alice']) == before, 'An outdated worker must not silently return MKV'
             api.compatible_exports = True
             page.locator('#downloadButton').click()
-            page.locator('#activityList .activity-item').wait_for()
-            downloaded = api.jobs['alice'][0]
+            downloaded = next_job(page, api, restore_max['id'])
+            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
             assert downloaded['kind'] == 'download' and downloaded['quality'] == 'max'
             assert downloaded['downloadMode'] == 'video' and downloaded['videoFormat'] == 'mov'
             assert downloaded['requestId'] != inspected['requestId']
@@ -336,9 +391,9 @@ def run():
             page.screenshot(path=str(SHOTS/f'vortex-processing-{width}.png'), full_page=True)
             # Recovery is fetched from the server, with the same shared account session.
             page.reload()
-            page.locator('#activityList .activity-item').wait_for()
+            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
             assert page.locator('#authGate').is_hidden()
-            assert page.locator('#activityList').get_by_text(VIDEO['title'], exact=True).count() == 1
+            assert page.locator(f'[data-id="{downloaded["id"]}"] .item-title').inner_text() == VIDEO['title']
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
             assert page.locator('#progressPercent').inner_text() == '27%'
             downloaded.update(status='complete', phase='Ready', progress=100, filename='Harbor.mp4', size=24,
@@ -397,9 +452,9 @@ def run():
             # Cancel active work; completed/expired work exposes different actions.
             page.locator('input[name=downloadMode][value=audio]').check()
             page.locator('#outputFormat').select_option('mp3')
+            previous_job = api.jobs['alice'][0]['id']
             page.locator('#downloadButton').click()
-            page.locator('#activityList .activity-item').wait_for()
-            cancelled = api.jobs['alice'][0]
+            cancelled = next_job(page, api, previous_job)
             assert cancelled['downloadMode'] == 'audio' and cancelled['audioFormat'] == 'mp3'
             assert cancelled['quality'] == 'max'
             page.locator(f'[data-id="{cancelled["id"]}"] button').click()
@@ -469,9 +524,10 @@ def run():
             assert page.locator('#qualityControls').is_hidden() and page.locator('#originalAudio').is_visible()
             for value in ('flac', '1411 kbps', '48 kHz', 'Stereo'):
                 assert value in page.locator('#mediaInfo').inner_text()
+            before_audio_job = api.jobs['alice'][0]['id']
             page.locator('#downloadButton').click()
-            page.wait_for_function('!document.querySelector("#downloadButton").disabled')
-            assert api.jobs['alice'][0]['quality'] == 'max'
+            audio_download = next_job(page, api, before_audio_job)
+            assert audio_download['kind'] == 'download' and audio_download['quality'] == 'max'
 
             # Menu traps focus, shares links, closes with Escape, and respects motion settings.
             page.locator('#menuButton').click()

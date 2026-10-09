@@ -6,6 +6,7 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
 Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selectedQuality:'balanced', qualityTimer:0, quietInspection:false, qualityRefreshing:false});
 Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a', searchQuery:'', searchNextPage:null, searchSeen:new Set(), searchBusy:false, appendSearch:false, searchFailed:false, lookupGeneration:0});
+Object.assign(state, {queuedDownload:null, submittingDownload:null, autoSaveJobs:new Map(), readyDownload:null, downloadError:''});
 const searchObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
   if (entries.some(entry => entry.isIntersecting) && !state.searchFailed) void loadMoreResults();
 }, {rootMargin:'240px'}) : null;
@@ -31,6 +32,8 @@ function accountChanged(identity) {
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
   state.jobs = []; state.selected = null; state.inspectId = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
+  // A click-to-save intent belongs only to the account and tab that created it.
+  state.queuedDownload = null; state.submittingDownload = null; state.autoSaveJobs.clear(); state.readyDownload = null; state.downloadError = '';
   state.olderJobs.clear(); state.cursor = null; state.olderLoaded = false; $('loadOlder').hidden = true; $('loadOlder').disabled = false;
   clearTimeout(state.qualityTimer); state.quietInspection = false; state.qualityRefreshing = false; $('selection').removeAttribute('aria-busy');
   if (state.avatarURL) URL.revokeObjectURL(state.avatarURL);
@@ -40,6 +43,7 @@ function accountChanged(identity) {
   $('sourceInput').value = ''; $('activityList').replaceChildren(); $('resultList').replaceChildren();
   $('accountName').textContent = ''; $('accountEmail').textContent = ''; $('profileImage').removeAttribute('src'); $('profileImage').hidden = true;
   $('selection').hidden = true; $('searchResults').hidden = true; $('processing').hidden = true; $('emptyActivity').hidden = false; $('connectionStatus').textContent = ''; $('downloadButton').disabled = false; $('sourceSubmit').disabled = false;
+  renderDownloadStatus();
   notice();
   $('authGate').hidden = !!identity; $('application').hidden = !identity; $('application').inert = !identity;
   if (!identity) { $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
@@ -142,7 +146,7 @@ async function refresh() {
     if (!state.olderLoaded) state.cursor = data.nextCursor || null;
     $('loadOlder').hidden = !state.cursor;
     $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
-    applyInspection(); renderJobs(); renderProcessing();
+    applyInspection(); renderJobs(); renderProcessing(); checkAutoSaves(); renderDownloadStatus();
   } catch (error) {
     if (epoch !== accountEpoch() || generation !== state.pollEpoch) return;
     state.failures++; $('connectionStatus').textContent = error.message; $('connectionStatus').classList.add('offline');
@@ -176,7 +180,7 @@ async function inspect(input = $('sourceInput').value.trim(), {background = fals
   if (!append) resetSearch();
   state.appendSearch = append;
   $('sourceSubmit').disabled = true; $('searchResults').hidden = !append;
-  if (background) { state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); $('downloadButton').disabled = true; }
+  if (background) { state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); renderDownloadStatus(); }
   else if (!append) { clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
   if (append) { state.searchBusy = true; state.searchFailed = false; renderSearchFooter(); }
   try {
@@ -189,19 +193,27 @@ async function inspect(input = $('sourceInput').value.trim(), {background = fals
     if (epoch !== accountEpoch() || generation !== state.lookupGeneration) return;
     rememberInspection(job.id); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
   } catch (error) { if (epoch === accountEpoch() && generation === state.lookupGeneration) { finishQualityRefresh(false); if (append) searchFailure(error.message); else notice(error.message, true); scheduleRefresh(1000); } }
-  finally { if (epoch === accountEpoch() && generation === state.lookupGeneration) { state.pending = false; $('sourceSubmit').disabled = false; } }
+  finally { if (epoch === accountEpoch() && generation === state.lookupGeneration) { state.pending = false; $('sourceSubmit').disabled = false; void flushDownloadQueue(); } }
 }
 function finishQualityRefresh(success = true) {
   if (!state.qualityRefreshing) return;
-  state.qualityRefreshing = false; $('selection').removeAttribute('aria-busy'); $('downloadButton').disabled = false;
+  state.qualityRefreshing = false; $('selection').removeAttribute('aria-busy');
   if (!success && state.selected) {
+    // Never silently submit Balanced after the user explicitly queued Max.
+    if (state.queuedDownload && !state.queuedDownload.fromRetry && state.queuedDownload.input === state.selected.url) {
+      state.queuedDownload = null;
+      state.downloadError = 'Quality lookup failed. Your queued download was not started. Please choose the quality and try again.';
+    }
     state.quality = state.selectedQuality;
     for (const radio of document.querySelectorAll('input[name=quality]')) radio.checked = radio.value === state.quality;
   }
+  renderDownloadStatus();
 }
 function queueQualityRefresh() {
   clearTimeout(state.qualityTimer);
-  state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); $('downloadButton').disabled = true;
+  state.downloadError = '';
+  state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true');
+  renderDownloadStatus();
   state.qualityTimer = setTimeout(() => {
     if (!state.selected?.url || !user()) return;
     if (state.pending) { queueQualityRefresh(); return; }
@@ -290,7 +302,8 @@ function selectMedia(media) {
   if (!entries.length) { const empty = document.createElement('div'); empty.className = 'metadata-empty'; empty.textContent = 'This source did not report technical details.'; info.append(empty); }
   for (const [label, value] of entries) { const cell = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; cell.append(dt, dd); info.append(cell); }
   renderOutputControls();
-  $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; $('downloadButton').disabled = false; notice();
+  $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; notice();
+  renderDownloadStatus(); void flushDownloadQueue();
 }
 function renderOutputControls() {
   const media = state.selected; if (!media) return;
@@ -304,22 +317,158 @@ function renderOutputControls() {
   $('outputFormat').value = audio ? state.audioFormat : state.videoFormat;
   $('qualityControls').hidden = audio || original; $('originalAudio').hidden = !audio && !original;
   $('originalAudio').textContent = original ? media.mediaType === 'image' ? 'Original image' : 'Images stay original · videos use MP4' : 'Highest available audio source';
+  renderDownloadStatus();
 }
-async function downloadSelected(input = state.selected?.url, quality = state.quality, options = null) {
-  if (!input || !user() || state.pending || state.qualityRefreshing) return;
-  const epoch = accountEpoch(); state.pending = true; $('downloadButton').disabled = true;
+// A user's click is a durable, idempotent intent for the chosen format. The
+// quality lookup may still be running, but it must never disable this button.
+function downloadOptions() {
+  return {downloadMode:state.selected?.mediaType === 'audio' ? 'audio' : state.downloadMode,
+    videoFormat:state.selected?.mediaType === 'gallery' ? 'mp4' : state.videoFormat,
+    audioFormat:state.audioFormat};
+}
+function downloadKey(input, quality, options) {
+  return JSON.stringify([input, options.downloadMode === 'audio' ? 'max' : quality, options]);
+}
+function currentDownloadKey() {
+  return state.selected?.url ? downloadKey(state.selected.url, state.quality, downloadOptions()) : '';
+}
+function qualityLabel(value) { return {small:'Small', balanced:'Balanced', max:'Max'}[value] || value; }
+function discardQueuedDownload() {
+  if (state.queuedDownload && !state.queuedDownload.fromRetry) state.queuedDownload = null;
+  state.downloadError = '';
+}
+function renderDownloadStatus() {
+  const button = $('downloadButton'), status = $('downloadStatus'), fallback = $('downloadFallback');
+  const key = currentDownloadKey(), input = state.selected?.url;
+  const queued = key && state.queuedDownload?.key === key, submitting = key && state.submittingDownload?.key === key;
+  const running = key && [...state.autoSaveJobs.entries()].find(([, intent]) => intent.key === key);
+  const ready = key && state.readyDownload?.key === key && seconds(state.readyDownload.expiresAt) > Date.now() + 5000 ? state.readyDownload : null;
+  let message = '', working = false;
+  if (queued) {
+    message = state.qualityRefreshing ? 'Download queued · Checking ' + qualityLabel(state.quality) + ' quality…' : 'Download queued · Preparing your request…';
+    working = true;
+  } else if (submitting) {
+    message = 'Submitting your download to FUPCJ Server…'; working = true;
+  } else if (running) {
+    const job = getJob(running[0]);
+    const progress = Number.isFinite(Number(job?.progress)) && job?.progress != null ? ' · ' + Math.round(job.progress) + '%' : '';
+    message = running[1].delivering ? 'File ready · Preparing secure download…' : (job?.phase || (job?.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress + ' · Saving automatically when ready';
+    working = true;
+  } else if (ready) {
+    message = 'File ready. Download started automatically where supported. You can also save it below.';
+  } else if (state.downloadError && input) {
+    message = state.downloadError;
+  } else if (state.qualityRefreshing && input) {
+    message = 'Checking ' + qualityLabel(state.quality) + ' quality… You can tap Download now.';
+    working = true;
+  }
+  button.disabled = false;
+  button.dataset.working = String(working);
+  status.textContent = message; status.hidden = !message;
+  if (message) button.setAttribute('aria-describedby', 'downloadStatus');
+  else button.removeAttribute('aria-describedby');
+  fallback.hidden = !ready;
+  if (ready) { fallback.href = ready.url; fallback.download = ready.filename; }
+  else { fallback.removeAttribute('href'); fallback.removeAttribute('download'); }
+}
+function triggerBrowserSave(url, filename) {
+  // The backend sets Content-Disposition: attachment. Cross-origin download
+  // attributes alone are insufficient, especially on mobile Safari.
+  const link = document.createElement('a');
+  link.href = url; link.download = filename || 'media'; link.rel = 'noreferrer'; link.hidden = true;
+  document.body.append(link);
+  try { link.click(); } finally { link.remove(); }
+}
+async function flushDownloadQueue() {
+  const intent = state.queuedDownload;
+  if (!intent || !user() || state.pending || state.submittingDownload) return;
+  if (!intent.fromRetry) {
+    if (state.selected?.url !== intent.input || currentDownloadKey() !== intent.key) {
+      state.queuedDownload = null; renderDownloadStatus(); return;
+    }
+    if (state.qualityRefreshing) return;
+  }
+  state.queuedDownload = null; state.submittingDownload = intent;
+  const epoch = accountEpoch(); state.pending = true; renderDownloadStatus();
   try {
-    options ||= {downloadMode:state.selected?.mediaType === 'audio' ? 'audio' : state.downloadMode, videoFormat:state.selected?.mediaType === 'gallery' ? 'mp4' : state.videoFormat, audioFormat:state.audioFormat};
-    // Older PC workers ignore unknown JSON fields and may deliver MKV/Opus.
-    // Require the export contract before submitting a newly selected format.
+    // An older processor may ignore export settings and return MKV or Opus.
     const capability = await request('/vortex/capabilities');
     if (epoch !== accountEpoch()) return;
-    if (!capability.videoFormats?.includes(options.videoFormat) || !capability.audioFormats?.includes(options.audioFormat)) throw new Error('Update Vision PC on FUPCJ Server to enable MP4/MOV video and M4A/MP3/WAV audio downloads, then try again.');
-    const job = await submitJob('download', input, options.downloadMode === 'audio' ? 'max' : quality, options);
+    if (!capability.videoFormats?.includes(intent.options.videoFormat) || !capability.audioFormats?.includes(intent.options.audioFormat)) {
+      throw new Error('Update Vision PC on FUPCJ Server to enable MP4/MOV video and M4A/MP3/WAV audio downloads, then try again.');
+    }
+    const job = await submitJob('download', intent.input, intent.quality, intent.options);
     if (epoch !== accountEpoch()) return;
-    notice('Accepted. You can leave this page while FUPCJ Server works.'); renderJobs(); renderProcessing(); scheduleRefresh(500);
-  } catch (error) { if (epoch === accountEpoch()) { notice(error.message, true); scheduleRefresh(1000); } }
-  finally { if (epoch === accountEpoch()) { state.pending = false; $('downloadButton').disabled = false; } }
+    state.autoSaveJobs.set(job.id, {...intent, delivering:false});
+    notice('Download accepted. Keep Vortex open to save automatically when the file is ready; it will also remain in Recent Activity.');
+    renderJobs(); renderProcessing(); checkAutoSaves(); renderDownloadStatus(); scheduleRefresh(500);
+  } catch (error) {
+    if (epoch === accountEpoch()) { state.downloadError = error.message; notice(error.message, true); renderDownloadStatus(); scheduleRefresh(1000); }
+  } finally {
+    if (epoch === accountEpoch()) {
+      state.pending = false;
+      if (state.submittingDownload === intent) state.submittingDownload = null;
+      renderDownloadStatus(); void flushDownloadQueue();
+    }
+  }
+}
+function downloadSelected(input = state.selected?.url, quality = state.quality, options = null) {
+  if (!input || !user()) return;
+  const fromRetry = options !== null;
+  const chosen = options || downloadOptions(), effectiveQuality = chosen.downloadMode === 'audio' ? 'max' : quality;
+  const key = downloadKey(input, effectiveQuality, chosen);
+  if (!fromRetry && state.readyDownload?.key === key && seconds(state.readyDownload.expiresAt) > Date.now() + 5000) {
+    triggerBrowserSave(state.readyDownload.url, state.readyDownload.filename);
+    return;
+  }
+  // Repeated taps must not create duplicate server jobs or duplicate downloads.
+  if (state.queuedDownload?.key === key || state.submittingDownload?.key === key ||
+      [...state.autoSaveJobs.values()].some(intent => intent.key === key)) { renderDownloadStatus(); return; }
+  state.downloadError = '';
+  state.queuedDownload = {key, input, quality:effectiveQuality, options:chosen, fromRetry};
+  renderDownloadStatus(); void flushDownloadQueue();
+}
+function validateTicketURL(job, ticket) {
+  const url = new URL(ticket.url, BACKEND);
+  if (url.origin !== new URL(BACKEND).origin || url.pathname !== '/api' + jobPath(job.id) + '/file' || url.username || url.password) {
+    throw new Error('FUPCJ Server returned an invalid download address.');
+  }
+  return url;
+}
+function checkAutoSaves() {
+  if (document.hidden) return; // Browser downloads should not fire from hidden tabs.
+  for (const [id, intent] of state.autoSaveJobs) {
+    if (intent.delivering) continue;
+    const job = getJob(id);
+    if (!job) continue;
+    if (job.status === 'complete' && job.resultReady) {
+      intent.delivering = true; renderDownloadStatus();
+      void (async () => {
+        const epoch = accountEpoch();
+        try {
+          const ticket = await request(jobPath(id) + '/ticket', {method:'POST'});
+          if (epoch !== accountEpoch() || state.autoSaveJobs.get(id) !== intent) return;
+          const url = validateTicketURL(job, ticket);
+          state.readyDownload = {key:intent.key, input:intent.input, filename:job.filename || 'media', url:url.href, expiresAt:ticket.expiresAt};
+          state.autoSaveJobs.delete(id); renderDownloadStatus();
+          triggerBrowserSave(url.href, job.filename || 'media');
+          notice('Your file is ready. The download should start automatically. If your browser blocks it, tap Save file below or use Recent Activity.');
+        } catch (error) {
+          if (epoch === accountEpoch() && state.autoSaveJobs.get(id) === intent) {
+            state.autoSaveJobs.delete(id);
+            state.downloadError = 'File is ready, but automatic saving failed. Open Recent Activity to save it.';
+            notice('Automatic download could not start: ' + error.message + '. Use Recent Activity to save the file.', true);
+            renderDownloadStatus();
+          }
+        }
+      })();
+    } else if (['complete', 'error', 'cancelled', 'expired'].includes(job.status)) {
+      state.autoSaveJobs.delete(id);
+      state.downloadError = job.error || (job.status === 'complete' ? 'File was not available to save.' : 'Download ' + job.status + '.');
+      notice('Automatic download was not started: ' + state.downloadError, true);
+      renderDownloadStatus();
+    }
+  }
 }
 
 function thumbnail(value) {
@@ -395,8 +544,7 @@ function actionCurrent(id, epoch) { return !!user() && state.actionId === id && 
 async function prepareTicket(job, epoch = state.actionEpoch) {
   const ticket = await request(jobPath(job.id) + '/ticket', {method:'POST'});
   if (!actionCurrent(job.id, epoch)) return;
-  const url = new URL(ticket.url, BACKEND);
-  if (url.origin !== new URL(BACKEND).origin || url.pathname !== '/api' + jobPath(job.id) + '/file' || url.username || url.password) throw new Error('FUPCJ Server returned an invalid download address.');
+  const url = validateTicketURL(job, ticket);
   state.ticket = {url:url.href, expiresAt:ticket.expiresAt};
   const save = $('saveFile'); save.href = url.href; save.download = job.filename || 'media'; save.rel = 'noreferrer'; save.hidden = false;
   $('actionStatus').textContent = (job.expiresAt ? expiryLabel(job.expiresAt) + '. ' : '') + 'Save file opens the download. On iPhone, use the browser’s Share menu to save to Files.';
@@ -464,18 +612,19 @@ document.addEventListener('keydown', event => {
 });
 $('sourceForm').onsubmit = event => { event.preventDefault(); void inspect(); };
 $('sourceInput').addEventListener('paste', () => { setTimeout(() => { const value = $('sourceInput').value.trim(); if (safeURL(value)) void inspect(value); }, 0); });
-$('sourceInput').addEventListener('input', () => { if (state.searchQuery && $('sourceInput').value.trim() !== state.searchQuery) { resetSearch(); $('searchResults').hidden = true; } if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { clearTimeout(state.qualityTimer); finishQualityRefresh(); state.selected = null; $('selection').hidden = true; } });
+$('sourceInput').addEventListener('input', () => { if (state.searchQuery && $('sourceInput').value.trim() !== state.searchQuery) { resetSearch(); $('searchResults').hidden = true; } if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { clearTimeout(state.qualityTimer); discardQueuedDownload(); finishQualityRefresh(); state.selected = null; $('selection').hidden = true; renderDownloadStatus(); } });
 $('clearResults').onclick = () => { state.lookupGeneration++; state.pending = false; $('sourceSubmit').disabled = false; resetSearch(); rememberInspection(''); $('searchResults').hidden = true; };
 $('loadMoreResults').onclick = () => void loadMoreResults();
-for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { state.quality = radio.value; if (state.selected?.url) queueQualityRefresh(); };
-for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio.onchange = () => { state.downloadMode = radio.value; renderOutputControls(); };
-$('outputFormat').onchange = () => { state[state.downloadMode === 'audio' ? 'audioFormat' : 'videoFormat'] = $('outputFormat').value; };
-$('downloadButton').onclick = () => void downloadSelected(); $('refreshButton').onclick = () => void refresh();
+for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { discardQueuedDownload(); state.quality = radio.value; if (state.selected?.url) queueQualityRefresh(); };
+for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio.onchange = () => { discardQueuedDownload(); state.downloadMode = radio.value; renderOutputControls(); };
+$('outputFormat').onchange = () => { discardQueuedDownload(); state[state.downloadMode === 'audio' ? 'audioFormat' : 'videoFormat'] = $('outputFormat').value; renderDownloadStatus(); };
+$('downloadButton').onclick = () => downloadSelected(); $('refreshButton').onclick = () => void refresh();
+$('downloadFallback').onclick = event => { if (!state.readyDownload || seconds(state.readyDownload.expiresAt) <= Date.now() + 5000) { event.preventDefault(); notice('This secure save link expired. Open Recent Activity and choose Save file to get a new link.', true); renderDownloadStatus(); } };
 $('loadOlder').onclick = () => void loadOlder();
 $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
 $('retryJob').onclick = () => { const job = getJob(state.actionId); if (!job) return; $('actionDialog').close(); void downloadSelected(job.media?.url || job.input, job.quality || 'balanced', {downloadMode:job.downloadMode || (job.media?.mediaType === 'audio' ? 'audio' : 'video'), videoFormat:job.videoFormat || 'mp4', audioFormat:job.audioFormat || 'm4a'}); };
 $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
-document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { void refresh(); void loadProfile(); } });
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { checkAutoSaves(); void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { checkAutoSaves(); void refresh(); void loadProfile(); } });
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { $('authStatus').textContent = authError(error); });
