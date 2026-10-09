@@ -165,3 +165,34 @@ body::before {
 /* Paint Vortex's shell during Firebase hydration, without flashing its sign-in form. */
 .auth-restoring{position:fixed;z-index:10;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--surface);box-shadow:0 8px 28px #0006;color:var(--muted);font-size:11px;white-space:nowrap;pointer-events:none}
 .auth-restoring-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--beige)}
+
+/* The sidebar is a compact, account-owned download archive. Only the list scrolls. */
+.navigation .nav-history{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;margin-top:15px}
+.nav-history-divider{height:1px;flex:none;background:linear-gradient(90deg,transparent 0%,var(--beige) 50%,transparent 100%);opacity:.45;margin:0 7px 16px}
+.nav-history-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:0 8px;margin-bottom:9px}
+.nav-history-heading h2{font-size:11px;letter-spacing:.075em;text-transform:uppercase;color:var(--beige);font-weight:600}
+.history-count{font:10px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);font-variant-numeric:tabular-nums}
+.history-list{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4e4b48 transparent;-webkit-overflow-scrolling:touch}
+.history-item{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 2px;border-bottom:1px solid var(--border)}
+.history-source{display:block;flex:none;border-radius:5px;text-decoration:none}
+.history-source .thumbnail{width:42px;height:34px;border-radius:5px}
+.history-source .thumbnail svg{width:18px;height:18px}
+.history-info{display:block;flex:1 1 0;min-width:0;text-align:left;background:transparent;padding:2px 0;border:0;color:var(--text)}
+.history-info:hover .history-item-title{color:var(--beige)}
+.history-item-title{display:block;font-size:11px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.history-item-meta{display:block;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.history-item.active .history-item-meta{color:var(--beige)}
+.history-more{flex:none;align-self:flex-start;margin-left:8px;min-height:38px}
+.history-empty{padding:15px 9px;color:var(--muted);font-size:11px;line-height:1.5}
+.history-status{flex:none;color:var(--danger);font-size:10px;overflow-wrap:anywhere;margin:6px 8px}
+.history-status:empty{display:none}
+.history-retention{flex:none;color:var(--muted);font-size:9px;line-height:1.5;padding:10px 8px 9px}
+.navigation .nav-footer{margin-top:0;flex:none}
+.reexport-panel{display:grid;gap:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:#131718}
+.reexport-panel>.fine-print{font-size:11px;margin:0 0 2px}
+.reexport-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted)}
+.reexport-field select{width:100%;min-height:42px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:8px 10px;font:inherit;font-size:13px}
+.reexport-field select:focus-visible{outline:2px solid var(--beige);outline-offset:3px}
+.reexport-panel .primary{width:100%}
+@media(max-height:550px){.navigation .nav-history{margin-top:8px}.nav-history-divider{margin-bottom:8px}.history-retention{display:none}.nav-heading{margin-bottom:8px}}
+@media(prefers-reduced-motion:reduce){.history-list{scroll-behavior:auto}}

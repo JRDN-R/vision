@@ -447,36 +447,36 @@ def run():
             api.compatible_exports = True
             page.locator('#downloadButton').click()
             downloaded = next_job(page, api, restore_max['id'])
-            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
+            page.locator(f'#activityList [data-id="{downloaded["id"]}"]').wait_for()
             assert downloaded['kind'] == 'download' and downloaded['quality'] == 'max'
             assert downloaded['downloadMode'] == 'video' and downloaded['videoFormat'] == 'mov'
             assert downloaded['requestId'] != inspected['requestId']
             downloaded.update(status='processing', phase='Downloading source media', progress=27, media=VIDEO)
             refresh(page)
-            assert page.locator(f'[data-id="{downloaded["id"]}"] .source-thumbnail').get_attribute('href') == VIDEO['url']
+            assert page.locator(f'#activityList [data-id="{downloaded["id"]}"] .source-thumbnail').get_attribute('href') == VIDEO['url']
             assert page.locator('#progressPercent').inner_text() == '27%'
             page.locator('#terminalLine').get_by_text('Downloading source media', exact=True).wait_for()
             page.wait_for_timeout(350)
             no_overflow(page)
             page.screenshot(path=str(SHOTS/f'vortex-processing-{width}.png'), full_page=True)
-            # Recovery is fetched from the server, with the same shared account session.
+            # Accepted work remains in the sidebar archive after a page reload.
             page.reload()
-            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
+            page.locator('#historyList .history-item').wait_for(state='attached')
             assert page.locator('#authGate').is_hidden()
-            assert page.locator(f'[data-id="{downloaded["id"]}"] .item-title').inner_text() == VIDEO['title']
+            assert page.locator('#activityList .activity-item').count() == 0, 'Past sessions must not appear in current activity'
+            assert page.locator('#historyList').get_by_text(VIDEO['title'], exact=True).count() == 1
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
-            assert page.locator('#progressPercent').inner_text() == '27%'
+            assert page.locator('#processing').is_hidden(), 'Past session progress must not show on main page'
             downloaded.update(status='complete', phase='Ready', progress=100, filename='Harbor.mp4', size=24,
                               format='mp4', resultReady=True, completedAt=time.time(), expiresAt=time.time()+5*86400)
             refresh(page)
-            row = page.locator(f'[data-id="{downloaded["id"]}"]')
-            assert row.locator('.item-status').inner_text() == 'Ready to save'
-            assert row.locator('.source-thumbnail').get_attribute('target') == '_blank'
-            assert row.locator('.source-thumbnail').get_attribute('href') == VIDEO['url']
-            assert row.locator('.item-expiry').inner_text().startswith('Deletes in ')
-            assert '5d' in row.locator('.item-expiry').inner_text() or '4d' in row.locator('.item-expiry').inner_text()
+            row = page.locator(f'#historyList [data-id="{downloaded["id"]}"]')
+            assert row.locator('.history-item-meta').inner_text().startswith('Ready')
+            assert row.locator('.history-source').get_attribute('target') == '_blank'
+            assert row.locator('.history-source').get_attribute('href') == VIDEO['url']
             page.screenshot(path=str(SHOTS/f'vortex-ready-{width}.png'), full_page=True)
-            row.locator('button').click()
+            page.locator('#menuButton').click()
+            row.locator('.history-actions').click()
             page.locator('#saveFile').wait_for(state='visible')
             assert page.locator('#shareFile').is_hidden(), 'Unavailable native sharing must not be advertised'
             assert page.locator('#saveFile').get_attribute('href').startswith(BACKEND+'/api/vortex/jobs/'+downloaded['id']+'/file?ticket=')
@@ -489,7 +489,7 @@ def run():
                 # Browser API stubs exercise two-tap native sharing without an OS UI.
                 page.evaluate('''Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
                     Object.defineProperty(navigator,'share',{configurable:true,value:async value=>{window.__shared={name:value.files[0].name,size:value.files[0].size,title:value.title};}});''')
-                row.locator('button').click()
+                row.locator('.history-actions').click()
                 page.locator('#shareFile').wait_for(state='visible')
                 page.locator('#shareFile').click()
                 page.get_by_role('button', name='Share file', exact=True).wait_for()
@@ -498,19 +498,14 @@ def run():
                 assert page.evaluate('__shared') == dict(name='Harbor.mp4', size=19, title=VIDEO['title'])
                 page.locator('#actionDialog .close-dialog').click()
                 page.evaluate("Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>false})")
-                row.locator('button').click()
+                row.locator('.history-actions').click()
                 page.locator('#shareFile').click()
                 page.locator('#actionStatus').get_by_text('This file cannot be shared by your browser. Use Save file instead.').wait_for()
                 assert page.locator('#saveFile').is_visible()
                 page.locator('#actionDialog .close-dialog').click()
 
-            # Long press is a discoverable alternative to the same overflow actions.
-            if width < 760:
-                row.dispatch_event('pointerdown', {'pointerType':'touch','clientX':80,'clientY':400})
-                page.locator('#actionDialog').wait_for(state='visible')
-                row.dispatch_event('pointerup', {'pointerType':'touch','clientX':80,'clientY':400})
-            else:
-                row.locator('button').click()
+            # Every past item exposes a three-dot action menu, including on mobile.
+            row.locator('.history-actions').click()
             page.locator('#deleteJob').click()
             page.locator('#confirmNo').click()
             assert row.count() == 1
@@ -518,6 +513,8 @@ def run():
             page.locator('#confirmYes').click()
             row.wait_for(state='detached')
             assert downloaded not in api.jobs['alice']
+            assert page.locator(f'#historyList [data-id="{downloaded["id"]}"]').count() == 0
+            page.locator('#closeMenu').click()
 
             # Cancel active work; completed/expired work exposes different actions.
             page.locator('input[name=downloadMode][value=audio]').check()
@@ -527,24 +524,34 @@ def run():
             cancelled = next_job(page, api, previous_job)
             assert cancelled['downloadMode'] == 'audio' and cancelled['audioFormat'] == 'mp3'
             assert cancelled['quality'] == 'max'
-            page.locator(f'[data-id="{cancelled["id"]}"] button').click()
-            assert page.locator('#deleteJob').is_hidden()
+            page.locator(f'#activityList [data-id="{cancelled["id"]}"] .icon-button').click()
+            assert page.locator('#deleteJob').is_visible(), 'Queued jobs can be deleted permanently'
+            assert page.locator('#cancelJob').is_visible(), 'Cancelled jobs remain in history'
             page.locator('#cancelJob').click()
             page.locator('#actionDialog').wait_for(state='hidden')
             assert api.jobs['alice'][0]['status'] == 'cancelled'
-            assert page.locator(f'[data-id="{cancelled["id"]}"] .item-status').inner_text() == 'Cancelled'
+            assert page.locator(f'#activityList [data-id="{cancelled["id"]}"] .item-status').inner_text() == 'Cancelled'
             page.locator('input[name=downloadMode][value=video]').check()
-            page.locator(f'[data-id="{cancelled["id"]}"] button').click()
+            page.locator(f'#activityList [data-id="{cancelled["id"]}"] .icon-button').click()
             page.locator('#retryJob').click()
+            assert page.locator('#reexportPanel').is_visible()
+            assert page.locator('#reexportMode').input_value() == 'audio'
+            assert page.locator('#reexportFormat').input_value() == 'mp3'
+            page.locator('#reexportFormat').select_option('wav')
+            page.locator('#reexportSubmit').click()
             retried = next_job(page, api, cancelled['id'])
-            assert retried['downloadMode'] == 'audio' and retried['audioFormat'] == 'mp3', 'Repeat downloads must keep the original output choice'
+            assert retried['downloadMode'] == 'audio' and retried['audioFormat'] == 'wav', 'New format must be applied'
+            assert cancelled['audioFormat'] == 'mp3', 'Original export must remain unchanged'
             retried.update(status='cancelled')
             expired = api.new_job(status='expired', phase='File expired', media={**VIDEO, 'title':'Expired archive'}, expiresAt=time.time()-1)
             refresh(page)
-            page.locator(f'[data-id="{expired["id"]}"] button').click()
+            assert page.locator(f'#activityList [data-id="{expired["id"]}"]').count() == 0
+            page.locator('#menuButton').click()
+            page.locator(f'#historyList [data-id="{expired["id"]}"] .history-actions').click()
             assert page.locator('#saveFile').is_hidden() and page.locator('#cancelJob').is_hidden()
             assert page.locator('#retryJob').is_visible() and page.locator('#deleteJob').is_visible()
             page.locator('#actionDialog .close-dialog').click()
+            page.locator('#closeMenu').click()
 
             # Search results are server data, rendered as text, then re-inspected.
             page.locator('#sourceInput').fill('evening music')
@@ -638,13 +645,16 @@ def run():
                 for index in range(102):
                     api.new_job(status='cancelled', phase='Cancelled', media={**VIDEO, 'title':f'Older media {index}'})
                 refresh(page)
+                page.locator('#menuButton').click()
                 assert page.locator('#loadOlder').is_visible()
                 expected = len([job for job in api.jobs['alice'] if job['kind'] == 'download'])
                 page.locator('#loadOlder').click()
-                page.wait_for_function('count=>document.querySelectorAll("#activityList .activity-item").length===count', arg=expected)
+                page.wait_for_function('count=>document.querySelectorAll("#historyList .history-item").length===count', arg=expected)
                 assert page.locator('#loadOlder').is_hidden()
                 refresh(page)
-                assert page.locator('#activityList .activity-item').count() == expected, 'Refresh collapsed loaded history'
+                assert page.locator('#historyList .history-item').count() == expected, 'Refresh collapsed loaded history'
+                assert page.locator('#activityList .activity-item').count() < expected, 'Older history leaked into main activity'
+                page.locator('#closeMenu').click()
 
             # An in-flight Alice history result must not reappear after switching to Bob.
             # The same boundary must protect a delayed private Vision avatar.
@@ -673,6 +683,7 @@ def run():
                 pass  # The old identity's request was aborted.
             page.wait_for_timeout(150)
             assert page.locator('#activityList .activity-item').count() == 0
+            assert page.locator('#historyList .history-item').count() == 0, 'Previous account history leaked'
             assert page.locator('#selection').is_hidden() and page.locator('#searchResults').is_hidden()
             assert page.locator('#sourceInput').input_value() == ''
             assert page.locator('#accountEmail').inner_text() == 'bob@example.test'
