@@ -376,8 +376,8 @@ def run():
             assert len(api.jobs['alice']) == before, 'An outdated worker must not silently return MKV'
             api.compatible_exports = True
             page.locator('#downloadButton').click()
-            page.locator('#activityList .activity-item').wait_for()
-            downloaded = api.jobs['alice'][0]
+            downloaded = next_job(page, api, restore_max['id'])
+            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
             assert downloaded['kind'] == 'download' and downloaded['quality'] == 'max'
             assert downloaded['downloadMode'] == 'video' and downloaded['videoFormat'] == 'mov'
             assert downloaded['requestId'] != inspected['requestId']
@@ -393,7 +393,7 @@ def run():
             page.reload()
             page.locator('#activityList .activity-item').wait_for()
             assert page.locator('#authGate').is_hidden()
-            assert page.locator('#activityList').get_by_text(VIDEO['title'], exact=True).count() == 1
+            assert page.locator(f'[data-id="{downloaded["id"]}"] .item-title').inner_text() == VIDEO['title']
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
             assert page.locator('#progressPercent').inner_text() == '27%'
             downloaded.update(status='complete', phase='Ready', progress=100, filename='Harbor.mp4', size=24,
@@ -452,9 +452,9 @@ def run():
             # Cancel active work; completed/expired work exposes different actions.
             page.locator('input[name=downloadMode][value=audio]').check()
             page.locator('#outputFormat').select_option('mp3')
+            previous_job = api.jobs['alice'][0]['id']
             page.locator('#downloadButton').click()
-            page.locator('#activityList .activity-item').wait_for()
-            cancelled = api.jobs['alice'][0]
+            cancelled = next_job(page, api, previous_job)
             assert cancelled['downloadMode'] == 'audio' and cancelled['audioFormat'] == 'mp3'
             assert cancelled['quality'] == 'max'
             page.locator(f'[data-id="{cancelled["id"]}"] button').click()
@@ -524,9 +524,10 @@ def run():
             assert page.locator('#qualityControls').is_hidden() and page.locator('#originalAudio').is_visible()
             for value in ('flac', '1411 kbps', '48 kHz', 'Stereo'):
                 assert value in page.locator('#mediaInfo').inner_text()
+            before_audio_job = api.jobs['alice'][0]['id']
             page.locator('#downloadButton').click()
-            page.wait_for_function('!document.querySelector("#downloadButton").disabled')
-            assert api.jobs['alice'][0]['quality'] == 'max'
+            audio_download = next_job(page, api, before_audio_job)
+            assert audio_download['kind'] == 'download' and audio_download['quality'] == 'max'
 
             # Menu traps focus, shares links, closes with Escape, and respects motion settings.
             page.locator('#menuButton').click()
