@@ -27,6 +27,15 @@ function rememberInspection(id) { state.inspectId = id; try { if (user()) sessio
 function upsert(job) { if (!job?.id) throw new Error('FUPCJ Server did not confirm this media job.'); const i = state.jobs.findIndex(item => item.id === job.id); if (i < 0) state.jobs.unshift(job); else state.jobs[i] = job; }
 function imageSource(image, value) { const url = safeURL(value); image.hidden = !url; if (url && image.getAttribute('src') !== url) { image.src = url; image.referrerPolicy = 'no-referrer'; } if (!url) image.removeAttribute('src'); image.onerror = () => { image.hidden = true; }; }
 
+// The shell is safe to paint immediately, but remains inert until Firebase
+// finishes restoring the shared Vision session. Never show sign-in while pending.
+function settleAuth(identity) {
+  $('authRestoring').hidden = true;
+  $('authGate').hidden = !!identity;
+  $('application').hidden = !identity;
+  $('application').inert = !identity;
+  $('application').removeAttribute('aria-busy');
+}
 function accountChanged(identity) {
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
@@ -41,7 +50,7 @@ function accountChanged(identity) {
   $('accountName').textContent = ''; $('accountEmail').textContent = ''; $('profileImage').removeAttribute('src'); $('profileImage').hidden = true;
   $('selection').hidden = true; $('searchResults').hidden = true; $('processing').hidden = true; $('emptyActivity').hidden = false; $('connectionStatus').textContent = ''; $('downloadButton').disabled = false; $('sourceSubmit').disabled = false;
   notice();
-  $('authGate').hidden = !!identity; $('application').hidden = !identity; $('application').inert = !identity;
+  settleAuth(identity);
   if (!identity) { $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
   $('profileInitial').textContent = (identity.displayName || identity.email || 'V').slice(0, 1).toUpperCase();
   $('accountName').textContent = identity.displayName || 'Your Vision account'; $('accountEmail').textContent = identity.email || '';
@@ -478,4 +487,4 @@ $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.exp
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { void refresh(); void loadProfile(); } });
 void loadMenuAnimation();
-void initAuth(accountChanged).catch(error => { $('authStatus').textContent = authError(error); });
+void initAuth(accountChanged).catch(error => { settleAuth(null); $('authStatus').textContent = authError(error); });
