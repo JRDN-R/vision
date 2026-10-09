@@ -50,14 +50,16 @@
         <button id="sourceSubmit" class="icon-button" type="submit" aria-label="Find media"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button>
       </form>
       <p id="notice" class="notice" role="status" hidden></p>
-      <section id="searchResults" class="search-results" aria-label="Search results" hidden><div class="section-heading"><h2>Search results</h2><button id="clearResults" class="text-button" type="button">Close</button></div><div id="resultList"></div></section>
+      <section id="searchResults" class="search-results" aria-label="Search results" hidden><div class="section-heading"><h2>Search results</h2><button id="clearResults" class="text-button" type="button">Close</button></div><div id="resultList"></div><div class="search-footer"><p id="searchStatus" class="fine-print" role="status"></p><button id="loadMoreResults" class="text-button" type="button" hidden>Load more results</button></div></section>
       <section id="selection" class="selection" aria-label="Selected media" hidden>
-        <div class="selection-summary"><img id="selectionImage" alt="" hidden><div><h1 id="selectionTitle"></h1><p id="selectionSource"></p></div></div>
+        <div class="selection-summary"><a id="selectionSourceLink" class="source-thumbnail" target="_blank" rel="noopener noreferrer" aria-label="Open original source in a new tab"><img id="selectionImage" alt="" hidden></a><div><h1 id="selectionTitle"></h1><p id="selectionSource"></p></div></div>
         <div class="media-controls">
           <dl id="mediaInfo" class="media-info"></dl>
           <div class="download-controls">
+            <fieldset id="downloadModeControls" class="quality-controls"><legend class="sr-only">Download media type</legend><label><input type="radio" name="downloadMode" value="video" checked><span>Video</span></label><label><input type="radio" name="downloadMode" value="audio"><span>Audio only</span></label></fieldset>
+            <label id="outputFormatControl" class="format-control"><span>File format</span><select id="outputFormat" aria-label="Download file format"></select></label>
             <fieldset id="qualityControls" class="quality-controls"><legend class="sr-only">Video quality</legend><label><input type="radio" name="quality" value="small"><span>Small</span></label><label><input type="radio" name="quality" value="balanced" checked><span>Balanced</span></label><label><input type="radio" name="quality" value="max"><span>Max</span></label></fieldset>
-            <p id="originalAudio" class="original-audio" hidden>Highest available audio quality</p>
+            <p id="originalAudio" class="original-audio" hidden>Highest available audio source</p>
             <button id="downloadButton" class="primary download-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg><span>Download</span></button>
           </div>
         </div>

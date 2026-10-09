@@ -4,6 +4,8 @@ import copy
 import io
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -149,7 +151,8 @@ class VortexAdapterTests(unittest.TestCase):
                 (root / 'media.mp4').write_bytes(b'0123456789')
                 return info
         with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp, 'YoutubeDL', FakeYoutubeDL), \
-                patch.object(worker, 'probe_file', return_value={}):
+                patch.object(worker, 'probe_file', return_value={}), \
+                patch.object(worker, 'export_media', side_effect=lambda artifact, *_args: artifact):
             result = worker.run_ytdlp(self.request())
         self.assertTrue(result['complete'])
         self.assertEqual(result['filename'], 'media.mp4')
@@ -197,6 +200,29 @@ class VortexAdapterTests(unittest.TestCase):
         with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
             result = worker.run_ytdlp(self.request(input='evening music', kind='inspect'))
         self.assertEqual(result['results'][0]['source'], 'YouTube Music')
+
+    def test_real_search_pagination_and_thumbnail_lists(self):
+        def extract(ydl, value, download=False, **unused):
+            entries = [dict(_type='url', ie_key='Youtube', id=f'video{i:06}', title=f'Result {i}',
+                            url=f'https://www.youtube.com/watch?v=video{i:06}',
+                            thumbnails=[{'url':f'https://i.ytimg.com/vi/video{i:06}/small.jpg', 'width':120, 'height':90},
+                                        {'url':f'https://i.ytimg.com/vi/video{i:06}/hqdefault.jpg', 'width':480, 'height':360}])
+                       for i in range(18)]
+            return ydl.process_ie_result(dict(_type='playlist', id='search', title='Search', entries=entries,
+                extractor='youtube:search', extractor_key='YoutubeSearch', webpage_url=value), download=False)
+        with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            pages = [worker.run_ytdlp(self.request(input='test clips', kind='inspect', searchPage=page)) for page in range(4)]
+        self.assertEqual([len(page['results']) for page in pages], [16, 16, 4, 0])
+        self.assertEqual([page['searchNextPage'] for page in pages], [1, 2, None, None])
+        self.assertFalse({item['url'] for item in pages[0]['results']} & {item['url'] for item in pages[1]['results']})
+        self.assertTrue(all(item['thumbnail'].endswith('/hqdefault.jpg') for page in pages for item in page['results']))
+        fallback = worker.media_from_info(dict(id='abcdefghijk', url='https://www.youtube.com/watch?v=abcdefghijk'))
+        self.assertEqual(fallback['thumbnail'], 'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg')
+        self.assertIsNone(worker.media_from_info(dict(id='../../private', url='https://www.youtube.com/watch?v=invalid'))['thumbnail'])
+
+    def test_extract_audio_from_combined_video_stream(self):
+        result = self.choose([self.video(1080)], 'max', audio=True)
+        self.assertEqual(result['acodec'], 'aac')
 
     def test_selected_long_media_still_obeys_duration_limit(self):
         with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info',
@@ -268,6 +294,85 @@ class VortexAdapterTests(unittest.TestCase):
         with patch.object(worker, 'collect_gallery', return_value=files):
             with self.assertRaisesRegex(worker.WorkerError, 'size limit'):
                 worker.run_gallery(self.request(input='https://instagram.com/p/example', maxBytes=2))
+
+
+@unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg and ffprobe required for real conversion checks')
+class VortexConversionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.ffmpeg = shutil.which('ffmpeg')
+        self.output = patch.object(worker, 'EVENT_STREAM', io.StringIO())
+        self.output.start()
+        self.source = self.root / 'source.webm'
+        subprocess.run([self.ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=96x64:rate=12',
+                        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '1',
+                        '-c:v', 'libvpx-vp9', '-threads', '1', '-c:a', 'libopus', str(self.source)],
+                       check=True, capture_output=True, timeout=30)
+
+    def tearDown(self):
+        self.output.stop()
+        self.temp.cleanup()
+
+    def request(self, **changes):
+        return dict(directory=str(self.root), ffmpeg=self.ffmpeg, quality='max', maxBytes=1000000, **changes)
+
+    def test_real_video_and_audio_exports_have_requested_containers_and_codecs(self):
+        for extension, mode, video_codec, audio_codec in [('mp4', 'video', 'h264', 'aac'),
+                ('mov', 'video', 'h264', 'aac'), ('m4a', 'audio', None, 'aac'),
+                ('mp3', 'audio', None, 'mp3'), ('wav', 'audio', None, 'pcm_s16le')]:
+            with self.subTest(extension=extension):
+                artifact = self.root / f'input-{extension}.webm'
+                shutil.copyfile(self.source, artifact)
+                media = dict(mediaType='video', duration=1, url='https://www.youtube.com/watch?v=abcdefghijk')
+                path = worker.export_media(artifact, media, self.request(downloadMode=mode,
+                    **{'videoFormat' if mode == 'video' else 'audioFormat':extension}), stem='result-' + extension)
+                self.assertEqual(path.suffix, '.' + extension)
+                self.assertFalse(artifact.exists())
+                data = worker.probe_file(path, self.ffmpeg, self.root)
+                streams = {stream['codec_type']:stream['codec_name'] for stream in data['streams']}
+                self.assertEqual(streams.get('video'), video_codec)
+                self.assertEqual(streams['audio'], audio_codec)
+                self.assertEqual(media['ext'], extension)
+                self.assertEqual(media['acodec'], audio_codec)
+                if mode == 'audio':
+                    self.assertEqual(media['mediaType'], 'audio')
+                    self.assertIsNone(media['width'])
+                else:
+                    self.assertEqual((media['width'], media['height']), (96, 64))
+                self.assertGreater(path.stat().st_size, 0)
+
+    def test_no_audio_and_oversize_exports_fail_instead_of_returning_invalid_files(self):
+        silent = self.root / 'silent.webm'
+        subprocess.run([self.ffmpeg, '-v', 'error', '-i', str(self.source), '-an', '-c:v', 'copy', str(silent)],
+                       check=True, capture_output=True, timeout=30)
+        with self.assertRaisesRegex(worker.WorkerError, 'no audio track'):
+            worker.export_media(silent, {'mediaType':'video'}, self.request(downloadMode='audio'))
+        request = self.request(downloadMode='audio', audioFormat='wav')
+        request['maxBytes'] = 100
+        with self.assertRaisesRegex(worker.WorkerError, 'size limit'):
+            worker.export_media(self.source, {'mediaType':'video'}, request)
+        with self.assertRaises(worker.WorkerError):
+            worker.export_media(self.root.parent / 'outside.webm', {}, self.request())
+
+    def test_gallery_videos_are_converted_inside_the_zip_too(self):
+        content = self.source.read_bytes()
+        class Response:
+            headers = {'Content-Length':str(len(content)), 'Content-Type':'video/webm'}
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def raise_for_status(self): pass
+            def iter_content(self, _size): yield content
+        files = [dict(url='https://cdn.example.com/video.webm', metadata={'title':'Gallery video'},
+                      extension='webm', session=SimpleNamespace(get=lambda *_args, **_kwargs:Response())) for _ in range(2)]
+        with patch.object(worker, 'collect_gallery', return_value=files), patch.object(worker, 'safe_url', side_effect=lambda value:value):
+            result = worker.run_gallery(self.request(input='https://instagram.com/p/gallery', kind='download'))
+        with zipfile.ZipFile(self.root / result['filename']) as archive:
+            self.assertEqual(archive.namelist(), ['export-001.mp4', 'export-002.mp4'])
+            artifact = self.root / 'check.mp4'
+            artifact.write_bytes(archive.read('export-001.mp4'))
+        codecs = {s['codec_name'] for s in worker.probe_file(artifact, self.ffmpeg, self.root)['streams']}
+        self.assertEqual(codecs, {'h264', 'aac'})
 
 
 if __name__ == '__main__':

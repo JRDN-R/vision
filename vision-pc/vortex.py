@@ -74,6 +74,12 @@ class VortexJobs:
                 UNIQUE(uid,request_id))''')
             db.execute('CREATE INDEX IF NOT EXISTS vortex_owner_created ON vortex_jobs(uid,created_at DESC)')
             db.execute('CREATE INDEX IF NOT EXISTS vortex_queue ON vortex_jobs(status,created_at)')
+            # Additive migration: existing jobs and five-day download tickets survive updates.
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(vortex_jobs)')}
+            for name, definition in (('options_json', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('search_next_page', 'INTEGER')):
+                if name not in columns:
+                    db.execute(f'ALTER TABLE vortex_jobs ADD COLUMN {name} {definition}')
 
     def capability(self):
         packages = self.app.config.get('VORTEX_PACKAGES')
@@ -86,7 +92,8 @@ class VortexJobs:
         ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and engines['yt-dlp'] and ffmpeg.is_file()
         return dict(ready=ready, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
                     maxItems=MAX_ITEMS, maxDuration=MAX_DURATION, persistentJobs=True,
-                    firebaseRequired=True, spotifyNote='Spotify supplies track metadata; audio is matched from another public service, not downloaded from Spotify.')
+                    firebaseRequired=True, videoFormats=['mp4', 'mov'], audioFormats=['m4a', 'mp3', 'wav'],
+                    searchPagination=True, spotifyNote='Spotify supplies track metadata; audio is matched from another public service, not downloaded from Spotify.')
 
     def _uid(self):
         uid = getattr(g, 'uid', '')
@@ -109,6 +116,7 @@ class VortexJobs:
         status = 'expired' if expired else value['status']
         return dict(id=value['id'], requestId=value['request_id'], input=value['input'],
                     kind=value['kind'], quality=value['quality'], engine=value['engine'],
+                    **json.loads(value.get('options_json') or '{}'), searchNextPage=value.get('search_next_page'),
                     status=status, phase='File expired' if expired else value['phase'],
                     progress=value['progress'], error=value.get('error'),
                     media=media, results=json.loads(value['results_json']) if value.get('results_json') else [],
@@ -145,6 +153,18 @@ class VortexJobs:
         kind, quality = data.get('kind', 'download'), data.get('quality', 'max')
         if kind not in ('inspect', 'download') or quality not in ('small', 'balanced', 'max'):
             raise self.Error('Choose a supported Vortex operation and quality.')
+        options = dict(downloadMode=data.get('downloadMode', 'video'),
+                       videoFormat=data.get('videoFormat', 'mp4'), audioFormat=data.get('audioFormat', 'm4a'),
+                       searchPage=data.get('searchPage', 0))
+        if (options['downloadMode'] not in ('video', 'audio') or options['videoFormat'] not in ('mp4', 'mov')
+                or options['audioFormat'] not in ('mp3', 'wav', 'm4a')):
+            raise self.Error('Choose MP4 or MOV video, or M4A, MP3 or WAV audio.')
+        if type(options['searchPage']) is not int or not 0 <= options['searchPage'] < 50:
+            raise self.Error('Choose a valid search page.')
+        options_json = json.dumps(options, sort_keys=True, separators=(',', ':'))
+        defaults = dict(downloadMode='video', videoFormat='mp4', audioFormat='m4a', searchPage=0)
+        def same_options(old):
+            return {**defaults, **json.loads(old['options_json'] or '{}')} == options
         request_id = data.get('requestId') or secrets.token_hex(16)
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
             raise self.Error('Use a valid request identifier.')
@@ -153,10 +173,12 @@ class VortexJobs:
             value = validate_input(data.get('input', data.get('url')), kind, resolve=False)
         except ValueError as error:
             raise self.Error(str(error)) from None
+        if options['searchPage'] and (kind != 'inspect' or value.lower().startswith(('http://', 'https://', 'spotify:'))):
+            raise self.Error('Search pages apply only to YouTube and YouTube Music searches.')
         with self.db() as db:
             old = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND request_id=?', (uid, request_id)).fetchone()
         if old:
-            if old['input'] != value or old['kind'] != kind or old['quality'] != quality:
+            if old['input'] != value or old['kind'] != kind or old['quality'] != quality or not same_options(old):
                 raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
             if old['delete_requested']:
                 raise self.Error('This Vortex request has been removed.', 410)
@@ -177,15 +199,15 @@ class VortexJobs:
             # A second tab may have accepted the same request during DNS resolution.
             old = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND request_id=?', (uid, request_id)).fetchone()
             if old:
-                if (old['input'], old['kind'], old['quality']) != (value, kind, quality):
+                if (old['input'], old['kind'], old['quality']) != (value, kind, quality) or not same_options(old):
                     raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
                 if old['delete_requested']:
                     raise self.Error('This Vortex request has been removed.', 410)
                 return self.snapshot(dict(old))
             self._capacity(db, uid, kind)
-            db.execute('''INSERT INTO vortex_jobs(id,uid,request_id,input,kind,quality,engine,status,phase,created_at,updated_at)
-                          VALUES(?,?,?,?,?,?,?,'queued','Waiting for FUPCJ Server',?,?)''',
-                       (job_id, uid, request_id, value, kind, quality, engine, now, now))
+            db.execute('''INSERT INTO vortex_jobs(id,uid,request_id,input,kind,quality,engine,options_json,status,phase,created_at,updated_at)
+                          VALUES(?,?,?,?,?,?,?,?,'queued','Waiting for FUPCJ Server',?,?)''',
+                       (job_id, uid, request_id, value, kind, quality, engine, options_json, now, now))
         self.wake.set()
         return self.snapshot(self.row(job_id, uid))
 
@@ -438,6 +460,9 @@ class VortexJobs:
         if not isinstance(event, dict):
             return
         updates = {'updated_at': time.time()}
+        if 'searchNextPage' in event:
+            page = event['searchNextPage']
+            updates['search_next_page'] = page if type(page) is int and 0 < page < 50 else None
         if isinstance(event.get('phase'), str):
             updates['phase'] = event['phase'][:200]
         if 'progress' in event:
@@ -503,6 +528,7 @@ class VortexJobs:
                              directory=str(directory.resolve()), ffmpeg=self.app.config['FFMPEG'],
                              deno=self.app.config.get('DENO'), maxBytes=MAX_BYTES, maxItems=MAX_ITEMS,
                              maxDuration=MAX_DURATION, packagesPath=self.app.config.get('VORTEX_PACKAGES'))
+        specification.update(json.loads(row.get('options_json') or '{}'))
         request_path = directory / 'request.json'
         request_path.write_text(json.dumps(specification), encoding='utf-8')
         events_path = directory / 'events.jsonl'

@@ -1,9 +1,9 @@
 {
-  "title": "Vortex search and account fixes",
+  "title": "Vortex thumbnails and media formats",
   "items": [
-    "Search YouTube videos and YouTube Music songs together. A long search result no longer stops the search.",
-    "Instagram Reels use a video lookup first, with an alternate gallery lookup and clearer source errors.",
-    "Vortex uses your saved Vision profile photo. Quality changes update in the background without hiding media details.",
-    "Run the Windows processor Update action on FUPCJ Server to activate the source fixes."
+    "YouTube search results show thumbnails and load more videos and songs as you scroll.",
+    "Open a selected or recent item's thumbnail to visit its original source.",
+    "Choose MP4 or MOV video, or extract audio as M4A, MP3 or WAV. New media exports no longer use MKV or WebM.",
+    "Run the Windows processor Update action on FUPCJ Server to activate search pagination and media conversion."
   ]
 }

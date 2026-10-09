@@ -30,6 +30,7 @@ IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif", "avif", "heic"}
 # bytes cannot make a local ffmpeg invocation follow additional file paths.
 MEDIA_DEMUXERS = "mov,matroska,webm,ogg,mp3,aac,flac,wav,avi,mpegts,mpeg,m4v,h264,hevc,ape,asf,flv,amr,aiff"
 SPOTIFY_NOTE = "Spotify supplies track metadata. Audio is matched from YouTube Music or YouTube; it is not the original Spotify stream."
+SEARCH_PAGE_SIZE = 8
 EVENT_STREAM = sys.stdout
 SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
@@ -101,13 +102,33 @@ def is_gallery(value):
 
 def format_selector(quality="balanced", audio=False):
     if audio:
-        return "bestaudio/best[vcodec=none]"
+        # Some sources have audio only inside a combined video stream.
+        return "bestaudio/best[acodec!=none]"
     cap = {"small": 480, "balanced": 1080}.get(quality)
     if cap:
-        # Fall back to the lowest source format when no format meets the cap;
-        # downloading does not imply a lossy re-encode to an invented quality.
+        # Choose the lowest video when no source stream meets the cap;
+        # export_media then downscales it to the selected output size.
         return f"bv*[height<={cap}]+ba/b[height<={cap}]/wv*+ba/w[vcodec!=none]/ba"
     return "bv*+ba/b/ba"
+
+
+def thumbnail_from_info(info):
+    candidates = [info.get('thumbnail')]
+    thumbnails = [item for item in info.get('thumbnails') or [] if isinstance(item, dict)]
+    thumbnails.sort(key=lambda item: (number(item.get('width')) or 0) * (number(item.get('height')) or 0), reverse=True)
+    candidates.extend(item.get('url') for item in thumbnails)
+    for candidate in candidates:
+        url = safe_url(candidate)
+        if url:
+            return url
+    # Flat YouTube snippets sometimes omit artwork entirely. Only construct the
+    # public thumbnail address after validating both the provider and video ID.
+    video_id = info.get('id')
+    host = (urlparse(info.get('webpage_url') or info.get('url') or '').hostname or '').lower()
+    if (host in ('www.youtube.com', 'youtube.com', 'music.youtube.com', 'youtu.be')
+            and isinstance(video_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id)):
+        return safe_url(f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg')
+    return None
 
 
 def media_from_info(info, *, fallback_url=None, engine="yt-dlp"):
@@ -119,7 +140,7 @@ def media_from_info(info, *, fallback_url=None, engine="yt-dlp"):
         "title": text(info.get("title") or "Untitled media"),
         "url": safe_url(info.get("webpage_url") or info.get("original_url") or fallback_url),
         "source": text(info.get("extractor_key") or info.get("extractor") or urlparse(fallback_url or "").hostname or "Media", 80),
-        "thumbnail": safe_url(info.get("thumbnail")),
+        "thumbnail": thumbnail_from_info(info),
         "mediaType": "audio" if audio_only else "video",
         "engine": engine,
         "width": number(video.get("width")), "height": number(video.get("height")),
@@ -184,6 +205,90 @@ def apply_probe(media, data):
     return media
 
 
+def export_media(artifact, media, request, *, stem='export'):
+    """Convert local media to an explicit, phone-friendly output; never rename it.
+
+    Network and playlist protocols stay disabled in FFmpeg. The supervisor owns
+    cancellation, the deadline and disk bounds for this subprocess as well.
+    """
+    directory = Path(request['directory']).resolve()
+    artifact = local_path(artifact, directory)
+    ffmpeg = request.get('ffmpeg') or shutil.which('ffmpeg')
+    if not ffmpeg or not Path(ffmpeg).is_file():
+        raise WorkerError('FFmpeg is unavailable. Update Vision PC before converting media.')
+    probe = probe_file(artifact, ffmpeg, directory)
+    streams = probe.get('streams') or []
+    video = next((s for s in streams if s.get('codec_type') == 'video' and not (s.get('disposition') or {}).get('attached_pic')), None)
+    audio_stream = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+    audio = request.get('downloadMode') == 'audio' or media.get('mediaType') == 'audio' or (audio_stream is not None and video is None)
+    extension = request.get('audioFormat', 'm4a') if audio else request.get('videoFormat', 'mp4')
+    if extension not in (('m4a', 'mp3', 'wav') if audio else ('mp4', 'mov')):
+        raise WorkerError('Choose MP4 or MOV video, or M4A, MP3 or WAV audio.')
+    if streams and ((audio and audio_stream is None) or (not audio and video is None)):
+        raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
+    duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
+    if duration and duration > int(request.get('maxDuration', 7200)):
+        raise WorkerError("This media exceeds the server's two-hour duration limit.")
+    output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
+    command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+               '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
+               '-i', str(artifact), '-map_metadata', '-1', '-map_chapters', '-1']
+    if audio:
+        command += ['-map', '0:a:0', '-vn']
+        if extension == 'm4a':
+            command += ['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k']
+            command += ['-movflags', '+faststart']
+        elif extension == 'mp3':
+            command += ['-c:a', 'libmp3lame', '-q:a', '0', '-ac', '2']
+        else:
+            command += ['-c:a', 'pcm_s16le']
+    else:
+        cap = {'small': 480, 'balanced': 1080}.get(request.get('quality', 'balanced'))
+        can_copy = (video and video.get('codec_name') == 'h264' and video.get('pix_fmt') == 'yuv420p'
+                    and (not cap or (number(video.get('height')) or cap + 1) <= cap))
+        command += ['-map', '0:V:0', '-map', '0:a:0?']
+        if can_copy:
+            command += ['-c:v', 'copy']
+        else:
+            height = f'trunc(min(ih,{cap})/2)*2' if cap else 'trunc(ih/2)*2'
+            command += ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-threads', '2',
+                        '-vf', f"scale=w=-2:h='{height}',format=yuv420p"]
+        command += ['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k']
+        command += ['-tag:v', 'avc1', '-movflags', '+faststart']
+    cap_bytes = int(request.get('maxBytes', 2 * 1024**3))
+    # An over-limit encode is rejected, never offered as a truncated success.
+    command += ['-fs', str(cap_bytes + 1024 * 1024), '-progress', 'pipe:1', '-nostats', str(output)]
+    emit(phase='Converting to ' + extension.upper(), progress=None)
+    try:
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, **SUBPROCESS_FLAGS) as process:
+            for line in process.stdout:
+                key, _, value = line.strip().partition('=')
+                if key == 'out_time_us':
+                    elapsed = number(value)
+                    emit(phase='Converting to ' + extension.upper(), progress=min(99, elapsed / 1e6 / duration * 100) if elapsed is not None and duration else None)
+                if output.exists() and output.stat().st_size > cap_bytes:
+                    process.kill()
+                    raise WorkerError('The converted file exceeds the server download size limit. Choose a smaller video quality or compressed audio format.')
+            if process.wait() != 0:
+                raise WorkerError('This media could not be converted to ' + extension.upper() + '. Check that the source contains the selected video or audio track.')
+    except OSError as exc:
+        raise WorkerError('FFmpeg could not start. Update Vision PC before converting media.') from exc
+    if not output.is_file() or not 0 < output.stat().st_size <= cap_bytes:
+        raise WorkerError('The converted file is empty or exceeds the server download size limit.')
+    converted = probe_file(output, ffmpeg, directory)
+    # Validate real streams when ffprobe is installed; never report source codecs
+    # as though they described a newly converted file.
+    actual = converted.get('streams') or []
+    if actual and ((audio and any(s.get('codec_type') == 'video' for s in actual))
+                   or (not audio and not any(s.get('codec_type') == 'video' and s.get('codec_name') == 'h264' for s in actual))):
+        raise WorkerError('The converted file did not contain the requested media format.')
+    media.update(mediaType='audio' if audio else 'video', ext=extension, vcodec=None, acodec=None,
+                 width=None, height=None, fps=None, abr=None, asr=None, audioChannels=None)
+    apply_probe(media, converted)
+    artifact.unlink()
+    return output
+
+
 def configure_ytdlp_safety(directory, ffmpeg):
     """Native sockets stay guarded; external tools only see local files.
 
@@ -239,7 +344,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         raise WorkerError("The yt-dlp media engine is not installed. Update Vision PC setup.") from exc
     value = input_value or request["input"]
     music = (urlparse(value).hostname or '').lower() == 'music.youtube.com'
-    audio = audio or music
+    audio = audio or music or request.get('downloadMode') == 'audio'
     directory = Path(request["directory"]).resolve()
     configure_ytdlp_safety(directory, request.get("ffmpeg"))
     inspect = request["kind"] == "inspect"
@@ -261,7 +366,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         "writeinfojson": False, "writesubtitles": False, "writeautomaticsub": False,
         "outtmpl": str(directory / "media.%(ext)s"),
         "format": format_selector(request.get("quality", "balanced"), audio),
-        "merge_output_format": "mkv", "restrictfilenames": True,
+        "merge_output_format": "mp4", "restrictfilenames": True,
         "allow_unplayable_formats": False,
     }
     if request.get("ffmpeg"):
@@ -303,7 +408,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     # only after selection; one such result must never abort the whole search.
     options.update(match_filter=None if search else check_media, progress_hooks=[progress], postprocessor_hooks=[postprocess])
     if search:
-        return search_youtube(value, options, engine)
+        return search_youtube(value, options, engine, page=request.get('searchPage', 0))
     emit(phase="Reading media details", progress=None)
     with yt_dlp.YoutubeDL(options) as ydl:
         try:
@@ -337,15 +442,20 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
         raise WorkerError("This media exceeds the server's two-hour duration limit.")
-    media.update(ext=artifact.suffix.lstrip("."), quality=request.get("quality", "balanced"))
+    artifact = export_media(artifact, media, dict(request, downloadMode='audio' if audio else request.get('downloadMode', 'video')))
+    media.update(quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
 
 
-def search_youtube(query, options, engine="yt-dlp"):
+def search_youtube(query, options, engine="yt-dlp", *, page=0):
     """Bounded video and song searches through yt-dlp's public extractors."""
     import yt_dlp
-    groups, failures = [], []
-    sources = [("YouTube", "ytsearch5:" + query),
+    if type(page) is not int or not 0 <= page < 50:
+        raise WorkerError('Choose a valid search page.')
+    start, end = page * SEARCH_PAGE_SIZE + 1, (page + 1) * SEARCH_PAGE_SIZE + 1
+    options = dict(options, playliststart=start, playlistend=end)
+    groups, failures, has_more = [], [], False
+    sources = [("YouTube", f"ytsearch{end}:" + query),
                ("YouTube Music", "https://music.youtube.com/search?" + urlencode({"q": query}) + "#songs")]
     for source, target in sources:
         emit(phase="Searching " + source, progress=None)
@@ -365,20 +475,21 @@ def search_youtube(query, options, engine="yt-dlp"):
                         result.update(url="https://music.youtube.com/watch?" + urlencode({"v": video_id}), mediaType="audio")
                     if result.get("url"):
                         results.append(result)
-                    if len(results) >= 5:
+                    if len(results) > SEARCH_PAGE_SIZE:
                         break
         except yt_dlp.utils.DownloadError as exc:
             failures.append(source_error_message(target, exc))
-        groups.append(results)
+        has_more = has_more or len(results) > SEARCH_PAGE_SIZE
+        groups.append(results[:SEARCH_PAGE_SIZE])
     # Alternate video and music matches so both are visible on a narrow phone.
     results, seen = [], set()
-    for index in range(5):
+    for index in range(SEARCH_PAGE_SIZE):
         for group in groups:
             if index < len(group) and group[index]["url"] not in seen:
                 results.append(group[index]); seen.add(group[index]["url"])
-    if not results:
+    if not results and (failures or page == 0):
         raise SourceError(failures[0] if failures else "No matching public media was found. Try a different search.")
-    return {"complete": True, "results": results}
+    return {"complete": True, "results": results, "searchNextPage": page + 1 if has_more and page < 49 else None}
 
 
 def run_spotify(request):
@@ -521,7 +632,9 @@ def run_gallery(request):
         return {"complete": True, "media": media, "results": [media]}
     directory = Path(request["directory"]).resolve()
     cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
-    total_bytes, artifacts, first_probe = 0, [], {}
+    total_bytes, artifacts = 0, []
+    if request.get('downloadMode') == 'audio' and (len(files) != 1 or first['extension'] in IMAGE_EXTENSIONS):
+        raise WorkerError('Audio extraction requires a single video or audio link.')
     for index, item in enumerate(files):
         emit(phase=f"Downloading gallery file {index + 1} of {len(files)}", progress=None, media=media)
         artifact = directory / f"gallery-{index + 1:03d}.{item['extension']}"
@@ -558,13 +671,15 @@ def run_gallery(request):
             measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
             if measured_duration > int(request.get("maxDuration", 7200)):
                 raise WorkerError("This media exceeds the server's two-hour duration limit.")
-            if index == 0:
-                first_probe = probe
+            properties = apply_probe(dict(media), probe)
+            artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
+            if len(files) == 1:
+                media = properties
         artifacts.append(artifact)
+        if sum(path.stat().st_size for path in artifacts) > cap_bytes:
+            raise WorkerError('This converted gallery exceeds the server download size limit.')
     if len(artifacts) == 1:
         artifact = artifacts[0]
-        if media["mediaType"] == "video":
-            apply_probe(media, first_probe)
     else:
         emit(phase="Packaging gallery files", progress=None)
         artifact = directory / "gallery.zip"

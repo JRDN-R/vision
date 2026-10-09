@@ -144,6 +144,7 @@ class VortexAccountTests(unittest.TestCase):
         self.assertEqual(again.status_code, 202, again.json)
         self.assertEqual(again.json['id'], first)
         for change in ({'quality': 'max'}, {'kind': 'inspect'},
+                       {'downloadMode':'audio'}, {'videoFormat':'mov'}, {'audioFormat':'mp3'},
                        {'input': 'https://www.youtube.com/watch?v=other123456'}):
             with self.subTest(change=change):
                 self.assertEqual(self.submit(**change).status_code, 409)
@@ -158,11 +159,29 @@ class VortexAccountTests(unittest.TestCase):
                     {'input': 'x', 'kind': 'download', 'requestId': '../escape'},
                     {'input': ['https://youtube.com'], 'requestId': 'x'},
                     {'input': 'x' * 9000, 'requestId': 'x'}]
+        payloads += [dict(input='test', kind='inspect', **change) for change in (
+            {'videoFormat':'mkv'}, {'videoFormat':'best'}, {'audioFormat':'opus'}, {'downloadMode':'any'},
+            {'videoFormat':'../../private'}, {'searchPage':True}, {'searchPage':-1}, {'searchPage':50}, {'searchPage':'1'})]
+        payloads += [dict(input='https://youtube.com/watch?v=abcdefghijk', kind='inspect', searchPage=1)]
         for payload in payloads:
             with self.subTest(payload=str(payload)[:80]):
                 response = self.client.post('/api/vortex/jobs', json=payload, headers=self.alice)
                 self.assertEqual(response.status_code, 400, response.json)
         self.assertNotIn('abcdefghijk', json.dumps(self.client.get('/api/vortex/jobs', headers=self.alice).json))
+
+    def test_output_options_and_search_page_survive_restart_with_account_isolation(self):
+        response = self.submit(kind='inspect', input='test clips', searchPage=1, videoFormat='mov', audioFormat='mp3')
+        self.assertEqual(response.status_code, 202, response.json)
+        job = response.json['id']
+        self.service.initialize()  # Repeated migrations preserve accepted jobs.
+        with server.connect_db() as db:
+            db.execute("UPDATE vortex_jobs SET status='processing' WHERE id=?", (job,))
+        self.service._event(job, {'searchNextPage':2, 'results':[{'title':'Next result'}]})
+        self.service._finish(job, {})
+        result = self.client.get('/api/vortex/jobs/' + job, headers=self.alice).json
+        self.assertEqual((result['searchPage'], result['searchNextPage'], result['videoFormat'], result['audioFormat']), (1, 2, 'mov', 'mp3'))
+        self.assertEqual(self.client.get('/api/vortex/jobs/' + job, headers=self.bob).status_code, 404)
+        self.assertEqual(self.submit(kind='inspect', input='test clips', searchPage=2, videoFormat='mov', audioFormat='mp3').status_code, 409)
 
     def test_cancel_queued_job_persists_after_recovery_and_keeps_receipt(self):
         job = self.accepted()

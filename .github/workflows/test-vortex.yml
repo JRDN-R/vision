@@ -28,6 +28,18 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install -r vision-pc/requirements.txt
+      - name: Install FFmpeg for real export checks (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg for real export checks (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          Get-Command ffmpeg, ffprobe -ErrorAction Stop
       - name: Parse Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
