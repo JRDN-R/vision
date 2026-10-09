@@ -34,7 +34,9 @@
   <script type="module" src="../web/vortex/app.js"></script>
 </head>
 <body>
-  <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
+  <!-- Restore the shared Vision session before deciding whether sign-in is needed. -->
+  <div id="authRestoring" class="auth-restoring" role="status" aria-live="polite"><span class="auth-restoring-dot" aria-hidden="true"></span>Connecting to your Vision account…</div>
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle" hidden>
     <div class="auth-content">
       <h1 id="authTitle">Sign in to Vortex</h1>
       <p>Use your Vision account to open your media and downloads.</p>
@@ -52,7 +54,7 @@
     </div>
   </section>
 
-  <div id="application" hidden inert>
+  <div id="application" inert aria-busy="true">
     <header class="topbar">
       <button id="menuButton" class="icon-button hamburger" type="button" aria-label="Open menu" aria-controls="navigation" aria-expanded="false"><span id="menuGlyph" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 9h22M5 16h22M5 23h22"/></svg></span></button>
       <a class="brand" href="./" aria-label="Vortex home"><img src="../vortex_character.png" alt="" width="44" height="44"><span>Vortex</span></a>
