@@ -54,6 +54,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_vortex_windows_setup.ps1
+      - name: Windows 5.1 Docker reuse and WSL installer recovery checks
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_vortex_wsl_setup.ps1
       - name: Validate optional service configuration (Linux)
         if: runner.os == 'Linux'
         run: docker compose -f vision-pc/vortex-services.compose.yml config --quiet

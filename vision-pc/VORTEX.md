@@ -165,8 +165,11 @@ as administrator**, from the account that normally signs into FUPCJ:
 flag. Review the [Docker Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/)
 before running it. This does not purchase a subscription or create an account.
 
-The installer enables WSL and Virtual Machine Platform without restarting the PC,
-installs modern WSL if necessary, installs Docker with `--backend=wsl-2`, downloads
+The installer checks the local Docker Linux engine first. When it already works,
+it reuses the installed prerequisites and preserves the existing Linux backend;
+it does not reinstall WSL based on a version-query failure. Otherwise it enables
+WSL and Virtual Machine Platform without restarting the PC, installs modern WSL
+if necessary, and installs Docker with `--backend=wsl-2`. It downloads
 official portable MinGit if Git is missing, and runs the existing Cobalt service
 installer and health check. It verifies Microsoft/Docker installer signatures and
 the published GitHub release SHA-256 digests for WSL and MinGit. It does not need
@@ -179,6 +182,14 @@ the reboot. Save other work, restart Windows, sign back in, and rerun the same b
 The script never reboots automatically or changes BIOS settings. If virtualization
 is disabled, enable AMD SVM/Intel VT-x in firmware first. An older `wsl.exe` printing
 its help text for `--update` or `--version` does not mean modern WSL is installed.
+WSL queries request UTF-8 output and match only the runtime's version, including
+localized labels. Ambiguous output stops prerequisite provisioning instead of
+starting an MSI installation. A known old runtime or legacy help response can
+still trigger installation. MSI progress uses an indeterminate status message;
+verbose installer logs stay in the protected `downloads\vortex-windows-setup`
+folder. A timeout does not kill the MSI client or claim rollback. A persistent
+marker prevents another WSL MSI attempt on the same boot when completion is
+unknown; Windows Installer exit 1618 reports another installation in progress.
 
 Docker settings are backed up, unrelated settings are retained, and Docker is set
 to use WSL 2, start at this user's **Windows sign-in**, and keep its dashboard closed.
@@ -194,6 +205,23 @@ Windows apps. The Cobalt containers retain the limits below; native FFmpeg worke
 are separate Windows processes. A first-run Docker dialog, blocked download, invalid
 publisher signature, or engine startup timeout stops setup with a readable message.
 No Windows/Docker deployment was performed by the automated installer tests.
+
+If Docker is already running and only Cobalt setup needs to be retried, add
+`-ServicesOnly` to the bootstrap command:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexBootstrap -ServicesOnly
+```
+
+This mode verifies the local `desktop-linux` context uses a Windows named pipe
+and that its daemon reports Linux, then reuses the existing service installer.
+It does not call WSL, run Windows/Docker installers, change Docker settings, or
+stop Docker Desktop. An unhealthy engine causes a short, actionable stop without
+modifying Windows. It can be used after a WSL MSI timeout if Docker still works;
+it neither cancels nor declares that separate MSI transaction complete. Existing
+Docker startup preferences remain in effect. PowerShell can be closed after the
+service health checks succeed; keep Docker running and the PC awake. The native
+processor activation can still briefly restart Vision, as with the normal setup.
 
 The lower-level service actions remain available when the prerequisites are
 already installed:
