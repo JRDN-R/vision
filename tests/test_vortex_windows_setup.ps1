@@ -98,3 +98,5 @@ try {
 } finally {
     Remove-Item -LiteralPath $script:VortexWork -Recurse -Force
 }
+
+& (Join-Path $PSScriptRoot 'test_vortex_services_setup.ps1')

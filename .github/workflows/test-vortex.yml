@@ -58,6 +58,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_vortex_wsl_setup.ps1
+      - name: Windows 5.1 real loopback service health and failure checks
+        if: runner.os == 'Windows'
+        run: python tests/test_vortex_service_health_http.py -v
       - name: Validate optional service configuration (Linux)
         if: runner.os == 'Linux'
         run: docker compose -f vision-pc/vortex-services.compose.yml config --quiet
@@ -79,6 +82,16 @@ jobs:
           python -m unittest discover -s vision-pc -p 'test_firebase_auth.py' -v
           python -m unittest discover -s vision-pc -p 'test_server.py' -v
           python tests/test_context_setup.py
+  service-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Full pinned Cobalt stack, real host ingress and egress firewall
+        run: python tests/test_vortex_service_stack.py -v
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15

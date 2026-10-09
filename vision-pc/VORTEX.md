@@ -236,7 +236,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action Che
 
 `Vortex-Services.ps1` itself checks prerequisites without changing Windows features,
 clones the audited Cobalt commit, builds its upstream Dockerfile, starts Compose,
-checks API health/commit and activates the server configuration through the
+checks API health/commit **from the Windows host**, then activates the server configuration through the
 existing update/rollback path. Docker/WSL installation is a prerequisite, not an
 unattended OS change. The API is bound only to `127.0.0.1:9000`. Containers have
 restart-on-daemon-start behavior, CPU/memory/PID limits, read-only root filesystems
@@ -256,15 +256,39 @@ folder. After this error, rerun the corrected installer; the existing native
 engines remain available and previously downloaded Docker layers can be reused.
 
 Cobalt shares a dedicated network namespace with a small firewall container.
-The namespace is attached only to a Docker **internal** network. Its IPv4/IPv6
-OUTPUT policy permits loopback, established replies and the exact egress proxy
-port only, including blocking the host bridge gateway. Cobalt has no NET_ADMIN
-capability. A small CONNECT proxy is the only outward route; it rejects private/mixed DNS results, pins the checked
-IP, restricts ports to 80/443, and bounds connections, transfer bytes and time.
-Cobalt uses its documented HTTP_PROXY/HTTPS_PROXY support. Anything ignoring that
-proxy fails closed on the internal network. The proxy is not published to the
-host. No public Cobalt instance is used. Container base images/dependencies still
-need routine administrator updates; the Cobalt source itself is commit-pinned.
+The namespace remains attached **only** to the Docker internal engine network.
+Its IPv4/IPv6 OUTPUT policy permits loopback, established replies and the exact
+egress proxy port only, including blocking the host bridge gateway. Cobalt has
+no NET_ADMIN capability. A small CONNECT proxy is the only outward TCP path;
+it rejects private/mixed DNS results, pins the checked IP, restricts ports to
+80/443, and bounds connections, transfer bytes and time. Anything ignoring the
+proxy fails closed. The egress proxy is not published to the host.
+
+A fourth, small **ingress relay** solves Docker's internal-only publication
+limitation: Docker can accept `ports:` on an internal-only network yet omit the
+actual host mapping, leaving every container healthy but Windows unable to connect.
+Only this relay joins a dedicated normal `ingress` bridge and publishes the API
+on **host loopback** `127.0.0.1:9000`. It forwards TCP to one fixed destination,
+`network-policy:9000`; it is not a general proxy and cannot take a destination
+from a submitted URL. Cobalt listens on `0.0.0.0` **inside** its isolated namespace,
+not on the Windows LAN/public interface. The relay runs unprivileged, read-only,
+with no added capabilities or request logging, at most 16 forwarding children,
+120-second idle timeout, 32 MiB memory / 0.25 CPU / 32 PID limits. It adds no
+external route to Cobalt, including during daemon startup when Docker restart
+policies do not honor Compose health dependencies. No Windows firewall change,
+public extraction API, account cookies or runtime host mount is needed. Container
+base images/dependencies still need routine administrator updates; the Cobalt
+source itself is commit-pinned.
+
+After Compose reports healthy containers, setup separately checks the published
+API with bounded retries, no Windows HTTP proxy, no credentials and no redirects.
+It validates the pinned commit before activating Vortex. A host connection failure
+still rolls back instead of advertising a working engine. The full-stack Linux
+Docker regression builds the pinned upstream service, checks its actual published
+loopback mapping and host API response, and tests that the namespace firewall
+continues to block direct connections. This is not proof of a live FUPCJ deployment
+or of any provider's media availability; the post-install Windows health check
+and a real Vortex download remain necessary.
 
 Cobalt does not return a rich inspection object. Its adapter downloads and probes
 a bounded real file for inspection, and reuses that file if it wins the subsequent
