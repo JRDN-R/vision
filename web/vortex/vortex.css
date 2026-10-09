@@ -196,3 +196,16 @@ body::before {
 .reexport-panel .primary{width:100%}
 @media(max-height:550px){.navigation .nav-history{margin-top:8px}.nav-history-divider{margin-bottom:8px}.history-retention{display:none}.nav-heading{margin-bottom:8px}}
 @media(prefers-reduced-motion:reduce){.history-list{scroll-behavior:auto}}
+
+
+/* Compatibility with Vortex's separately merged orbit flare: keep its center
+   inset by its radius so the luminous edge follows the capsule perimeter
+   without creating a horizontal scrollbar on 320px iPhones. */
+@supports (offset-path: inset(0 round 999px)) {
+  .source-orbit .orbit-flare { offset-path: inset(25px round 999px); }
+}
+@media (max-width: 380px) {
+  @supports (offset-path: inset(0 round 999px)) {
+    .source-orbit .orbit-flare { offset-path: inset(22px round 999px); }
+  }
+}
