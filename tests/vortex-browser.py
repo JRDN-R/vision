@@ -196,11 +196,81 @@ def no_overflow(page):
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), 'Horizontal page overflow'
 
 
+def verify_delayed_auth_restore(browser):
+    """A shared Vision session must never flash Vortex's sign-in form."""
+    slow_sdk = FIREBASE.replace(
+        'authStateReady:async()=>{}',
+        'authStateReady:()=>new Promise(resolve=>window.__completeAuthRestore=resolve)'
+    )
+    assert slow_sdk != FIREBASE, 'Firebase fixture no longer supports delayed hydration'
+
+    class DelayedAuthFixture(Fixture):
+        def route(self, route):
+            if route.request.url == URL.replace('vortex/', 'web/vendor/firebase.js'):
+                route.fulfill(body=slow_sdk, content_type='application/javascript')
+            else:
+                super().route(route)
+
+    for existing_session in (True, False):
+        api = DelayedAuthFixture()
+        context = browser.new_context(viewport={'width': 390, 'height': 844})
+        if existing_session:
+            context.add_init_script("localStorage.setItem('__fixtureUID', 'alice')")
+        context.route('**/*', api.route)
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(URL)
+        page.wait_for_function("typeof window.__completeAuthRestore === 'function'")
+        assert page.locator('#authGate').is_hidden(), 'Sign-in flashed before restoration completed'
+        assert page.locator('#application').is_visible(), 'Vortex shell was hidden during restoration'
+        assert page.locator('#application').evaluate("el=>el.inert && el.getAttribute('aria-busy')==='true'")
+        assert page.locator('#authRestoring').is_visible()
+        assert not api.calls, 'Private API ran before Firebase restored the session'
+
+        page.evaluate('__completeAuthRestore()')
+        if existing_session:
+            page.wait_for_function("!document.querySelector('#application').inert")
+            assert page.locator('#authGate').is_hidden()
+            assert page.locator('#authRestoring').is_hidden()
+            assert page.locator('#application').get_attribute('aria-busy') is None
+            page.locator('#accountEmail').get_by_text('alice@example.test').wait_for()
+        else:
+            page.locator('#authGate').wait_for(state='visible')
+            assert page.locator('#application').is_hidden()
+            assert page.locator('#authRestoring').is_hidden()
+            assert not api.calls, 'Signed-out user accessed a private endpoint'
+        assert not errors, errors
+        context.close()
+
+    # Broken SDK still exposes a usable sign-in screen and a meaningful error.
+    class BrokenSDKFixture(Fixture):
+        def route(self, route):
+            if route.request.url == URL.replace('vortex/', 'web/vendor/firebase.js'):
+                route.fulfill(body='', content_type='application/javascript')
+            else:
+                super().route(route)
+
+    api = BrokenSDKFixture()
+    context = browser.new_context()
+    context.route('**/*', api.route)
+    page = context.new_page()
+    page.goto(URL)
+    page.locator('#authGate').wait_for(state='visible')
+    assert 'Sign-in could not load' in page.locator('#authStatus').inner_text()
+    assert page.locator('#application').is_hidden()
+    assert page.locator('#authRestoring').is_hidden()
+    assert not api.calls
+    context.close()
+    print('Vortex auth hydration: no login flash, no premature access, signed-out and SDK failure paths passed', flush=True)
+
+
 def run():
     SHOTS.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
         options = {'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}
         browser = pw.chromium.launch(headless=True, **options)
+        verify_delayed_auth_restore(browser)
         for width in (320, 390, 1280):
             api = Fixture()
             context = browser.new_context(viewport={'width':width, 'height':844}, has_touch=width < 760, accept_downloads=True)
