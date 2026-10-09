@@ -105,6 +105,7 @@ async function accountLoad(){
    accountGateLocked=true;accountUpdateGate();accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(user));
    void accountTransition.then(()=>{if(user&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
   });
+  if(accountFirebase.currentUser&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();}
   return accountFirebase;
  })().catch(error=>{accountLoadPromise=null;accountRestoreFailed=true;accountError=accountErrorText(error);throw error;}).finally(()=>{accountRestoring=false;accountPaint();});
  return accountLoadPromise;
@@ -214,4 +215,3 @@ const accountReady=Promise.resolve().then(async()=>{
  // An unrelated recovery database must never prevent Firebase from starting.
  try{await accountLoad();}catch(error){accountError=accountErrorText(error);accountPaint();}
 });
-void accountReady.then(()=>{if(projectAccountUID()){void projectRefreshAccountList();void accountRestoreRunKey();}});

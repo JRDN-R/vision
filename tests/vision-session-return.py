@@ -119,10 +119,11 @@ def verify_restore_retry(browser):
         assert page.locator('#accountGate').get_attribute('aria-busy') == 'false'
         assert not api.vision_calls
         page.evaluate('__completeVisionRestore()')
-        page.locator('#accountGateRetry').click()
-        if not signed_in:
-            page.locator('#accountGateSignIn').wait_for(state='visible')
-            page.locator('#accountGateSignIn').click()
+        with page.expect_response(mod.BACKEND+'/api/account/openai-key'):
+            page.locator('#accountGateRetry').click()
+            if not signed_in:
+                page.locator('#accountGateSignIn').wait_for(state='visible')
+                page.locator('#accountGateSignIn').click()
         page.locator('#accountGate').wait_for(state='hidden')
         if not signed_in:
             assert page.evaluate('window.__popupCount') == 1, 'Google did not respond after recovery'
