@@ -16,7 +16,15 @@ import time
 PAGE_LIMIT = 2000
 NUMBER_FIELDS = ('requestBytes', 'uploadedBytes', 'outputBytes', 'requestWallSeconds',
                  'processingWallSeconds', 'runElapsedSeconds', 'httpStatus')
-TEXT_FIELDS = ('jobType', 'outcome')
+TEXT_FIELDS = ('jobType', 'outcome', 'app', 'authProvider')
+MODULE_WHERE = {
+    'all': '1=1',
+    'logins': "event IN ('google_sign_in','account_sign_in','app_first_seen')",
+    'transcriptions': """(event IN ('audio_submitted','audio_received','transcription_finished','youtube_submitted')
+        OR (event='processing_finished' AND json_extract(CASE WHEN json_valid(details) THEN details ELSE '{}' END,
+        '$.jobType') IN ('youtube','transcription','whisper','whisper_sound','local','local_sound','gemini','gemini_sound','sound')))""",
+    'vortex': "event LIKE 'vortex_%'",
+}
 
 
 def public_id(uid):
@@ -68,16 +76,25 @@ def allowed(config, uid, auth_kind, origin=None):
         return False
 
 
-def snapshot_payload(connect_db, person='', limit=100, version=''):
+def snapshot_payload(connect_db, person='', limit=100, version='', module='all'):
     if person and not re.fullmatch(r'[0-9a-f]{64}', person):
         raise ValueError('Choose a valid person.')
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= PAGE_LIMIT:
         raise ValueError('Choose an event limit from 1 through 2000.')
+    if module not in MODULE_WHERE:
+        raise ValueError('Choose a valid activity module.')
     db = connect_db()
     try:
         # A consistent, read-only snapshot, separate from the logging writer.
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        providers = dict(db.execute('SELECT uid,provider FROM audit_account_metadata')) if 'audit_account_metadata' in tables else {}
+        apps = {}
+        if 'audit_user_apps' in tables:
+            for row in db.execute('SELECT uid,app,last_seen FROM audit_user_apps ORDER BY app'):
+                if row['app'] in ('vision', 'vortex'):
+                    apps.setdefault(row['uid'], []).append({'app': row['app'], 'lastSeen': row['last_seen']})
         rows = db.execute('''SELECT u.*, COALESCE(a.n,0) AS event_count,
             COALESCE(a.last_id,0) AS last_event_id, a.last_at AS last_activity,
             e.event AS latest_event, e.details AS latest_details
@@ -92,26 +109,94 @@ def snapshot_payload(connect_db, person='', limit=100, version=''):
             if key == person:
                 selected_uid = row['uid']
             users.append({'id': key, 'name': clean(row['name']), 'email': clean(row['email']),
+                'provider': providers.get(row['uid'], 'unknown'), 'apps': apps.get(row['uid'], []),
                 'firstSeen': row['first_seen'], 'lastSeen': row['last_seen'],
                 'signIns': row['sign_in_sightings'], 'eventCount': row['event_count'],
                 'lastActivity': row['last_activity'], 'lastEventId': row['last_event_id'],
                 'latestEvent': clean(row['latest_event'], 40), 'latestDetails': details(row['latest_details'])})
         if person and selected_uid is None:
             raise LookupError('This person is no longer in the retained activity records.')
-        revision = hashlib.sha256(json.dumps([users, person, limit], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        revision = hashlib.sha256(json.dumps([users, person, limit, module], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         if version == revision:
             return {'unchanged': True, 'version': revision, 'checkedAt': time.time()}
-        where, params = ('WHERE uid=?', [selected_uid]) if person else ('', [])
+        where, params = ('WHERE uid=? AND ', [selected_uid]) if person else ('WHERE ', [])
+        scope = where
+        counts = {name: db.execute('SELECT COUNT(*) FROM audit_events ' + scope + clause, params).fetchone()[0]
+                  for name, clause in MODULE_WHERE.items()}
+        where += MODULE_WHERE[module]
         event_rows = db.execute('SELECT id,uid,created_at,event,details FROM audit_events ' + where +
                                 ' ORDER BY id DESC LIMIT ?', params + [limit]).fetchall()
         events = [{'id': row['id'], 'userId': public_id(row['uid']), 'at': row['created_at'],
                    'kind': clean(row['event'], 40), 'details': details(row['details'])} for row in event_rows]
     finally:
         db.close()
-    total = sum(u['eventCount'] for u in users if not person or u['id'] == person)
+    total = counts[module]
     return {'version': revision, 'checkedAt': time.time(), 'users': users, 'events': events,
         'totalEvents': total, 'hasMore': total > len(events), 'maxEvents': PAGE_LIMIT,
-        'retentionPerUser': 2000, 'pollSeconds': 3}
+        'retentionPerUser': 2000, 'pollSeconds': 3, 'module': module, 'moduleCounts': counts}
+
+
+def vortex_payload(connect_db, person='', limit=100):
+    """Owner-only operational metadata, including jobs created before this update.
+
+    Explicit columns exclude input URLs, searches, media titles, engine output,
+    filenames, tickets and credentials. Never reuse the user-facing snapshot.
+    """
+    if person and not re.fullmatch(r'[0-9a-f]{64}', person):
+        raise ValueError('Choose a valid person.')
+    if type(limit) is not int or not 1 <= limit <= PAGE_LIMIT:
+        raise ValueError('Choose a job limit from 1 through 2000.')
+    db = connect_db()
+    try:
+        db.execute('PRAGMA query_only=ON')
+        db.execute('BEGIN')
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vortex_jobs'").fetchone():
+            return {'available': False, 'jobs': [], 'totals': None, 'hasMore': False}
+        now = time.time()
+        rows = db.execute('''SELECT id,uid,kind,quality,status,progress,output_size,options_json,
+            created_at,updated_at,completed_at,expires_at FROM vortex_jobs
+            WHERE delete_requested=0 ORDER BY created_at DESC,id DESC''')
+        totals = dict(jobs=0, downloads=0, inspections=0, queued=0, processing=0,
+                      complete=0, error=0, cancelled=0, expired=0, readyDownloads=0, retainedBytes=0)
+        jobs, accounts = [], set()
+        for row in rows:
+            user_id = public_id(row['uid'])
+            if person and person != user_id:
+                continue
+            state = row['status']
+            if state == 'complete' and row['expires_at'] is not None and row['expires_at'] <= now:
+                state = 'expired'
+            totals['jobs'] += 1
+            totals['downloads' if row['kind'] == 'download' else 'inspections'] += 1
+            if state in ('queued', 'processing', 'complete', 'error', 'cancelled', 'expired'):
+                totals[state] += 1
+            accounts.add(user_id)
+            size = max(0, row['output_size'] or 0) if state == 'complete' else 0
+            if row['kind'] == 'download' and state == 'complete':
+                totals['readyDownloads'] += 1
+                totals['retainedBytes'] += size
+            if len(jobs) >= limit:
+                continue
+            try:
+                options = json.loads(row['options_json'] or '{}')
+            except (ValueError, TypeError):
+                options = {}
+            if not isinstance(options, dict):
+                options = {}
+            mode = options.get('downloadMode', 'video')
+            mode = mode if mode in ('video', 'audio') else 'video'
+            format_value = options.get('audioFormat' if mode == 'audio' else 'videoFormat', 'm4a' if mode == 'audio' else 'mp4')
+            jobs.append({'id': row['id'], 'userId': user_id, 'kind': clean(row['kind'], 16),
+                'quality': clean(row['quality'], 16), 'status': clean(state, 16),
+                'progress': row['progress'], 'outputBytes': size, 'mode': mode,
+                'format': format_value if format_value in ('mp4','mov','m4a','mp3','wav') else None,
+                'createdAt': row['created_at'], 'updatedAt': row['updated_at'],
+                'completedAt': row['completed_at'], 'expiresAt': row['expires_at']})
+        totals['accounts'] = len(accounts)
+        return {'available': True, 'checkedAt': now, 'jobs': jobs, 'totals': totals,
+                'hasMore': totals['jobs'] > len(jobs), 'retentionDays': 5}
+    finally:
+        db.close()
 
 
 def register(app, connect_db):
@@ -134,7 +219,8 @@ def register(app, connect_db):
         if not re.fullmatch(r'[0-9]{1,4}', raw_limit):
             return respond({'error': 'Choose an event limit from 1 through 2000.'}, 400)
         try:
-            value = snapshot_payload(connect_db, request.args.get('user', ''), int(raw_limit), request.args.get('version', ''))
+            value = snapshot_payload(connect_db, request.args.get('user', ''), int(raw_limit),
+                                     request.args.get('version', ''), request.args.get('module', 'all'))
         except ValueError as error:
             return respond({'error': str(error)}, 400)
         except LookupError as error:
@@ -149,6 +235,19 @@ def register(app, connect_db):
     def forbidden():
         return respond({'code': 'ACTIVITY_FORBIDDEN',
                         'error': 'This Google account does not have activity access. Enable it on the Vision PC.'}, 403)
+
+    def vortex_admin():
+        if not owner_access():
+            return forbidden()
+        raw_limit = request.args.get('limit', '100')
+        if not re.fullmatch(r'[0-9]{1,4}', raw_limit):
+            return respond({'error': 'Choose a job limit from 1 through 2000.'}, 400)
+        try:
+            return respond(vortex_payload(connect_db, request.args.get('user', ''), int(raw_limit)))
+        except ValueError as error:
+            return respond({'error': str(error)}, 400)
+
+    app.add_url_rule('/api/admin/vortex', 'vision_vortex_admin', vortex_admin, methods=['GET'])
 
     def gemini_admin():
         if not owner_access():

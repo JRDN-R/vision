@@ -38,6 +38,11 @@ class AuditLogs:
                 CREATE INDEX IF NOT EXISTS audit_events_uid_id ON audit_events(uid,id);
                 CREATE TABLE IF NOT EXISTS audit_signins (
                     uid TEXT NOT NULL, auth_time REAL NOT NULL, PRIMARY KEY(uid,auth_time));
+                CREATE TABLE IF NOT EXISTS audit_account_metadata (
+                    uid TEXT PRIMARY KEY, provider TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS audit_user_apps (
+                    uid TEXT NOT NULL, app TEXT NOT NULL, first_seen REAL NOT NULL,
+                    last_seen REAL NOT NULL, PRIMARY KEY(uid,app));
             ''')
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.lock:
@@ -67,7 +72,7 @@ class AuditLogs:
     def _index(self):
         with self.db() as db:
             users = db.execute('SELECT * FROM audit_users ORDER BY email,name,uid').fetchall()
-        lines = ['FUPCJ Server | Google users', 'Times are UTC. Sign-in sightings count distinct verified authentication sessions.',
+        lines = ['FUPCJ Server | Accounts', 'Times are UTC. Sign-in sightings count distinct verified authentication sessions.',
                  'Name\tEmail\tFirst seen\tLast seen\tSign-in sightings\tUsage log']
         for u in users:
             lines.append('\t'.join([u['name'], u['email'], stamp(u['first_seen']), stamp(u['last_seen']),
@@ -92,14 +97,17 @@ class AuditLogs:
             lines.append(stamp(row['created_at']) + ' | ' + row['event'] + (' | ' + summary if summary else ''))
         self._write(self.directory / self._filename(uid), '\n'.join(lines) + '\n')
 
-    def identity(self, uid, claims):
+    def identity(self, uid, claims, app='vision'):
         name, email, auth_time = clean(claims.get('name')), clean(claims.get('email')), claims['auth_time']
+        provider = {'google.com': 'google', 'password': 'password'}.get(
+            (claims.get('firebase') or {}).get('sign_in_provider'), 'unknown')
+        app = app if app in ('vision', 'vortex') else ''
         now = time.time()
         try:
             with self.lock:
-                cache_key = (uid, auth_time)
+                cache_key = (uid, auth_time, app)
                 previous = self.seen.get(cache_key)
-                if previous and previous[1:] == (name, email) and now - previous[0] < 60:
+                if previous and previous[1:] == (name, email, provider) and now - previous[0] < 60:
                     return
                 with self.db() as db:
                     new_sign_in = bool(db.execute('INSERT OR IGNORE INTO audit_signins VALUES(?,?)', (uid, auth_time)).rowcount)
@@ -107,11 +115,20 @@ class AuditLogs:
                         name=excluded.name,email=excluded.email,last_seen=excluded.last_seen,auth_time=excluded.auth_time,
                         sign_in_sightings=sign_in_sightings+?''',
                         (uid, name, email, now, now, auth_time, int(new_sign_in)))
+                    db.execute('INSERT OR REPLACE INTO audit_account_metadata VALUES(?,?)', (uid, provider))
+                    first_app = False
+                    if app:
+                        first_app = bool(db.execute('INSERT OR IGNORE INTO audit_user_apps VALUES(?,?,?,?)',
+                                                   (uid, app, now, now)).rowcount)
+                        db.execute('UPDATE audit_user_apps SET last_seen=? WHERE uid=? AND app=?', (now, uid, app))
                 if len(self.seen) >= 10000:
                     self.seen.clear()
-                self.seen[cache_key] = (now, name, email)
+                self.seen[cache_key] = (now, name, email, provider)
                 if new_sign_in:
-                    self._event(uid, 'google_sign_in', {})
+                    self._event(uid, 'google_sign_in' if provider == 'google' else 'account_sign_in',
+                                {'authProvider': provider, **({'app': app} if app else {})})
+                elif first_app and app == 'vortex':
+                    self._event(uid, 'app_first_seen', {'app': app, 'authProvider': provider})
                 self._index()
                 self._user(uid)
         except Exception as error:
@@ -132,7 +149,7 @@ class AuditLogs:
             value = fields.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
                 details[name] = round(value, 3)
-        for name in ('jobType', 'outcome'):
+        for name in ('jobType', 'outcome', 'app', 'authProvider'):
             value = fields.get(name)
             if isinstance(value, str) and re.fullmatch(r'[a-z_]{1,32}', value):
                 details[name] = value
@@ -156,7 +173,15 @@ class AuditLogs:
         # Route patterns are fixed; user paths, query strings, headers and bodies
         # are never emitted. Polling GETs produce no activity events.
         path, method = request.path, request.method
-        if path == '/api/account/openai-key':
+        if path == '/api/vortex/jobs' and method == 'POST':
+            kind = 'vortex_submitted'
+        elif path.startswith('/api/vortex/') and path.endswith('/ticket'):
+            kind = 'vortex_download_link_created'
+        elif path.startswith('/api/vortex/') and method == 'DELETE':
+            kind = 'vortex_removed'
+        elif path.startswith('/api/vortex/') and path.endswith('/cancel'):
+            kind = 'vortex_cancel_requested'
+        elif path == '/api/account/openai-key':
             kind = 'api_key_saved' if method == 'PUT' else 'api_key_removed'
         elif re.fullmatch(r'/api/projects/[^/]+', path):
             kind = 'project_saved'
@@ -175,4 +200,5 @@ class AuditLogs:
         else:
             kind = 'request_changed'
         self.event(uid, kind, httpStatus=status, requestBytes=request.content_length or 0,
-                   requestWallSeconds=elapsed, outcome='accepted' if status < 400 else 'rejected')
+                   requestWallSeconds=elapsed, outcome='accepted' if status < 400 else 'rejected',
+                   app='vortex' if path.startswith('/api/vortex/') else 'vision')

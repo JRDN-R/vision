@@ -247,7 +247,8 @@ def authorize():
             raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
         g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
         g.identity_claims = claims
-        app.config['AUDIT_LOGS'].identity(g.uid, claims)
+        app.config['AUDIT_LOGS'].identity(g.uid, claims,
+            app='vortex' if request.path.startswith('/api/vortex/') else '' if request.path.startswith('/api/admin/') else 'vision')
         return
     raise APIError('Sign in or connect this device to your Vision processing server first.', 401)
 
