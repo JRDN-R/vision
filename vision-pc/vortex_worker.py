@@ -22,8 +22,11 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import zipfile
 
 from vortex_network import is_instagram_reel
+# Import before installing the socket guard: the service client captures its
+# narrowly scoped, fixed-origin transport without weakening extractor sockets.
+from vortex_adapters import ADAPTERS
 
-GALLERY_HOSTS = ("reddit.com", "redd.it", "imgur.com", "flickr.com", "deviantart.com", "pixiv.net", "instagram.com")
+GALLERY_HOSTS = ("reddit.com", "redd.it", "imgur.com", "flickr.com", "deviantart.com", "pixiv.net", "instagram.com", "x.com", "twitter.com")
 MEDIA_EXTENSIONS = {"mp4", "mkv", "webm", "mov", "m4v", "m4a", "mp3", "opus", "ogg", "flac", "wav", "aac", "jpg", "jpeg", "png", "webp", "gif", "avif", "heic"}
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif", "avif", "heic"}
 # Exclude playlist demuxers (HLS, DASH, concat, image2, SDP) so downloaded
@@ -186,6 +189,8 @@ def apply_probe(media, data):
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
     if video:
         media.update(width=number(video.get("width")), height=number(video.get("height")), vcodec=text(video.get("codec_name"), 80) or None)
+        if media.get('width') and media.get('height'):
+            media['aspectRatio'] = media['width'] / media['height']
         try:
             numerator, denominator = str(video.get("avg_frame_rate") or video.get("r_frame_rate")).split("/")
             media["fps"] = number(float(numerator) / float(denominator))
@@ -396,9 +401,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         percent = min(100, downloaded / total * 100) if total else min(100, fragment_index / fragment_total * 100) if fragment_total and fragment_index is not None else None
         if downloaded > cap_bytes:
             raise WorkerError("This file exceeds the server download size limit.")
-        fmt = (event.get("info_dict") or {}).get("format_id")
-        phase = "Downloading media" + (" · stream " + text(fmt, 24) if fmt else "")
-        emit(phase="Finishing media stream" if status == "finished" else phase, progress=100 if status == "finished" else percent)
+        emit(phase="Downloading media", progress=100 if status == "finished" else percent)
 
     def postprocess(event):
         if event.get("status") == "started":
@@ -420,6 +423,17 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise WorkerError("Paste a single media link. Video playlists are not downloaded as a batch.")
         check_media(info)
+        from vortex_urls import identity
+        expected = identity(value)
+        if expected[0] == 'youtube' and expected[1] and str(info.get('id')) != expected[1]:
+            raise SourceError('The source returned a different media item.')
+        if expected[0] == 'twitter' and expected[1]:
+            actual = identity(info.get('webpage_url') or '')
+            if actual != expected and str(info.get('display_id')) != expected[1]:
+                raise SourceError('The source returned a different media item.')
+        if not any(item.get('url') and (item.get('vcodec') != 'none' or item.get('acodec') != 'none')
+                   for item in (info.get('formats') or [info])):
+            raise SourceError('No playable media stream was returned.')
         media = media_from_info(info, fallback_url=value, engine=engine)
         if music:
             media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
@@ -572,6 +586,8 @@ def collect_gallery(value, max_items):
     # postprocessors, authentication, or output templates.
     for key, val in {"retries": 2, "timeout": 25, "proxy-env": False, "cookies": None, "cookies-update": False, "browser": "firefox", "sleep-429": 1}.items():
         config.set(("extractor",), key, val)
+    for key, val in {'retweets': False, 'quoted': False, 'replies': False, 'previews': False, 'videos': True}.items():
+        config.set(('extractor', 'twitter'), key, val)
     pending, visited, files = [value], set(), []
     while pending and len(visited) <= max_items:
         current = pending.pop(0)
@@ -619,13 +635,26 @@ def run_gallery(request):
         # explanation without exposing signed URLs or engine internals.
         raise SourceError(source_error_message(value, exc)) from exc
     first = files[0]
+    from vortex_urls import identity, platform
+    if platform(value) == 'twitter':
+        expected = identity(value)[1]
+        files = [item for item in files if str(item['metadata'].get('tweet_id')) == expected]
+        videos = [item for item in files if item['extension'] not in IMAGE_EXTENSIONS]
+        # A video request must never race a thumbnail or a quoted post.
+        if not videos or '/photo/' in urlparse(value).path or '/video/' in urlparse(value).path:
+            raise SourceError('No unambiguous public video was returned.')
+        files = videos
+        first = files[0]
     metadata = first["metadata"]
+    if is_instagram_reel(value) and any(item['extension'] in IMAGE_EXTENSIONS for item in files):
+        raise SourceError('No playable video was returned.')
     media = {
         "title": text(metadata.get("title") or metadata.get("description") or metadata.get("filename") or "Media gallery"),
         "url": safe_url(value), "source": urlparse(value).hostname,
         "thumbnail": safe_url(first["url"]) if first["extension"] in IMAGE_EXTENSIONS else None,
         "mediaType": "gallery" if len(files) > 1 else "image" if first["extension"] in IMAGE_EXTENSIONS else "video",
         "width": number(metadata.get("width")), "height": number(metadata.get("height")),
+        "duration": number(metadata.get('duration')),
         "engine": "gallery-dl", "itemCount": len(files), "ext": "zip" if len(files) > 1 else first["extension"],
     }
     if request["kind"] == "inspect":
@@ -693,34 +722,83 @@ def run_gallery(request):
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
 
 
+def verify_result(result, request):
+    """Fail closed before an attempt can win; inspect success is not a file."""
+    media = result.get('media') or {}
+    if result.get('complete') is not True or not media or media.get('mediaType') == 'unknown':
+        raise WorkerError('No playable media was returned.')
+    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 7200)):
+        raise WorkerError('This media exceeds the server duration limit.')
+    if request['kind'] == 'download' or result.get('filename'):
+        directory = Path(request['directory']).resolve()
+        name = result.get('filename')
+        if not isinstance(name, str) or Path(name).name != name:
+            raise WorkerError('The media file could not be verified.')
+        artifact = local_path(directory / name, directory)
+        if artifact.is_symlink() or not 0 < artifact.stat().st_size <= int(request['maxBytes']):
+            raise WorkerError('The media file could not be verified.')
+        if media.get('mediaType') in ('image', 'gallery'):
+            # Existing bounded gallery packaging remains supported.
+            if artifact.suffix == '.zip':
+                with zipfile.ZipFile(artifact) as archive:
+                    if archive.testzip() or len(archive.infolist()) > int(request.get('maxItems', 50)):
+                        raise WorkerError('The gallery could not be verified.')
+            else:
+                from PIL import Image
+                with Image.open(artifact) as image:
+                    image.verify()
+            return result
+        data = probe_file(artifact, request.get('ffmpeg'), directory)
+        streams = data.get('streams') or []
+        video = next((s for s in streams if s.get('codec_type') == 'video' and not (s.get('disposition') or {}).get('attached_pic')), None)
+        audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+        audio_only = request.get('downloadMode') == 'audio' or media.get('mediaType') == 'audio'
+        expected = request.get('audioFormat', 'm4a') if audio_only else request.get('videoFormat', 'mp4')
+        if artifact.suffix != '.' + expected or (audio_only and (not audio or video)) or (not audio_only and (not video or video.get('codec_name') != 'h264')):
+            raise WorkerError('The requested media format could not be verified.')
+        duration = number((data.get('format') or {}).get('duration'))
+        if not duration or duration > int(request.get('maxDuration', 7200)):
+            raise WorkerError('The media duration could not be verified.')
+        expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
+        if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
+            raise WorkerError('The source returned an incomplete media file.')
+        cap = {'small': 480, 'balanced': 1080}.get(request.get('quality'))
+        if cap and video and video.get('height', 0) > cap:
+            raise WorkerError('The requested video quality could not be verified.')
+        # Decode the complete local artifact, not just its MP4 header. This
+        # catches truncated streams and corrupt frames that ffprobe can list.
+        command = [request['ffmpeg'], '-v', 'error', '-xerror', '-nostdin', '-threads', '2',
+                   '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
+                   '-i', str(artifact), '-map', '0:V:0?', '-map', '0:a:0?', '-f', 'null', '-']
+        checked = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, timeout=600, **SUBPROCESS_FLAGS)
+        if checked.returncode:
+            raise WorkerError('The downloaded media could not be verified.')
+        apply_probe(media, data)
+    return result
+
+
 def run(request):
     directory = Path(request["directory"]).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     if request.get("kind") not in ("inspect", "download"):
         raise WorkerError("Invalid media operation.")
-    value = request["input"]
-    host = (urlparse(value).hostname or "").lower()
-    if is_instagram_reel(value):
-        # Sharing parameters carry no media identity and are unnecessary here.
-        request = dict(request, input=urlunparse(urlparse(value)._replace(query='', fragment='')))
-        try:
-            return run_ytdlp(request)
-        except SourceError as primary:
-            emit(phase="Trying alternate Instagram media lookup", progress=None)
-            try:
-                return run_gallery(request)
-            except SourceError:
-                raise primary
-    if host in ("open.spotify.com", "www.open.spotify.com", "spotify.link", "spoti.fi") or value.lower().startswith("spotify:"):
-        return run_spotify(request)
-    if is_gallery(value):
-        return run_gallery(request)
-    return run_ytdlp(request)
+    from vortex_network import validate_input
+    from vortex_urls import resolve_shared_url
+    value = validate_input(request['input'], request['kind'])
+    if not value.startswith(('https://', 'http://')):
+        # Search behavior/pagination is unchanged; there is no media identity
+        # to race until the user selects one result.
+        return run_spotify(request) if value.lower().startswith('spotify:') else run_ytdlp(request)
+    value = resolve_shared_url(value)
+    from vortex_race import race
+    return race(dict(request, input=value))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request", required=True)
+    parser.add_argument('--adapter', choices=[a.name for a in ADAPTERS])
     args = parser.parse_args()
     try:
         # Suppress upstream console output and exceptions, including URLs with
@@ -734,14 +812,28 @@ def main():
             # to optional engines isolated from Vision's core dependencies.
             sys.path.insert(0, str(Path(request["packagesPath"]).resolve()))
         with open(os.devnull, "w", encoding="utf-8") as null, contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
-            emit(**run(request))
+            if args.adapter:
+                adapter = next(a for a in ADAPTERS if a.name == args.adapter)
+                if not adapter.compatible(request['input']) or not adapter.configured(request):
+                    raise WorkerError('This source is unavailable.')
+                emit(**verify_result(adapter.run(request), request))
+            else:
+                emit(**run(request))
         return 0
     except WorkerError as exc:
-        emit(error=str(exc))
-    except Exception:
-        emit(error="The source could not be processed. It may be unavailable, require a login, or be unsupported. Try another public media link.")
+        from vortex_race import PUBLIC_ERROR
+        detail = str(exc).lower()
+        category = ('identity_mismatch' if 'different media' in detail else 'authentication' if 'signed-in' in detail or 'login' in detail
+                    else 'rate_limited' if 'limiting requests' in detail else 'network' if 'connection' in detail or 'reached' in detail
+                    else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
+        emit(error=PUBLIC_ERROR, category=category)
+    except Exception as exc:
+        from vortex_race import PUBLIC_ERROR
+        emit(error=PUBLIC_ERROR, category='identity_mismatch' if str(exc) == 'identity_mismatch' else 'unavailable')
     return 1
 
 
 if __name__ == "__main__":
+    # Adapter modules share this process's event stream and safety patches.
+    sys.modules['vortex_worker'] = sys.modules[__name__]
     raise SystemExit(main())

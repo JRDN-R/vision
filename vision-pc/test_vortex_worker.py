@@ -245,22 +245,14 @@ class VortexAdapterTests(unittest.TestCase):
         self.assertEqual(result['media']['mediaType'], 'audio')
         self.assertEqual(captured['format'], worker.format_selector('max', audio=True))
 
-    def test_instagram_reel_uses_video_engine_then_gallery_fallback(self):
-        value = 'https://www.instagram.com/reel/DeOrpiojEW2/?cplk=aXN3NHRmejExbW1l'
+    def test_instagram_reel_enters_parallel_orchestrator(self):
+        value = 'https://www.instagram.com/reel/DeOrpiojEW2/?cplk=tracking'
         complete = {'complete': True, 'media': {'title': 'Reel'}}
-        with patch.object(worker, 'run_ytdlp', return_value=complete) as video, patch.object(worker, 'run_gallery') as gallery:
+        import vortex_network
+        with patch.object(vortex_network, 'resolve_public'), \
+                patch('vortex_race.race', return_value=complete) as race:
             self.assertEqual(worker.run(self.request(input=value)), complete)
-            self.assertEqual(video.call_args.args[0]['input'], 'https://www.instagram.com/reel/DeOrpiojEW2/')
-            gallery.assert_not_called()
-        with patch.object(worker, 'run_ytdlp', side_effect=worker.SourceError('Provider lookup failed')), \
-                patch.object(worker, 'run_gallery', return_value=complete) as gallery:
-            self.assertEqual(worker.run(self.request(input=value)), complete)
-            gallery.assert_called_once()
-        with patch.object(worker, 'run_ytdlp', side_effect=worker.WorkerError('File exceeds size limit')), \
-                patch.object(worker, 'run_gallery') as gallery:
-            with self.assertRaisesRegex(worker.WorkerError, 'size limit'):
-                worker.run(self.request(input=value))
-            gallery.assert_not_called()
+            self.assertEqual(race.call_args.args[0]['input'], 'https://www.instagram.com/reel/DeOrpiojEW2/')
 
     def test_provider_errors_are_specific_without_exposing_signed_urls(self):
         value = 'https://www.instagram.com/reel/DeOrpiojEW2/'

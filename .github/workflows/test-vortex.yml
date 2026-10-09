@@ -46,8 +46,13 @@ jobs:
         run: |
           $ParseErrors = $null
           $Tokens = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'vision-pc/Setup-Vision-PC.ps1'), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
-          if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
+          foreach ($File in @('vision-pc/Setup-Vision-PC.ps1','vision-pc/Vortex-Services.ps1')) {
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $File), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
+            if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
+          }
+      - name: Validate optional service configuration (Linux)
+        if: runner.os == 'Linux'
+        run: docker compose -f vision-pc/vortex-services.compose.yml config --quiet
       - name: Check isolated specialist dependencies
         if: runner.os == 'Windows'
         shell: pwsh

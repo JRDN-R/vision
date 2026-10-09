@@ -78,6 +78,7 @@ def configure(config_path, migrate_gemini=False):
     if not isinstance(vortex_config, dict):
         raise ValueError('vortex must be a configuration object.')
     app.config['VORTEX_PACKAGES'] = str(vortex_config.get('packagesPath') or '')
+    app.config['VORTEX_SERVICES'] = vortex_config.get('services') or {}
     firebase = config.get('firebaseAuth') or {}
     if not isinstance(firebase, dict):
         raise ValueError('firebaseAuth must be a configuration object.')

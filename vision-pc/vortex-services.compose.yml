@@ -1,0 +1,81 @@
+# Engine requests originate only from the loopback port. Cobalt has no external
+# route; outbound traffic MUST traverse the public-address validating proxy.
+services:
+  cobalt:
+    build:
+      context: ./cobalt
+    image: vision-vortex-cobalt:a636575b09de
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 1536m
+    pids_limit: 128
+    tmpfs: [/tmp:size=128m]
+    network_mode: service:network-policy
+    environment:
+      API_URL: http://127.0.0.1:9000/
+      HTTP_PROXY: http://egress:8080
+      HTTPS_PROXY: http://egress:8080
+      NO_PROXY: ''
+      DURATION_LIMIT: '7200'
+    depends_on:
+      network-policy:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://127.0.0.1:9000/',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: none
+  network-policy:
+    build:
+      context: .
+      dockerfile: vortex-egress-policy.Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 32m
+    pids_limit: 16
+    tmpfs: [/run:size=1m]
+    ports: ['127.0.0.1:9000:9000']
+    networks: [engines]
+    depends_on: [egress]
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/run/policy-ready']
+      interval: 5s
+      timeout: 2s
+      retries: 12
+    logging:
+      driver: none
+  egress:
+    image: python:3.13-slim
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: '65534:65534'
+    cpus: 1
+    mem_limit: 128m
+    pids_limit: 32
+    networks: [engines, public]
+    working_dir: /app
+    volumes:
+      - ./vortex_egress.py:/app/vortex_egress.py:ro
+      - ./vortex_network.py:/app/vortex_network.py:ro
+      - ./vortex_urls.py:/app/vortex_urls.py:ro
+    command: ['python', '-B', 'vortex_egress.py']
+    logging:
+      driver: none
+networks:
+  engines:
+    internal: true
+  public: {}

@@ -69,7 +69,8 @@ def resolve_public(host, port, resolver=None, family=0, socktype=socket.SOCK_STR
 def validate_input(value, kind='inspect', resolve=True):
     if not isinstance(value, str) or not 1 <= len(value.strip()) <= 2048:
         raise ValueError('Paste a media link or enter a search up to 2,048 characters.')
-    value = value.strip()
+    from vortex_urls import normalize_url
+    value = normalize_url(value)
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or '\\' in value:
         raise ValueError('This link or search contains unsupported characters.')
     if value.lower().startswith(('www.', 'youtu.be/', 'youtube.com/', 'music.youtube.com/', 'instagram.com/', 'open.spotify.com/')):
