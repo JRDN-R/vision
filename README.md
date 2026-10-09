@@ -7,6 +7,21 @@ media into a board, connect the modules, and export the instructions and evidenc
 the app. Google sign-in is required to use the application. Video imports, YouTube
 imports, account saves, and OpenAI conversations use the connected **FUPCJ Server**.
 
+## Vortex
+
+Vortex is the dedicated, signed-in media downloader at [`/vision/vortex/`](https://jrdn-r.github.io/vision/vortex/).
+Its independent page uses the same Firebase account and FUPCJ Server as Vision
+and Venture. Find it directly below Help in Vision, or above the fixed server
+storage footer in Venture. Accepted downloads keep processing after the page
+closes; the history restores progress when you return. Completed files expire
+five days after completion, with cancel, delete, save, and supported native share
+actions available from each item's menu.
+
+**The Windows processor must be updated before Vortex can process media.**
+See [Vortex setup, supported sources, limits, and verification](vision-pc/VORTEX.md).
+The existing main-branch portable build publishes the two navigation additions;
+the Vortex entry page and its assets are served directly by GitHub Pages.
+
 **v1.0.2.9** adds a sign-out icon beside What’s new in both menus, with a
 Yes/No confirmation. No, Escape, or clicking outside keeps the account signed in.
 

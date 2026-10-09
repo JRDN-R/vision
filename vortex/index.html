@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101314">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Vortex</title>
+  <link rel="icon" type="image/png" href="../vortex_character.png">
+  <link rel="stylesheet" href="../web/vortex/vortex.css">
+  <script defer src="../web/vendor/firebase.js"></script>
+  <script defer src="../web/vendor/lottie_svg.min.js"></script>
+  <script type="module" src="../web/vortex/app.js"></script>
+</head>
+<body>
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
+    <div class="auth-content">
+      <h1 id="authTitle">Sign in to Vortex</h1>
+      <p>Use your Vision account to open your media and downloads.</p>
+      <button id="googleSignIn" class="primary" type="button">Continue with Google</button>
+      <div class="auth-divider"><span>or</span></div>
+      <form id="emailSignIn">
+        <label for="authEmail">Email</label>
+        <input id="authEmail" type="email" inputmode="email" autocomplete="email" required>
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+        <button class="primary" type="submit">Sign in with email</button>
+      </form>
+      <div class="auth-links"><button id="createAccount" type="button">Create account</button><button id="resetPassword" type="button">Forgot password?</button></div>
+      <p id="authStatus" class="auth-status" role="status">Restoring your account…</p>
+    </div>
+  </section>
+
+  <div id="application" hidden inert>
+    <header class="topbar">
+      <button id="menuButton" class="icon-button hamburger" type="button" aria-label="Open menu" aria-controls="navigation" aria-expanded="false"><span id="menuGlyph" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 9h22M5 16h22M5 23h22"/></svg></span></button>
+      <a class="brand" href="./" aria-label="Vortex home"><img src="../vortex_character.png" alt="" width="44" height="44"><span>Vortex</span></a>
+      <button id="profileButton" class="profile-button" type="button" aria-label="Your account" aria-haspopup="dialog"><span id="profileInitial" aria-hidden="true">●</span><img id="profileImage" alt="" referrerpolicy="no-referrer" hidden></button>
+    </header>
+    <main id="mainContent" class="content">
+      <section id="processing" class="processing" aria-label="Processing activity" hidden>
+        <div class="terminal-row"><span class="terminal-marker" aria-hidden="true">›</span><div class="terminal-viewport"><span id="terminalLine" role="status" aria-live="polite"></span></div><span id="progressPercent" class="percentage"></span></div>
+        <div id="progressTrack" class="progress-track" role="progressbar" aria-label="Current processing progress" aria-valuemin="0" aria-valuemax="100"><span id="progressFill"></span></div>
+      </section>
+      <form id="sourceForm" class="source-form" role="search">
+        <label class="sr-only" for="sourceInput">Paste a media link or search</label>
+        <svg class="link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></svg>
+        <input id="sourceInput" type="text" inputmode="text" enterkeyhint="search" placeholder="Paste a link or search YouTube, Spotify, and more…" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="2048" required>
+        <button id="sourceSubmit" class="icon-button" type="submit" aria-label="Find media"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button>
+      </form>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <section id="searchResults" class="search-results" aria-label="Search results" hidden><div class="section-heading"><h2>Search results</h2><button id="clearResults" class="text-button" type="button">Close</button></div><div id="resultList"></div></section>
+      <section id="selection" class="selection" aria-label="Selected media" hidden>
+        <div class="selection-summary"><img id="selectionImage" alt="" hidden><div><h1 id="selectionTitle"></h1><p id="selectionSource"></p></div></div>
+        <div class="media-controls">
+          <dl id="mediaInfo" class="media-info"></dl>
+          <div class="download-controls">
+            <fieldset id="qualityControls" class="quality-controls"><legend class="sr-only">Video quality</legend><label><input type="radio" name="quality" value="small"><span>Small</span></label><label><input type="radio" name="quality" value="balanced" checked><span>Balanced</span></label><label><input type="radio" name="quality" value="max"><span>Max</span></label></fieldset>
+            <p id="originalAudio" class="original-audio" hidden>Highest available audio quality</p>
+            <button id="downloadButton" class="primary download-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg><span>Download</span></button>
+          </div>
+        </div>
+        <p id="mediaNote" class="fine-print" hidden></p>
+      </section>
+      <section class="activity" aria-labelledby="activityTitle">
+        <div class="section-heading"><h2 id="activityTitle">Recent Activity</h2><button id="refreshButton" class="icon-button" type="button" aria-label="Refresh activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></div>
+        <p id="emptyActivity" class="empty-activity">Your downloads will appear here.</p>
+        <div id="activityList" class="activity-list"></div>
+        <button id="loadOlder" class="text-button" type="button" hidden>Load older activity</button>
+        <p class="retention-note">Files are kept for five days. Accepted downloads continue when you leave.</p>
+        <p id="connectionStatus" class="connection-status" role="status"></p>
+      </section>
+    </main>
+    <button id="menuScrim" class="menu-scrim" type="button" aria-label="Close menu" tabindex="-1" hidden></button>
+    <aside id="navigation" class="navigation" aria-label="Main navigation" tabindex="-1" hidden inert>
+      <div class="nav-heading"><span>Explore</span><button id="closeMenu" class="icon-button" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <nav><a href="../?view=vision"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="5" width="7" height="7" rx="1"/><rect x="8" y="15" width="7" height="6" rx="1"/></svg>Vision</a><a href="../?view=venture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 9-9 9-9-9Z"/><path d="m9 15 2-4 4-2-2 4Z"/></svg>Venture</a><a class="current" href="./" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 7a8 8 0 1 0 1 9M19 7h-5m5 0V2M15 9a4 4 0 1 0 0 6"/></svg>Vortex</a></nav>
+      <div class="nav-footer"><button id="menuAccount" class="text-button" type="button">Your account</button><button id="menuSignOut" class="icon-button" type="button" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/></svg></button></div>
+    </aside>
+  </div>
+
+  <dialog id="accountDialog" class="modal"><div class="modal-heading"><h2>Your account</h2><button class="icon-button close-dialog" type="button" aria-label="Close account">×</button></div><p id="accountName"></p><p id="accountEmail" class="fine-print"></p><p class="fine-print">Your media and history belong to this account.</p><button id="accountSignOut" class="secondary" type="button">Sign out</button></dialog>
+  <dialog id="actionDialog" class="modal action-dialog"><div class="modal-heading"><h2 id="actionTitle">Media actions</h2><button class="icon-button close-dialog" type="button" aria-label="Close media actions">×</button></div><p id="actionStatus" class="fine-print" role="status"></p><div class="action-list"><a id="saveFile" class="primary action-link" hidden>Save file</a><button id="shareFile" class="secondary" type="button" hidden>Prepare to share</button><button id="retryJob" class="secondary" type="button" hidden>Download again</button><button id="cancelJob" class="secondary" type="button" hidden>Cancel download</button><button id="deleteJob" class="danger" type="button">Delete</button></div></dialog>
+  <dialog id="confirmDialog" class="modal"><h2 id="confirmTitle">Are you sure?</h2><p id="confirmDescription" class="fine-print"></p><div class="confirm-actions"><button id="confirmNo" class="secondary" type="button">No</button><button id="confirmYes" class="primary" type="button">Yes</button></div></dialog>
+  <noscript><p class="noscript">Enable JavaScript to sign in and use Vortex.</p></noscript>
+</body>
+</html>

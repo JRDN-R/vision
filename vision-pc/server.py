@@ -29,6 +29,7 @@ from audit_logs import AuditLogs
 from trials import Trials
 from gemini_access import GeminiAccess, GeminiUsage
 from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
+from vortex import VortexJobs
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -73,6 +74,10 @@ def configure(config_path, migrate_gemini=False):
                       DATA_DIR=data_dir, DATABASE=data_dir / 'vision.sqlite3',
                       FFMPEG=str(local_path('ffmpeg', 'tools/ffmpeg.exe')),
                       DENO=str(local_path('deno', 'tools/deno.exe')))
+    vortex_config = config.get('vortex') or {}
+    if not isinstance(vortex_config, dict):
+        raise ValueError('vortex must be a configuration object.')
+    app.config['VORTEX_PACKAGES'] = str(vortex_config.get('packagesPath') or '')
     firebase = config.get('firebaseAuth') or {}
     if not isinstance(firebase, dict):
         raise ValueError('firebaseAuth must be a configuration object.')
@@ -101,6 +106,7 @@ def configure(config_path, migrate_gemini=False):
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
     documents.initialize(config)
+    vortex.initialize()
     sessions.venture.documents = documents
     sessions.venture.transcription = transcriptions
     sessions.context.initialize(config)
@@ -200,11 +206,18 @@ def authorize():
         return Response(status=204)
     if request.method == 'GET' and request.path == '/api/status':
         return
+    # Download capabilities are Firebase-owner minted and scoped to one file.
+    # They are never accepted for inventory, mutations, or another application.
+    if request.method in ('GET', 'HEAD') and re.fullmatch(r'/api/vortex/jobs/[0-9a-f]{24}/file', request.path) and request.args.get('ticket'):
+        vortex.authorize_ticket()
+        return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
     if request.path == '/api/trial/start' and request.method == 'POST':
         return
     if token.startswith('trial_'):
+        if request.path.startswith('/api/vortex/'):
+            raise APIError('Sign in to use Vortex.', 401)
         trials.authorize(token)
         return
     expected = app.config.get('CONNECTION_TOKEN', '')
@@ -278,9 +291,9 @@ def cors(response):
     if public_access or origin in ORIGINS:
         response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
-        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key, Range'
         response.headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, PATCH, DELETE, OPTIONS'
-        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type, Content-Length, Content-Range, Accept-Ranges'
         if request.headers.get('Access-Control-Request-Private-Network') == 'true':
             response.headers['Access-Control-Allow-Private-Network'] = 'true'
     response.headers['Cache-Control'] = 'no-store'
@@ -313,6 +326,7 @@ def health():
                    geminiTranscription=gemini,
                    ventureDictation=sessions.venture.dictation.capability(),
                    intelligentContext=sessions.context.capability(),
+                   vortex=vortex.capability(),
                    capabilities={'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
@@ -673,6 +687,7 @@ sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 documents = DocumentJobs(app, connect_db, APIError, sessions)
+vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
 
 def main():
@@ -716,6 +731,7 @@ def main():
         transcriptions.start()
         uploaded_media.start()
         documents.start()
+        vortex.start()
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
@@ -724,6 +740,7 @@ def main():
                   trusted_proxy_count=1, trusted_proxy_headers={'x-forwarded-for', 'x-forwarded-proto'},
                   clear_untrusted_proxy_headers=True)
         finally:
+            vortex.close()
             trials.stop.set()
             STOP.set()
             WAKE.set()

@@ -35,6 +35,12 @@
 .workspace-menu .top-actions button>svg{display:block;flex:0 0 20px;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.65;pointer-events:none}
 .workspace-menu .top-actions button>svg.workspace-nav-svg{fill:currentColor;stroke:none}
 .workspace-menu .workspace-nav-icon:after{display:none!important}
+.workspace-menu .top-actions .workspace-vortex-link,.venture-root .workspace-vortex-link{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex:none;box-sizing:border-box;width:100%;min-height:46px;padding:10px 13px;border:1px solid #751e1855;border-radius:10px;background:#751e182e;color:#dfb4a7;font:13px/1.5 Inter,system-ui,sans-serif;text-align:left;text-decoration:none;touch-action:manipulation}
+.workspace-menu .top-actions .workspace-vortex-link:hover,.venture-root .workspace-vortex-link:hover{background:#751e184d;color:#f2f0eb}
+.workspace-vortex-link:focus-visible{outline:2px solid #d1baa2;outline-offset:2px}
+.workspace-vortex-link>svg{display:block;flex:0 0 20px;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.venture-root .workspace-vortex-link{margin-top:12px}
+.compact-navigation .venture-sidebar-foot{flex:none}
 .workspace-menu-footer{display:flex;flex-direction:column;gap:9px;padding:17px 10px 0;margin-top:16px;border-top:1px solid #ffffff0a;flex:none}
 .workspace-menu-version{font:10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:#8c9a85}
 .workspace-footer-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
