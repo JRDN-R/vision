@@ -234,7 +234,7 @@ def verify_delayed_auth_restore(browser):
             assert page.locator('#authGate').is_hidden()
             assert page.locator('#authRestoring').is_hidden()
             assert page.locator('#application').get_attribute('aria-busy') is None
-            page.locator('#accountEmail').get_by_text('alice@example.test').wait_for()
+            page.wait_for_function("document.querySelector('#accountEmail').textContent === 'alice@example.test'")
         else:
             page.locator('#authGate').wait_for(state='visible')
             assert page.locator('#application').is_hidden()
