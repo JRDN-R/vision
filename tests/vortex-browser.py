@@ -362,8 +362,13 @@ def run():
 
             # An in-flight Alice history result must not reappear after switching to Bob.
             api.hold_list = True
-            page.locator('#refreshButton').click()
-            page.wait_for_timeout(100)
+            # A scheduled refresh may consume the held request and disable the
+            # button first. Dispatch without waiting for actionability: either
+            # request exercises the same response/account isolation boundary.
+            page.locator('#refreshButton').dispatch_event('click')
+            deadline = time.monotonic() + 7
+            while api.held is None and time.monotonic() < deadline:
+                page.wait_for_timeout(20)
             assert api.held is not None
             page.evaluate("__switchUser('bob')")
             api.release()
