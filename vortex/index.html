@@ -63,12 +63,14 @@
         <div class="terminal-row"><span class="terminal-marker" aria-hidden="true">›</span><div class="terminal-viewport"><span id="terminalLine" role="status" aria-live="polite"></span></div><span id="progressPercent" class="percentage"></span></div>
         <div id="progressTrack" class="progress-track" role="progressbar" aria-label="Current processing progress" aria-valuemin="0" aria-valuemax="100"><span id="progressFill"></span></div>
       </section>
+      <div class="source-orbit">
       <form id="sourceForm" class="source-form" role="search">
-        <label class="sr-only" for="sourceInput">Paste a media link or search</label>
-        <svg class="link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></svg>
-        <input id="sourceInput" type="text" inputmode="text" enterkeyhint="search" placeholder="Paste a link or search YouTube, Spotify, and more…" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="2048" required>
+        <label class="sr-only" for="sourceInput">Search for media or paste a URL</label>
+        <svg class="link-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.75" cy="10.75" r="6.25"/><path d="m15.4 15.4 4.6 4.6"/></svg>
+        <input id="sourceInput" type="text" inputmode="text" enterkeyhint="search" placeholder="Search or paste a URL" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="2048" required>
         <button id="sourceSubmit" class="icon-button" type="submit" aria-label="Find media"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button>
       </form>
+      </div>
       <p id="notice" class="notice" role="status" hidden></p>
       <section id="searchResults" class="search-results" aria-label="Search results" hidden><div class="section-heading"><h2>Search results</h2><button id="clearResults" class="text-button" type="button">Close</button></div><div id="resultList"></div><div class="search-footer"><p id="searchStatus" class="fine-print" role="status"></p><button id="loadMoreResults" class="text-button" type="button" hidden>Load more results</button></div></section>
       <section id="selection" class="selection" aria-label="Selected media" hidden>

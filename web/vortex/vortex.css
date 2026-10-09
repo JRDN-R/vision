@@ -22,3 +22,135 @@
 .source-thumbnail{display:block;flex:none;border-radius:6px;text-decoration:none}.source-thumbnail:focus-visible{outline:2px solid var(--beige);outline-offset:4px}.source-thumbnail img{display:block}.search-footer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;min-height:44px;padding-top:8px}.search-footer p:empty{display:none}.format-control{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;color:var(--muted);font-size:11px}.format-control select{min-height:44px;min-width:78px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;cursor:pointer}.format-control select:focus-visible{outline:2px solid var(--beige);outline-offset:3px}
 @media(max-width:380px){#downloadModeControls{grid-column:1}.format-control{grid-column:2;flex-wrap:wrap;gap:2px}.format-control select{width:100%}#qualityControls,#originalAudio{grid-column:1}.download-button{grid-column:2}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.progress-track.indeterminate>span{width:100%;opacity:.5}}
+
+/* VORTEX: orbital search and scattered pixel starlight
+   The black field and irregular quantized stars preserve the sister apps'
+   muted OS-like aesthetic; the accretion glow is deliberately contained
+   around the URL/search control rather than using the preview artwork. */
+@property --vortex-orbit-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+body {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 65% 32% at 48% 12%, rgba(117, 30, 24, .15), transparent 78%),
+    radial-gradient(ellipse 55% 48% at 95% 75%, rgba(98, 37, 33, .07), transparent 84%),
+    #101314;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("./starfield.svg") center top / cover no-repeat;
+  opacity: .78;
+  animation: vortex-starlight 15s ease-in-out infinite alternate;
+}
+#application, .auth-gate { position: relative; }
+.topbar {
+  position: relative;
+  z-index: 3;
+  background: rgba(16, 19, 20, .82);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(209, 186, 162, .075);
+}
+.content { position: relative; }
+
+/* The orbital edge and lensing halo sit behind a truly #000000 field.
+   Only the glow moves: the capsule itself never spins or changes size. */
+.source-orbit {
+  position: relative;
+  isolation: isolate;
+  margin: 5px 0 23px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(155, 76, 61, .45);
+  box-shadow: 0 0 0 1px rgba(209, 145, 117, .11), 0 0 23px rgba(117, 30, 24, .19);
+  transition: box-shadow .3s ease;
+}
+.source-orbit::before,
+.source-orbit::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.source-orbit::before {
+  inset: 0;
+  z-index: 1;
+  background: conic-gradient(
+    from var(--vortex-orbit-angle) at 50% 50%,
+    rgba(61, 24, 24, .75) 0deg,
+    rgba(145, 60, 49, .78) 44deg,
+    rgba(229, 138, 96, .95) 77deg,
+    rgba(255, 211, 159, .88) 94deg,
+    rgba(148, 59, 48, .54) 129deg,
+    rgba(49, 21, 24, .44) 189deg,
+    rgba(159, 57, 49, .77) 242deg,
+    rgba(235, 152, 110, .88) 276deg,
+    rgba(70, 25, 24, .69) 328deg,
+    rgba(61, 24, 24, .75) 360deg
+  );
+  animation: vortex-accretion 20s linear infinite;
+}
+.source-orbit::after {
+  inset: -6px;
+  z-index: 0;
+  background: conic-gradient(
+    from var(--vortex-orbit-angle),
+    rgba(87, 27, 25, .25),
+    rgba(211, 84, 58, .53) 25%,
+    rgba(249, 172, 116, .48) 32%,
+    rgba(63, 23, 23, .12) 47%,
+    rgba(151, 46, 41, .43) 69%,
+    rgba(240, 143, 102, .50) 77%,
+    rgba(87, 27, 25, .25)
+  );
+  filter: blur(12px);
+  opacity: .64;
+  animation: vortex-accretion 27s linear infinite reverse;
+  transition: opacity .3s ease;
+}
+.source-orbit .source-form {
+  position: relative;
+  z-index: 2;
+  min-height: 62px;
+  padding: 6px 7px 6px 20px;
+  border: 1px solid rgba(195, 116, 87, .25);
+  border-radius: 999px;
+  background: #000000;
+  box-shadow: inset 0 0 18px rgba(9, 4, 4, .65);
+}
+.source-orbit .source-form:focus-within { border-color: rgba(247, 193, 149, .68); }
+.source-orbit:focus-within {
+  box-shadow: 0 0 0 1px rgba(230, 166, 127, .4), 0 0 31px rgba(184, 72, 50, .31);
+}
+.source-orbit:focus-within::after { opacity: .88; }
+.source-orbit .source-form .link-icon { color: #d1baa2; }
+.source-orbit .source-form input { background: transparent; color: #f2f0eb; }
+.source-orbit .source-form input::placeholder { color: #9da3a0; opacity: 1; font-size: 14px; }
+.source-orbit .source-form .icon-button { border-radius: 50%; }
+@keyframes vortex-accretion { to { --vortex-orbit-angle: 360deg; } }
+@keyframes vortex-starlight { from { opacity: .62; } to { opacity: .82; } }
+@media (max-width: 600px) {
+  .source-orbit { margin: 5px 0 21px; padding: 2px; }
+  .source-orbit .source-form { min-height: 56px; gap: 10px; padding: 5px 5px 5px 14px; }
+  .source-orbit .source-form input::placeholder { font-size: 13px; }
+  .source-orbit::after { inset: -5px; filter: blur(9px); }
+}
+@media (max-width: 380px) {
+  .source-orbit .source-form input::placeholder { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::before, .source-orbit::before, .source-orbit::after { animation: none !important; }
+  .source-orbit, .source-orbit::after { transition: none !important; }
+}
+@media (forced-colors: active) {
+  .source-orbit::before, .source-orbit::after { display: none; }
+  .source-orbit .source-form { border: 1px solid CanvasText; background: Canvas; }
+}
