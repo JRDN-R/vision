@@ -1,5 +1,6 @@
-# Engine requests originate only from the loopback port. Cobalt has no external
-# route; outbound traffic MUST traverse the public-address validating proxy.
+# The fixed ingress relay publishes only host loopback. Cobalt retains its
+# internal-only network and namespace firewall; outbound requests MUST traverse
+# the public-address validating proxy, including after a Docker/Windows restart.
 services:
   cobalt:
     build:
@@ -17,6 +18,7 @@ services:
     network_mode: service:network-policy
     environment:
       API_URL: http://127.0.0.1:9000/
+      API_LISTEN_ADDRESS: 0.0.0.0
       HTTP_PROXY: http://egress:8080
       HTTPS_PROXY: http://egress:8080
       NO_PROXY: ''
@@ -45,13 +47,39 @@ services:
     mem_limit: 32m
     pids_limit: 16
     tmpfs: [/run:size=1m]
-    ports: ['127.0.0.1:9000:9000']
     networks: [engines]
     depends_on: [egress]
     healthcheck:
       test: ['CMD', 'test', '-f', '/run/policy-ready']
       interval: 5s
       timeout: 2s
+      retries: 12
+    logging:
+      driver: none
+  ingress:
+    build:
+      context: .
+      dockerfile: vortex-ingress.Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: '65534:65534'
+    cpus: 0.25
+    mem_limit: 32m
+    pids_limit: 32
+    ports: ['127.0.0.1:9000:9000']
+    # Only the fixed relay gets a publishable bridge. Cobalt has no new route
+    # even when restart policies start containers without Compose health gates.
+    networks: [engines, ingress]
+    depends_on:
+      cobalt:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:9000/']
+      interval: 5s
+      timeout: 3s
       retries: 12
     logging:
       driver: none
@@ -81,4 +109,5 @@ services:
 networks:
   engines:
     internal: true
+  ingress: {}
   public: {}

@@ -8,7 +8,8 @@ No automatic restart, autologon, public extraction API, or Linux desktop.
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9._-]+$')][string]$SourceRef = 'main',
-    [switch]$AcceptDockerLicense
+    [switch]$AcceptDockerLicense,
+    [switch]$ServicesOnly
 )
 
 function Write-VortexStage([string]$Message) { Write-Host "`n$Message" -ForegroundColor Cyan }
@@ -78,7 +79,7 @@ function Join-VortexArguments([string[]]$Arguments) {
     return (($Arguments | ForEach-Object { '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' }) -join ' ')
 }
 
-function Invoke-VortexProgram([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 180, [switch]$ShowOutput) {
+function Invoke-VortexProgram([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 180, [switch]$ShowOutput, [switch]$KeepRunningOnTimeout) {
     $Id = [Guid]::NewGuid().ToString('N')
     $OutPath = Join-Path $script:VortexWork "$Id.out"
     $ErrPath = Join-Path $script:VortexWork "$Id.err"
@@ -94,6 +95,9 @@ function Invoke-VortexProgram([string]$File, [string[]]$Arguments, [int]$Timeout
                 $NextNotice += 30
             }
             if ($Watch.Elapsed.TotalSeconds -gt $TimeoutSeconds) {
+                if ($KeepRunningOnTimeout) {
+                    throw (New-Object TimeoutException('The installer has not reported completion and may still be running. Do not start another copy.'))
+                }
                 $Process.Kill()
                 throw (New-Object TimeoutException("Timed out waiting for $([IO.Path]::GetFileName($File)). Rerun setup after checking the installer."))
             }
@@ -144,27 +148,62 @@ function Enable-VortexWindowsFeatures {
     if ($NeedsRestart -or (Test-VortexPendingRestart)) { Request-VortexRestart 'The Windows features required by WSL need a restart.' }
 }
 
+function ConvertFrom-VortexWslVersion([string]$Text) {
+    $Clean = $Text -replace '[\x00\uFEFF\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]', ''
+    # Do not mistake WSLg, the Linux kernel, or the Windows version for WSL.
+    $Match = [regex]::Match($Clean, '(?im)^[^\r\n:\uFF1A]*\bWSL\b[^\r\n:\uFF1A]*[:\uFF1A]\s*(\d+\.\d+\.\d+(?:\.\d+)?)(?:\s|$)')
+    if ($Match.Success) { return [version]$Match.Groups[1].Value }
+    return $null
+}
+
+function Invoke-VortexWsl([string[]]$Arguments) {
+    $Previous = $env:WSL_UTF8
+    try {
+        # Match Microsoft's own diagnostics; older versions can still emit NULs.
+        $env:WSL_UTF8 = '1'
+        return Invoke-VortexProgram (Join-Path $env:SystemRoot 'System32\wsl.exe') $Arguments 60
+    } finally { $env:WSL_UTF8 = $Previous }
+}
+
 function Install-VortexWsl {
-    $Wsl = Join-Path $env:SystemRoot 'System32\wsl.exe'
-    $Version = Invoke-VortexProgram $Wsl @('--version')
-    $Match = [regex]::Match($Version.Output, '(?m)^.*?:\s*(\d+\.\d+\.\d+)')
-    # The old Windows wsl.exe prints help for --version/--update, sometimes with
-    # exit 0. Do not confuse that output with an installed modern WSL runtime.
-    if ($Version.ExitCode -ne 0 -or -not $Match.Success -or [version]$Match.Groups[1].Value -lt [version]'2.1.5') {
+    $Version = Invoke-VortexWsl @('--version')
+    $Installed = ConvertFrom-VortexWslVersion $Version.Stdout
+    $LegacyHelp = $Version.Stdout -match '(?im)^\s*Usage:\s*wsl(?:\.exe)?\s'
+    if (($Version.ExitCode -ne 0 -or $null -eq $Installed) -and -not $LegacyHelp) {
+        throw 'The WSL version could not be confirmed. WSL was not changed. Open Docker Desktop and rerun setup, or inspect wsl --version before repairing WSL.'
+    }
+    if ($null -eq $Installed -or $Installed -lt [version]'2.1.5') {
+        $Pending = Join-Path $script:VortexWork 'wsl-install-pending.json'
+        if (Test-Path -LiteralPath $Pending) {
+            $State = Get-Content -LiteralPath $Pending -Raw | ConvertFrom-Json
+            if ($State.boot -eq (Get-VortexBootId)) {
+                throw 'A previous WSL installer did not report completion. Let Windows Installer finish and restart Windows before another prerequisite installation. With Docker running, -ServicesOnly can resume Cobalt setup.'
+            }
+        }
         Write-VortexStage 'Installing the current stable Microsoft WSL runtime'
         $Asset = Get-VortexReleaseAsset 'microsoft/WSL' '^wsl\.[0-9.]+\.x64\.msi$'
         $Package = Join-Path $script:VortexWork 'wsl-x64.msi'
         Get-VortexDownload $Asset.browser_download_url $Package
         Assert-VortexDigest $Package $Asset.digest
         Assert-VortexSignature $Package '^Microsoft Corporation$'
-        $Result = Invoke-VortexProgram (Join-Path $env:SystemRoot 'System32\msiexec.exe') @('/i',$Package,'/qn','/norestart') 900
+        $Log = Join-Path $script:VortexWork ('wsl-install-' + [Guid]::NewGuid().ToString('N') + '.log')
+        Write-VortexJson $Pending ([pscustomobject]@{boot=(Get-VortexBootId); log=$Log})
+        try {
+            # Killing an MSI client does not prove its installation rolled back.
+            # Retain the pending marker and verbose log if completion is unknown.
+            $Result = Invoke-VortexProgram (Join-Path $env:SystemRoot 'System32\msiexec.exe') @('/i',$Package,'/qn','/norestart','/L*V',$Log) 900 -ShowOutput -KeepRunningOnTimeout
+        } catch [TimeoutException] {
+            throw "WSL installation has not reported completion after 15 minutes and may still be running. A second installer will not be started on this Windows boot. Details are saved locally: $Log"
+        }
+        Remove-Item -LiteralPath $Pending -Force
         if ($Result.ExitCode -in @(3010,1641)) { Request-VortexRestart 'The WSL runtime installation requires a restart.' }
-        if ($Result.ExitCode -ne 0) { throw "WSL installation failed (exit $($Result.ExitCode))." }
-        $Version = Invoke-VortexProgram $Wsl @('--version')
-        $Match = [regex]::Match($Version.Output, '(?m)^.*?:\s*(\d+\.\d+\.\d+)')
-        if ($Version.ExitCode -ne 0 -or -not $Match.Success -or [version]$Match.Groups[1].Value -lt [version]'2.1.5') { throw 'Modern WSL could not be verified. Restart Windows and rerun setup.' }
+        if ($Result.ExitCode -eq 1618) { throw "Windows Installer is busy with another installation. Let it finish before rerunning setup. Details: $Log" }
+        if ($Result.ExitCode -ne 0) { throw "WSL installation failed (exit $($Result.ExitCode)). Details: $Log" }
+        $Version = Invoke-VortexWsl @('--version')
+        $Installed = ConvertFrom-VortexWslVersion $Version.Stdout
+        if ($Version.ExitCode -ne 0 -or $null -eq $Installed -or $Installed -lt [version]'2.1.5') { throw 'Modern WSL could not be verified. Restart Windows and rerun setup.' }
     }
-    $Result = Invoke-VortexProgram $Wsl @('--set-default-version','2')
+    $Result = Invoke-VortexWsl @('--set-default-version','2')
     if ($Result.Output -match 'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED') { Request-VortexRestart 'WSL reports that its Windows component is not active.' }
     if ($Result.ExitCode -ne 0) { throw "WSL 2 could not start. Check BIOS virtualization and restart Windows. $($Result.Output)" }
 }
@@ -177,8 +216,10 @@ function Find-VortexDockerDesktop {
     return $null
 }
 
-function Set-VortexDockerSettings($Settings) {
-    foreach ($Name in @('AutoStart','OpenUIOnStartupDisabled','WslEngineEnabled')) {
+function Set-VortexDockerSettings($Settings, [switch]$PreserveBackend) {
+    $Names = @('AutoStart','OpenUIOnStartupDisabled')
+    if (-not $PreserveBackend) { $Names += 'WslEngineEnabled' }
+    foreach ($Name in $Names) {
         # Preserve the spelling used by older camelCase settings.json files.
         $Existing = @($Settings.PSObject.Properties | Where-Object { $_.Name -ieq $Name })
         $Key = if ($Existing.Count) { $Existing[0].Name } else { $Name }
@@ -190,7 +231,58 @@ function Set-VortexDockerSettings($Settings) {
     return $Settings
 }
 
-function Start-VortexDocker {
+function Use-VortexDocker([string]$Executable) {
+    $script:VortexDocker = $Executable
+    $env:Path = "$(Split-Path $Executable);$env:Path"
+    $env:DOCKER_HOST = $null
+    $env:DOCKER_CONTEXT = 'desktop-linux'
+}
+
+function Get-VortexRunningDocker {
+    $Desktop = Find-VortexDockerDesktop
+    if (-not $Desktop) { return $null }
+    $Docker = Join-Path (Split-Path $Desktop) 'resources\bin\docker.exe'
+    if (-not (Test-Path -LiteralPath $Docker)) { return $null }
+    try {
+        $Context = Invoke-VortexProgram $Docker @('context','inspect','desktop-linux','--format','{{.Endpoints.docker.Host}}') 20
+        if ($Context.ExitCode -ne 0) { return $null }
+        if ($Context.Stdout -notmatch '^npipe:/{2,4}\./pipe/(dockerDesktopLinuxEngine|docker_engine)$') {
+            throw 'The desktop-linux Docker context does not point to this PC. Repair that context before running setup.'
+        }
+        $Info = Invoke-VortexProgram $Docker @('--context','desktop-linux','info','--format','{{.OSType}}') 20
+        if ($Info.ExitCode -eq 0 -and $Info.Stdout -eq 'linux') {
+            return [pscustomobject]@{ Desktop=$Desktop; Executable=$Docker }
+        }
+    } catch [TimeoutException] { return $null }
+    return $null
+}
+
+function Initialize-VortexPrerequisites([switch]$ServicesOnly) {
+    $Running = Get-VortexRunningDocker
+    if ($ServicesOnly) {
+        if (-not $Running) { throw 'Docker Linux is not responding on this PC. Open Docker Desktop and wait for Engine running, then rerun this command. Windows and WSL were not changed.' }
+        Use-VortexDocker $Running.Executable
+        Write-VortexStage 'Using the running Docker Linux engine; installing Vortex services only'
+        return
+    }
+    if ($Running) {
+        Write-VortexStage 'Using the existing Docker Linux engine; no WSL installation is needed'
+        Start-VortexDocker -PreserveBackend
+        return
+    }
+    if (Test-Path -LiteralPath $script:VortexStatePath) {
+        $State = Get-Content -LiteralPath $script:VortexStatePath -Raw | ConvertFrom-Json
+        if ($State.restartBoot -eq (Get-VortexBootId)) { Request-VortexRestart 'The previously requested Windows restart has not happened yet.' }
+    }
+    $Computer = Get-CimInstance Win32_ComputerSystem
+    if (-not $Computer.HypervisorPresent -and -not (@(Get-CimInstance Win32_Processor | Where-Object { $_.VirtualizationFirmwareEnabled }).Count)) { throw 'Enable hardware virtualization (AMD SVM or Intel VT-x) in the BIOS, then rerun. Software cannot enable this firmware setting.' }
+    Write-VortexStage 'Checking the Windows features required by WSL 2'
+    Enable-VortexWindowsFeatures
+    Install-VortexWsl
+    Start-VortexDocker
+}
+
+function Start-VortexDocker([switch]$PreserveBackend) {
     $Desktop = Find-VortexDockerDesktop
     if (-not $Desktop) {
         if (-not $AcceptDockerLicense) { throw 'Unattended Docker installation requires -AcceptDockerLicense (Docker Subscription Service Agreement).' }
@@ -207,13 +299,11 @@ function Start-VortexDocker {
     $DockerBin = Join-Path (Split-Path $Desktop) 'resources\bin'
     $script:VortexDocker = Join-Path $DockerBin 'docker.exe'
     if (-not (Test-Path -LiteralPath $script:VortexDocker)) { throw 'Docker Desktop CLI is missing. Repair the Docker Desktop installation.' }
-    $env:Path = "$DockerBin;$env:Path"
     # Always target this PC. Never provision onto a pre-existing remote context.
-    $env:DOCKER_HOST = $null
-    $env:DOCKER_CONTEXT = 'desktop-linux'
+    Use-VortexDocker $script:VortexDocker
     $Processes = @(Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue)
     if ($Processes.Count) {
-        Write-VortexStage 'Restarting Docker Desktop to apply background and WSL settings'
+        Write-VortexStage 'Restarting Docker Desktop to apply startup settings'
         $Result = Invoke-VortexProgram $script:VortexDocker @('desktop','stop','--timeout','60') 75
         if ($Result.ExitCode -ne 0) { throw 'Docker Desktop could not stop cleanly. Quit it from its tray menu and rerun this script.' }
     }
@@ -228,7 +318,7 @@ function Start-VortexDocker {
         if ($null -eq $Settings -or $Settings -is [array] -or $Settings -isnot [pscustomobject]) { throw 'Docker settings are invalid. Restore or repair Docker settings before continuing.' }
         Copy-Item -LiteralPath $SettingsPath -Destination "$SettingsPath.vision-backup-$([Guid]::NewGuid().ToString('N'))"
     }
-    Write-VortexJson $SettingsPath (Set-VortexDockerSettings $Settings)
+    Write-VortexJson $SettingsPath (Set-VortexDockerSettings $Settings -PreserveBackend:$PreserveBackend)
     $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     if (-not (Test-Path -LiteralPath $RunKey)) { New-Item -Path $RunKey -Force | Out-Null }
     New-ItemProperty -Path $RunKey -Name 'Docker Desktop' -Value ('"' + $Desktop + '"') -PropertyType String -Force | Out-Null
@@ -294,22 +384,18 @@ function Invoke-VortexWindowsSetup {
     if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -or -not [Environment]::Is64BitProcess -or [Environment]::OSVersion.Version.Build -lt 19045) { throw 'This installer requires 64-bit Windows 10 22H2 or Windows 11 on an Intel/AMD PC.' }
     $Computer = Get-CimInstance Win32_ComputerSystem
     if (-not $Computer.UserName -or $Computer.UserName -ine $Identity.Name) { throw 'Run this script as administrator from the Windows account currently signed into the desktop.' }
-    if (-not $Computer.HypervisorPresent -and -not (@(Get-CimInstance Win32_Processor | Where-Object { $_.VirtualizationFirmwareEnabled }).Count)) { throw 'Enable hardware virtualization (AMD SVM or Intel VT-x) in the BIOS, then rerun. Software cannot enable this firmware setting.' }
     $script:VortexRoot = Join-Path $env:ProgramData 'VisionPC'
     if (-not (Test-Path -LiteralPath (Join-Path $script:VortexRoot 'config.json'))) { throw 'Install Vision PC before adding Vortex services.' }
     $script:VortexWork = Join-Path $script:VortexRoot 'downloads\vortex-windows-setup'
     Set-VortexPrivateDirectory $script:VortexWork
     $script:VortexStatePath = Join-Path $script:VortexWork 'state.json'
-    if (Test-Path -LiteralPath $script:VortexStatePath) {
-        $State = Get-Content -LiteralPath $script:VortexStatePath -Raw | ConvertFrom-Json
-        if ($State.restartBoot -eq (Get-VortexBootId)) { Request-VortexRestart 'The previously requested Windows restart has not happened yet.' }
-    }
-    Write-VortexStage 'Checking the Windows features required by WSL 2'
-    Enable-VortexWindowsFeatures
-    Install-VortexWsl
-    Start-VortexDocker
+    Initialize-VortexPrerequisites -ServicesOnly:$ServicesOnly
     Install-VortexGit
     Install-VortexFromUpdater
+    if ($ServicesOnly) {
+        Write-Host "`nVortex services are ready. You can close PowerShell; keep Docker running and the PC awake. Existing Docker startup settings were retained." -ForegroundColor Green
+        return
+    }
     Remove-Item -LiteralPath $script:VortexStatePath -Force -ErrorAction SilentlyContinue
     Write-Host "`nVortex services are ready. You can close PowerShell. Docker starts in the background after this Windows account signs in; keep the PC awake." -ForegroundColor Green
 }

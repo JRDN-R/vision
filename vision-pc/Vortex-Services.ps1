@@ -1,5 +1,54 @@
 #requires -Version 5.1
 <# Invoked from Setup-Vision-PC, with the same private directories and rollback helpers. #>
+function Read-VortexServiceHealth {
+    # Windows PowerShell 5.1 has no Invoke-RestMethod -NoProxy. This local-only
+    # request must never inherit a system proxy, send credentials, or follow a
+    # redirect away from the service. Bound the response as well as the wait.
+    $Request = [System.Net.HttpWebRequest]::Create('http://127.0.0.1:9000/')
+    $Request.Proxy = $null
+    $Request.UseDefaultCredentials = $false
+    $Request.AllowAutoRedirect = $false
+    $Request.Timeout = 3000
+    $Request.ReadWriteTimeout = 3000
+    $Response = $null
+    $Reader = $null
+    try {
+        $Response = $Request.GetResponse()
+        if ([int]$Response.StatusCode -ne 200 -or $Response.ContentLength -gt 65536) {
+            throw 'Unexpected local API response.'
+        }
+        $Reader = New-Object System.IO.StreamReader($Response.GetResponseStream())
+        $Buffer = New-Object char[] 65537
+        $Length = $Reader.ReadBlock($Buffer, 0, $Buffer.Length)
+        if ($Length -eq 0) { throw 'Local API response is empty.' }
+        if ($Length -gt 65536) { throw 'Local API response exceeds its size limit.' }
+        return ([string]::new($Buffer, 0, $Length) | ConvertFrom-Json -ErrorAction Stop)
+    } finally {
+        if ($Reader) { $Reader.Dispose() }
+        if ($Response) { $Response.Dispose() }
+    }
+}
+
+function Get-VortexServiceHealth {
+    param([ValidateRange(1, 20)][int]$Attempts = 12,
+          [ValidateRange(0, 10)][int]$DelaySeconds = 2)
+    for ($Attempt = 1; $Attempt -le $Attempts; $Attempt++) {
+        try { $Health = Read-VortexServiceHealth } catch {
+            if ($Attempt -eq $Attempts) {
+                # Never include raw HTTP bodies, proxy details, or exceptions.
+                throw 'Cobalt could not be verified through its Windows loopback port (127.0.0.1:9000). Check Docker port publishing. Native Vortex engines remain available.'
+            }
+            if ($Attempt -eq 1) { Write-Host 'Waiting for the local Cobalt API connection...' }
+            Start-Sleep -Seconds $DelaySeconds
+            continue
+        }
+        if (-not $Health.cobalt.services -or $Health.git.commit -ne 'a636575b09de1fc55d9b8cd98cac88f5f2f16b42') {
+            throw 'The local API did not match the pinned Cobalt health response. Vortex configuration was not activated.'
+        }
+        return $Health
+    }
+}
+
 function Install-VortexServices {
     Assert-InstalledProcessor
     $Configuration = Read-Configuration
@@ -21,7 +70,7 @@ function Install-VortexServices {
     Set-PrivateDirectory $ServiceDirectory
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
     foreach ($File in $ProcessorFiles) { Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File) }
-    foreach ($File in @('vortex-services.compose.yml','vortex_egress.py','vortex_network.py','vortex_urls.py','vortex-egress.Dockerfile','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh')) {
+    foreach ($File in @('vortex-services.compose.yml','vortex_egress.py','vortex_network.py','vortex_urls.py','vortex-egress.Dockerfile','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh','vortex-ingress.Dockerfile')) {
         Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $ServiceDirectory $File)
     }
     $CobaltSource = Join-Path $ServiceDirectory 'cobalt'
@@ -32,10 +81,8 @@ function Install-VortexServices {
     $PreviousDirectory = if ($Configuration.vortex) { $Configuration.vortex.serviceDirectory } else { $null }
     try {
         Invoke-Checked $Docker.Source ($ComposeArgs + @('up','--detach','--build','--wait','--wait-timeout','120'))
-        $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:9000/' -TimeoutSec 10
-        if (-not $Health.cobalt.services -or $Health.git.commit -ne 'a636575b09de1fc55d9b8cd98cac88f5f2f16b42') {
-            throw 'The pinned Cobalt API health check failed.'
-        }
+        Write-Host 'Checking Cobalt from Windows through its published loopback port'
+        $Health = Get-VortexServiceHealth
         if (-not $Configuration.vortex) { $Configuration | Add-Member -NotePropertyName vortex -NotePropertyValue ([pscustomobject]@{}) }
         if (-not $Configuration.vortex.services) { $Configuration.vortex | Add-Member -NotePropertyName services -NotePropertyValue ([pscustomobject]@{}) }
         $Configuration.vortex.services | Add-Member -NotePropertyName cobalt -NotePropertyValue ([pscustomobject]@{
@@ -58,7 +105,7 @@ function Check-VortexServices {
     $Directory = $Configuration.vortex.serviceDirectory
     if (-not $Directory) { Write-Host 'No local extraction service is configured. Native engines remain independent.'; return }
     Invoke-Checked 'docker' @('compose','--project-name','vision-vortex-services','--file',(Join-Path $Directory 'vortex-services.compose.yml'),'ps')
-    $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:9000/' -TimeoutSec 10
+    $Health = Get-VortexServiceHealth -Attempts 3
     Write-Host ('Cobalt version: ' + $Health.cobalt.version)
     Write-Host ('Enabled providers: ' + ($Health.cobalt.services -join ', '))
 }
