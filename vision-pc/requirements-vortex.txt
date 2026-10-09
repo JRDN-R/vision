@@ -1,0 +1,6 @@
+# Vortex specialist engines. yt-dlp and requests are also in requirements.txt.
+# Install into a private dependency target via Setup-Vision-PC -Action InstallVortexTools.
+# These packages are loaded only by the Vortex subprocess, never the shared server.
+yt-dlp[default]>=2026.8.19
+gallery-dl>=1.32.15,<2
+spotdl>=4.5.2,<5

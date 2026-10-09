@@ -75,6 +75,31 @@ function navigationDetailsIcon(){
  button.setAttribute('aria-label',sidebarOpen?'Hide details':'Show details');
  button.textContent=sidebarOpen?'Details ↓':'Details ↑';
 }
+function navigationVortexURL(){
+ return location.protocol==='file:'?'https://jrdn-r.github.io/vision/vortex/':new URL('vortex/',location.href).href;
+}
+async function navigationOpenVortex(event){
+ // A normal link still supports opening Vortex in a separate tab. For a
+ // same-tab transition, finish saving the board before leaving its document.
+ if(event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+ event.preventDefault();
+ if(!accountSignedIn()){openAccountDialog('Sign in to use Vortex.');return;}
+ if(busy||ioBusy){toast('Finish the current browser operation before opening Vortex.',true);return;}
+ const control=event.currentTarget,uid=ventureScope();
+ if(control.getAttribute('aria-busy')==='true')return;
+ control.setAttribute('aria-busy','true');
+ try{
+  await projectBackup();
+  if(projectPending||dirty)await flushProjectSave();
+  if(!accountSignedIn()||uid!==ventureScope())return;
+  location.assign(navigationVortexURL());
+ }catch(error){toast(error.message||'Save your current project before opening Vortex.',true);}
+ finally{control.removeAttribute('aria-busy');}
+}
+function navigationVortexLink(id){
+ const link=document.createElement('a');link.id=id;link.className='workspace-vortex-link';link.href=navigationVortexURL();
+ link.innerHTML=ventureIcon('download')+'<span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
+}
 function navigationInstall(){
  document.documentElement.classList.add('compact-navigation');
  const button=document.createElement('button');button.id='workspaceMenuButton';button.type='button';button.className='workspace-menu-button';button.hidden=true;button.innerHTML='<span id="workspaceMenuGlyph" aria-hidden="true"></span>';button.onclick=navigationToggleMenu;
@@ -95,6 +120,8 @@ function navigationInstall(){
  extra('Board details','settings',()=>{navigationCloseMenu(false);setSidebar(true);});
  extra('Processing activity','retry',openActivity);
  extra('Help','file',()=>$('helpDialog').showModal());
+ menu.querySelector('.top-actions').append(navigationVortexLink('workspaceVortexLink'));
+ $('ventureSidebar').querySelector('.venture-sidebar-foot').before(navigationVortexLink('ventureVortexLink'));
  menu.querySelector('.workspace-menu-version').textContent='Vision v'+navigationVersion();
  menu.querySelector('.workspace-menu-footer').append(navigationFooterActions('workspaceMenuNews','workspaceMenuSignOut'));
  menu.addEventListener('click',event=>{if(!event.target.closest('.top-actions button'))return;queueMicrotask(()=>{if(!document.querySelector('dialog[open]'))navigationCloseMenu(false);});});

@@ -51,6 +51,25 @@ class ContextInstallerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 setup.backup_data(source, destination)
 
+    def test_processor_backup_does_not_extend_vortex_file_retention(self):
+        source = self.root / 'data'
+        (source / 'vortex' / 'job').mkdir(parents=True)
+        (source / 'vortex' / 'job' / 'media.mp4').write_bytes(b'expiring download')
+        (source / 'projects' / 'vortex').mkdir(parents=True)
+        (source / 'projects' / 'vortex' / 'notes.txt').write_text('original board evidence')
+        (source / 'vision.sqlite3').write_bytes(b'account database and job receipts')
+        target = self.root / 'processor-backup'
+        result = setup.backup_data(source, target, exclude_vortex_media=True)
+        self.assertEqual(result['excludedTransientDirectories'], ['vortex'])
+        self.assertFalse((target / 'data' / 'vortex').exists())
+        self.assertEqual((target / 'data' / 'projects' / 'vortex' / 'notes.txt').read_text(), 'original board evidence')
+        self.assertEqual((target / 'data' / 'vision.sqlite3').read_bytes(), b'account database and job receipts')
+        self.assertTrue((source / 'vortex' / 'job' / 'media.mp4').exists())
+        # Explicit complete backups retain their existing behavior.
+        complete = self.root / 'complete-backup'
+        setup.backup_data(source, complete)
+        self.assertEqual((complete / 'data' / 'vortex' / 'job' / 'media.mp4').read_bytes(), b'expiring download')
+
     def test_link_cannot_disclose_outside_source(self):
         source = self.root / "data"
         source.mkdir()

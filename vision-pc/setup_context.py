@@ -101,12 +101,14 @@ def hardware_report(root: Path) -> dict:
             "defaultEmbeddingThreads": 2, "paidApiCalls": 0}
 
 
-def backup_data(source: Path, destination: Path) -> dict:
+def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool = False) -> dict:
     """Copy a stopped service's complete data directory, including WAL sidecars.
 
     The caller must stop the service first. This intentionally fails on linked
     paths, unexpected files, insufficient space, or files changing during copy.
     A manifest is written last so an interrupted copy is never a valid backup.
+    Processor updates exclude ephemeral Vortex media explicitly so rollback
+    snapshots cannot retain those files beyond their five-day deadline.
     """
     if not source.is_absolute() or not destination.is_absolute():
         raise ValueError("Backup paths must be absolute.")
@@ -123,6 +125,9 @@ def backup_data(source: Path, destination: Path) -> dict:
         if not source.is_dir():
             raise ValueError("Data source must be a directory.")
         for directory, subdirs, names in os.walk(source, followlinks=False):
+            if exclude_vortex_media and Path(directory) == source and 'vortex' in subdirs:
+                _regular_path(source / 'vortex')
+                subdirs.remove('vortex')
             for name in subdirs + names:
                 path = Path(directory) / name
                 _regular_path(path)
@@ -155,6 +160,8 @@ def backup_data(source: Path, destination: Path) -> dict:
     result = {"schemaVersion": 1, "complete": True, "type": "cold-data-backup",
               "createdAt": datetime.now(timezone.utc).isoformat(), "fileCount": len(copied),
               "bytes": total, "elapsedSeconds": round(time.monotonic() - started, 3), "files": copied}
+    if exclude_vortex_media:
+        result['excludedTransientDirectories'] = ['vortex']
     _json(destination / "backup-manifest.json", result)
     return {key: value for key, value in result.items() if key != "files"}
 
@@ -288,6 +295,7 @@ def main() -> None:
     action.add_argument("--check-model", action="store_true")
     action.add_argument("--self-test", action="store_true")
     parser.add_argument("--destination", type=Path)
+    parser.add_argument("--exclude-vortex-media", action="store_true")
     parser.add_argument("--packages-path", type=Path)
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--threads", type=int, choices=range(1, 5), default=2)
@@ -298,7 +306,7 @@ def main() -> None:
     elif args.backup_data:
         if not args.destination:
             parser.error("--destination is required with --backup-data")
-        result = backup_data(args.backup_data, args.destination)
+        result = backup_data(args.backup_data, args.destination, exclude_vortex_media=args.exclude_vortex_media)
     elif args.self_test:
         result = self_test(args.config)
     else:

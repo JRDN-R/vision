@@ -1,0 +1,364 @@
+import {BACKEND, accountEpoch, authError, emailAction, googleSignIn, initAuth, request, signOut, user} from './auth.js';
+
+const $ = id => document.getElementById(id);
+const ACTIVE = new Set(['queued', 'processing']);
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
+const icons = {
+  media:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 8 6 4-6 4Z"/></svg>',
+  more:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>'
+};
+function safeURL(value) { try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } }
+function jobPath(id) { if (!/^[\w-]{1,120}$/.test(id || '')) throw new Error('Invalid media job.'); return '/vortex/jobs/' + encodeURIComponent(id); }
+function getJob(id) { return state.jobs.find(job => job.id === id); }
+function seconds(value) { return Number.isFinite(Number(value)) ? Number(value) * 1000 : 0; }
+function sizeLabel(value) { const n = Number(value); if (!(n > 0)) return ''; if (n < 1024) return Math.round(n) + ' B'; const unit = n >= 1073741824 ? 1073741824 : n >= 1048576 ? 1048576 : 1024; return (n / unit).toFixed(n / unit < 10 ? 1 : 0) + ' ' + (unit === 1073741824 ? 'GB' : unit === 1048576 ? 'MB' : 'KB'); }
+function durationLabel(value) { const n = Math.round(Number(value)); if (!(n > 0)) return ''; return n >= 3600 ? Math.floor(n / 3600) + ':' + String(Math.floor(n % 3600 / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0') : Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0'); }
+function expiryLabel(value) { const remaining = seconds(value) - Date.now(); if (!(remaining > 0)) return 'Retention ended'; const minutes = Math.ceil(remaining / 60000), days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60); return 'Deletes in ' + (days ? days + 'd ' + hours + 'h' : hours ? hours + 'h ' + minutes % 60 + 'm' : minutes + 'm'); }
+function sourceLabel(media) { if (media?.source) return String(media.source); try { return new URL(media?.url).hostname.replace(/^www\./, ''); } catch { return ''; } }
+function titleFor(job) { return job.media?.title || job.title || (job.kind === 'inspect' ? 'Finding media' : job.input) || 'Media download'; }
+function notice(message = '', error = false) { $('notice').textContent = message; $('notice').hidden = !message; $('notice').classList.toggle('error', error); }
+function rememberInspection(id) { state.inspectId = id; try { if (user()) sessionStorage.setItem('vortex-inspection:' + user().uid, id); } catch {} }
+function upsert(job) { if (!job?.id) throw new Error('FUPCJ Server did not confirm this media job.'); const i = state.jobs.findIndex(item => item.id === job.id); if (i < 0) state.jobs.unshift(job); else state.jobs[i] = job; }
+function imageSource(image, value) { const url = safeURL(value); image.hidden = !url; if (url && image.getAttribute('src') !== url) { image.src = url; image.referrerPolicy = 'no-referrer'; } if (!url) image.removeAttribute('src'); image.onerror = () => { image.hidden = true; }; }
+
+function accountChanged(identity) {
+  clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
+  state.jobs = []; state.selected = null; state.inspectId = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
+  state.olderJobs.clear(); state.cursor = null; state.olderLoaded = false; $('loadOlder').hidden = true; $('loadOlder').disabled = false;
+  closeMenu(false);
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  $('sourceInput').value = ''; $('activityList').replaceChildren(); $('resultList').replaceChildren();
+  $('accountName').textContent = ''; $('accountEmail').textContent = ''; $('profileImage').removeAttribute('src'); $('profileImage').hidden = true;
+  $('selection').hidden = true; $('searchResults').hidden = true; $('processing').hidden = true; $('emptyActivity').hidden = false; $('connectionStatus').textContent = ''; $('downloadButton').disabled = false; $('sourceSubmit').disabled = false;
+  notice();
+  $('authGate').hidden = !!identity; $('application').hidden = !identity; $('application').inert = !identity;
+  if (!identity) { $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
+  $('profileInitial').textContent = (identity.displayName || identity.email || 'V').slice(0, 1).toUpperCase();
+  imageSource($('profileImage'), identity.photoURL);
+  $('accountName').textContent = identity.displayName || 'Your Vision account'; $('accountEmail').textContent = identity.email || '';
+  try { state.inspectId = sessionStorage.getItem('vortex-inspection:' + identity.uid) || ''; } catch {}
+  void refresh();
+}
+async function authenticate(action) {
+  if (state.authBusy) return;
+  state.authBusy = true; $('authStatus').textContent = action === 'reset' ? 'Sending reset email…' : 'Signing in…';
+  for (const button of $('authGate').querySelectorAll('button')) button.disabled = true;
+  try {
+    if (action === 'google') await googleSignIn();
+    else { await emailAction(action, $('authEmail').value.trim(), $('authPassword').value); if (action === 'reset') $('authStatus').textContent = 'Password reset email sent. Check your inbox.'; }
+  } catch (error) { $('authStatus').textContent = authError(error); }
+  finally { state.authBusy = false; $('authPassword').value = ''; for (const button of $('authGate').querySelectorAll('button')) button.disabled = false; }
+}
+
+async function loadMenuAnimation() {
+  try {
+    const response = await fetch('../web/animations/menu-in-out.json');
+    if (!response.ok || !window.lottie) return;
+    const data = await response.json(), host = $('menuGlyph');
+    // Preserve the supplied movement and paths, changing only its Vortex accent.
+    const tint = value => { if (!value || typeof value !== 'object') return; if (['st', 'fl'].includes(value.ty) && value.c?.a === 0) value.c.k = [209 / 255, 186 / 255, 162 / 255, 1]; for (const child of Object.values(value)) tint(child); };
+    tint(data);
+    host.replaceChildren(); host.dataset.animated = 'true';
+    const animation = window.lottie.loadAnimation({container:host, renderer:'svg', loop:false, autoplay:false, animationData:data, rendererSettings:{preserveAspectRatio:'xMidYMid meet', hideOnTransparent:false}});
+    animation.setSpeed(1.6);
+    const settle = () => { animation.playSegments([0, 120], true); animation.goToAndStop(state.menu ? 119 : 60, true); host.style.opacity = state.menu ? '0' : '1'; };
+    animation.addEventListener('DOMLoaded', settle); animation.addEventListener('complete', settle);
+    state.animation = {setOpen(open) { if (reducedMotion.matches) { settle(); return; } host.style.opacity = '1'; animation.playSegments(open ? [80, 120] : [0, 51], true); }};
+    reducedMotion.addEventListener('change', settle);
+  } catch { /* The line-only hamburger remains usable without animation. */ }
+}
+function setMenu(open, focus = true) {
+  state.menu = !!open && !!user(); $('navigation').hidden = !state.menu; $('navigation').inert = !state.menu; $('menuScrim').hidden = !state.menu;
+  $('mainContent').inert = state.menu; document.querySelector('.topbar').inert = state.menu;
+  $('menuButton').setAttribute('aria-expanded', String(state.menu)); document.body.classList.toggle('menu-open', state.menu); state.animation?.setOpen(state.menu);
+  if (focus) (state.menu ? $('closeMenu') : $('menuButton')).focus({preventScroll:true});
+}
+function closeMenu(focus = true) { setMenu(false, focus); }
+function openAccount() { closeMenu(false); $('accountDialog').showModal(); }
+function confirmAction(description, title = 'Are you sure?') {
+  const dialog = $('confirmDialog'); $('confirmTitle').textContent = title; $('confirmDescription').textContent = description;
+  return new Promise(resolve => {
+    let accepted = false;
+    const cleanup = () => { $('confirmYes').onclick = null; $('confirmNo').onclick = null; resolve(accepted); };
+    dialog.addEventListener('close', cleanup, {once:true});
+    $('confirmYes').onclick = () => { accepted = true; dialog.close(); }; $('confirmNo').onclick = () => dialog.close(); dialog.showModal(); $('confirmNo').focus();
+  });
+}
+async function signOutAction() { closeMenu(false); if (!await confirmAction('Sign out of your Vision account?')) return; try { await signOut(); } catch (error) { notice(authError(error), true); } }
+
+function scheduleRefresh(delay) { clearTimeout(state.timer); if (user() && !document.hidden) state.timer = setTimeout(() => void refresh(), delay); }
+async function refresh() {
+  if (!user() || state.polling) return;
+  state.polling = true; const epoch = accountEpoch(), generation = state.pollEpoch, revision = state.revision;
+  $('refreshButton').disabled = true;
+  try {
+    const inspectId = state.inspectId;
+    const [history, inspection] = await Promise.allSettled([
+      request('/vortex/jobs?kind=download'),
+      inspectId ? request(jobPath(inspectId)) : Promise.resolve(null)
+    ]);
+    if (epoch !== accountEpoch() || generation !== state.pollEpoch) return;
+    if (history.status === 'rejected') throw history.reason;
+    const data = history.value;
+    if (!Array.isArray(data.jobs)) throw new Error('FUPCJ Server returned an incomplete media history.');
+    const merged = new Map(state.olderJobs);
+    for (const job of data.jobs) merged.set(job.id, job);
+    // A job accepted while this GET was in flight must not disappear until the
+    // next poll merely because the earlier snapshot did not contain it yet.
+    if (revision !== state.revision) for (const job of state.jobs) if (!merged.has(job.id)) merged.set(job.id, job);
+    if (state.inspectId !== inspectId) { const selectedInspection = getJob(state.inspectId); if (selectedInspection) merged.set(selectedInspection.id, selectedInspection); }
+    state.jobs = [...merged.values()]; state.failures = 0;
+    if (inspection.status === 'fulfilled' && inspection.value && state.inspectId === inspectId) upsert(inspection.value);
+    else if (inspection.status === 'rejected' && state.inspectId === inspectId) { if (inspection.reason?.status === 404) rememberInspection(''); else if (!state.appliedInspect) notice(inspection.reason.message, true); }
+    if (!state.olderLoaded) state.cursor = data.nextCursor || null;
+    $('loadOlder').hidden = !state.cursor;
+    $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
+    applyInspection(); renderJobs(); renderProcessing();
+  } catch (error) {
+    if (epoch !== accountEpoch() || generation !== state.pollEpoch) return;
+    state.failures++; $('connectionStatus').textContent = error.message; $('connectionStatus').classList.add('offline');
+  } finally {
+    if (epoch === accountEpoch() && generation === state.pollEpoch) { state.polling = false; $('refreshButton').disabled = false; scheduleRefresh(state.failures ? Math.min(30000, 5000 * state.failures) : state.jobs.some(job => ACTIVE.has(job.status)) ? 2000 : 15000); }
+  }
+}
+async function loadOlder() {
+  if (!state.cursor || !user()) return;
+  const epoch = accountEpoch(), cursor = state.cursor; $('loadOlder').disabled = true;
+  try {
+    const data = await request('/vortex/jobs?kind=download&cursor=' + encodeURIComponent(cursor));
+    if (epoch !== accountEpoch()) return;
+    if (!Array.isArray(data.jobs)) throw new Error('FUPCJ Server returned an incomplete media history.');
+    for (const job of data.jobs) { state.olderJobs.set(job.id, job); upsert(job); }
+    state.olderLoaded = true; state.cursor = data.nextCursor || null; $('loadOlder').hidden = !state.cursor; renderJobs();
+  } catch (error) { if (epoch === accountEpoch()) notice(error.message, true); }
+  finally { if (epoch === accountEpoch()) $('loadOlder').disabled = false; }
+}
+async function submitJob(kind, input, quality = state.quality) {
+  const key = JSON.stringify([kind, input, quality]);
+  let requestId = state.requestIds.get(key);
+  if (!requestId) { requestId = crypto.randomUUID ? crypto.randomUUID() : 'vx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2); state.requestIds.set(key, requestId); }
+  const job = await request('/vortex/jobs', {method:'POST', body:{kind, input, quality, requestId}});
+  state.requestIds.delete(key); state.revision++; upsert(job); return job;
+}
+async function inspect(input = $('sourceInput').value.trim()) {
+  if (!input || state.pending || !user()) return;
+  const epoch = accountEpoch(); state.pending = true; state.selected = null; state.appliedInspect = ''; state.inspectId = '';
+  $('sourceSubmit').disabled = true; $('selection').hidden = true; $('searchResults').hidden = true; notice('Sending to FUPCJ Server…');
+  try {
+    const job = await submitJob('inspect', input);
+    if (epoch !== accountEpoch()) return;
+    rememberInspection(job.id); notice(); applyInspection(); renderJobs(); renderProcessing(); scheduleRefresh(500);
+  } catch (error) { if (epoch === accountEpoch()) { notice(error.message, true); scheduleRefresh(1000); } }
+  finally { if (epoch === accountEpoch()) { state.pending = false; $('sourceSubmit').disabled = false; } }
+}
+function applyInspection() {
+  if (!state.inspectId) return;
+  const job = getJob(state.inspectId); if (!job) return;
+  const receipt = job.id + ':' + job.status;
+  if (receipt === state.appliedInspect) return;
+  if (job.status === 'complete') {
+    if ($('sourceInput').value.trim() && $('sourceInput').value.trim() !== job.input) return;
+    if (!$('sourceInput').value.trim()) $('sourceInput').value = job.input || '';
+    if (['small', 'balanced', 'max'].includes(job.quality)) { state.quality = job.quality; for (const radio of document.querySelectorAll('input[name=quality]')) radio.checked = radio.value === job.quality; }
+    state.appliedInspect = receipt;
+    // A direct lookup also includes results:[media]. Prefer its full metadata;
+    // search-only results have no selected media and require another lookup.
+    if (job.media && safeURL(job.media.url)) selectMedia(job.media);
+    else if (Array.isArray(job.results) && job.results.length) renderResults(job.results);
+    else notice('No downloadable media was found for that input. Try another link.', true);
+  } else if (job.status === 'error' || job.status === 'cancelled' || job.status === 'expired') {
+    state.appliedInspect = receipt; notice(job.error || (job.status === 'cancelled' ? 'Media lookup cancelled.' : 'This lookup is no longer available. Search again.'), job.status === 'error');
+  }
+}
+function renderResults(results) {
+  const list = $('resultList'); list.replaceChildren(); $('searchResults').hidden = false;
+  for (const result of results) {
+    const url = safeURL(result.url || result.webpage_url); if (!url) continue;
+    const row = document.createElement('button'); row.type = 'button'; row.className = 'search-result';
+    row.append(thumbnail(result.thumbnail));
+    const detail = document.createElement('span'); detail.className = 'item-detail';
+    const title = document.createElement('span'); title.className = 'item-title'; title.textContent = result.title || url;
+    const meta = document.createElement('span'); meta.className = 'item-meta'; meta.style.display = 'block'; meta.textContent = [sourceLabel(result), result.uploader, durationLabel(result.duration)].filter(Boolean).join(' · ');
+    detail.append(title, meta); row.append(detail); row.onclick = () => { $('sourceInput').value = url; void inspect(url); }; list.append(row);
+  }
+  if (!list.children.length) { $('searchResults').hidden = true; notice('No matching media was found. Try another search.', true); }
+}
+function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+function codec(value) { if (!value || value === 'none' || value === 'unknown') return ''; const text = String(value); return /^avc[13]/i.test(text) ? 'H.264' : /^(hevc|hev1|hvc1)/i.test(text) ? 'H.265' : /^av01/i.test(text) ? 'AV1' : /^mp4a/i.test(text) ? 'AAC' : /^vp0?9/i.test(text) ? 'VP9' : text; }
+function selectMedia(media) {
+  state.selected = media; $('selection').hidden = false; $('searchResults').hidden = true;
+  $('selectionTitle').textContent = media.title || 'Selected media'; $('selectionSource').textContent = [sourceLabel(media), durationLabel(media.duration)].filter(Boolean).join(' · '); imageSource($('selectionImage'), media.thumbnail);
+  const info = $('mediaInfo'); info.replaceChildren(); const entries = [];
+  const audio = media.mediaType === 'audio' || (media.vcodec === 'none' && media.acodec && media.acodec !== 'none');
+  if (!audio && Number(media.width) > 0 && Number(media.height) > 0) { const w = Math.round(media.width), h = Math.round(media.height), factor = gcd(w, h); entries.push(['Aspect ratio', w / factor + ':' + h / factor], ['Resolution', w + ' × ' + h]); }
+  if (!audio && Number(media.fps) > 0) entries.push(['Frame rate', Number(media.fps).toFixed(2).replace(/\.00$/, '') + ' fps']);
+  if (!audio && codec(media.vcodec)) entries.push(['Video codec', codec(media.vcodec)]);
+  if (codec(media.acodec)) entries.push(['Audio codec', codec(media.acodec)]);
+  if (audio && Number(media.abr) > 0) entries.push(['Bitrate', Math.round(Number(media.abr)) + ' kbps']);
+  if (audio && Number(media.asr) > 0) entries.push(['Sample rate', Number(media.asr) / 1000 + ' kHz']);
+  if (audio && Number(media.audioChannels) > 0) entries.push(['Channels', Number(media.audioChannels) === 2 ? 'Stereo' : Number(media.audioChannels) === 1 ? 'Mono' : String(media.audioChannels)]);
+  if (!entries.length) { const empty = document.createElement('div'); empty.className = 'metadata-empty'; empty.textContent = 'This source did not report technical details.'; info.append(empty); }
+  for (const [label, value] of entries) { const cell = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; cell.append(dt, dd); info.append(cell); }
+  const originalOnly = audio || ['image', 'gallery'].includes(media.mediaType);
+  $('qualityControls').hidden = originalOnly; $('originalAudio').hidden = !originalOnly; $('originalAudio').textContent = audio ? 'Highest available audio quality' : 'Original source files'; $('mediaNote').hidden = !media.note; $('mediaNote').textContent = media.note || ''; $('downloadButton').disabled = false; notice();
+}
+async function downloadSelected(input = state.selected?.url, quality = state.quality) {
+  if (!input || !user() || state.pending) return;
+  const epoch = accountEpoch(); state.pending = true; $('downloadButton').disabled = true;
+  try {
+    const audio = state.selected?.mediaType === 'audio';
+    const job = await submitJob('download', input, audio ? 'max' : quality);
+    if (epoch !== accountEpoch()) return;
+    notice('Accepted. You can leave this page while FUPCJ Server works.'); renderJobs(); renderProcessing(); scheduleRefresh(500);
+  } catch (error) { if (epoch === accountEpoch()) { notice(error.message, true); scheduleRefresh(1000); } }
+  finally { if (epoch === accountEpoch()) { state.pending = false; $('downloadButton').disabled = false; } }
+}
+
+function thumbnail(value) {
+  const wrap = document.createElement('span'); wrap.className = 'thumbnail'; wrap.innerHTML = icons.media;
+  const url = safeURL(value);
+  if (url) { const img = document.createElement('img'); img.className = 'thumbnail'; img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.src = url; img.onerror = () => img.replaceWith(wrap); return img; }
+  return wrap;
+}
+function renderJobs() {
+  const jobs = state.jobs.filter(job => job.kind !== 'inspect').sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  $('emptyActivity').hidden = jobs.length > 0;
+  const list = $('activityList'), existing = new Map([...list.children].map(row => [row.dataset.id, row]));
+  for (const [position, job] of jobs.entries()) {
+    let row = existing.get(job.id);
+    if (!row) {
+      row = document.createElement('article'); row.className = 'activity-item'; row.dataset.id = job.id;
+      row.append(thumbnail(job.media?.thumbnail || job.thumbnail));
+      const detail = document.createElement('div'); detail.className = 'item-detail';
+      for (const cls of ['item-title', 'item-meta', 'item-status', 'item-expiry']) { const line = document.createElement('p'); line.className = cls; detail.append(line); }
+      const more = document.createElement('button'); more.className = 'icon-button'; more.type = 'button'; more.innerHTML = icons.more; more.setAttribute('aria-haspopup', 'dialog'); more.onclick = () => void openActions(job.id);
+      row.append(detail, more);
+      let timer = 0, origin = null;
+      row.addEventListener('pointerdown', event => { if (event.pointerType === 'mouse' || event.target.closest('button')) return; origin = [event.clientX, event.clientY]; timer = setTimeout(() => { timer = 0; void openActions(job.id); }, 600); });
+      const stop = () => { clearTimeout(timer); timer = 0; };
+      row.addEventListener('pointermove', event => { if (origin && Math.hypot(event.clientX - origin[0], event.clientY - origin[1]) > 8) stop(); });
+      row.addEventListener('pointerup', stop); row.addEventListener('pointercancel', stop);
+      row.addEventListener('contextmenu', event => { if (event.target.closest('button')) return; event.preventDefault(); stop(); void openActions(job.id); });
+    }
+    existing.delete(job.id);
+    const thumbURL = safeURL(job.media?.thumbnail || job.thumbnail);
+    if (row.dataset.thumbnail !== thumbURL) { row.firstElementChild.replaceWith(thumbnail(thumbURL)); row.dataset.thumbnail = thumbURL; }
+    row.classList.toggle('active', ACTIVE.has(job.status));
+    row.querySelector('.item-title').textContent = titleFor(job);
+    row.querySelector('.item-meta').textContent = [sourceLabel(job.media) || job.source || job.engine, job.format || (job.filename?.includes('.') ? job.filename.split('.').pop().toUpperCase() : ''), job.media?.mediaType === 'audio' ? 'Original audio' : job.quality ? {small:'Small', balanced:'Balanced', max:'Max'}[job.quality] || job.quality : '', sizeLabel(job.size)].filter(Boolean).join(' · ');
+    const status = row.querySelector('.item-status'); status.classList.toggle('error', job.status === 'error');
+    const progress = typeof job.progress === 'number' && Number.isFinite(job.progress) ? ' · ' + Math.round(job.progress) + '%' : '';
+    status.textContent = job.status === 'error' ? job.error || 'Download failed' : job.status === 'complete' ? 'Ready to save' : job.status === 'expired' ? 'File deleted after five days' : job.status === 'cancelled' ? 'Cancelled' : (job.phase || (job.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress;
+    const expiry = row.querySelector('.item-expiry'); expiry.textContent = job.status === 'complete' && job.expiresAt ? expiryLabel(job.expiresAt) : '';
+    row.querySelector('button').setAttribute('aria-label', 'Actions for ' + titleFor(job));
+    // Keep existing nodes in place so polling never steals keyboard focus.
+    if (list.children[position] !== row) list.insertBefore(row, list.children[position] || null);
+  }
+  for (const row of existing.values()) row.remove();
+  if (state.actionId) { const job = getJob(state.actionId); if (!job && $('actionDialog').open) $('actionDialog').close(); }
+}
+function terminalText(text) {
+  if (state.terminal === text) return;
+  state.terminal = text; clearTimeout(state.terminalTimer); const line = $('terminalLine');
+  if (reducedMotion.matches || !line.textContent) { line.textContent = text; line.className = ''; return; }
+  line.className = 'depart';
+  state.terminalTimer = setTimeout(() => { line.textContent = state.terminal; line.className = 'arrive'; }, 180);
+}
+function renderProcessing() {
+  const inspectJob = getJob(state.inspectId), job = (inspectJob && ACTIVE.has(inspectJob.status) ? inspectJob : null) || state.jobs.find(item => ACTIVE.has(item.status));
+  $('processing').hidden = !job;
+  if (!job) return;
+  terminalText(job.phase || (job.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing media on FUPCJ Server'));
+  const progress = typeof job.progress === 'number' && Number.isFinite(job.progress) ? Math.max(0, Math.min(100, job.progress)) : null;
+  $('progressPercent').textContent = progress === null ? '' : Math.round(progress) + '%';
+  $('progressTrack').classList.toggle('indeterminate', progress === null);
+  if (progress === null) { $('progressTrack').removeAttribute('aria-valuenow'); $('progressTrack').setAttribute('aria-valuetext', job.phase || 'Working; percentage not available'); $('progressFill').style.width = ''; }
+  else { $('progressTrack').setAttribute('aria-valuenow', String(progress)); $('progressTrack').removeAttribute('aria-valuetext'); $('progressFill').style.width = progress + '%'; }
+}
+
+function actionCurrent(id, epoch) { return !!user() && state.actionId === id && state.actionEpoch === epoch && $('actionDialog').open; }
+async function prepareTicket(job, epoch = state.actionEpoch) {
+  const ticket = await request(jobPath(job.id) + '/ticket', {method:'POST'});
+  if (!actionCurrent(job.id, epoch)) return;
+  const url = new URL(ticket.url, BACKEND);
+  if (url.origin !== new URL(BACKEND).origin || url.pathname !== '/api' + jobPath(job.id) + '/file' || url.username || url.password) throw new Error('FUPCJ Server returned an invalid download address.');
+  state.ticket = {url:url.href, expiresAt:ticket.expiresAt};
+  const save = $('saveFile'); save.href = url.href; save.download = job.filename || 'media'; save.rel = 'noreferrer'; save.hidden = false;
+  $('actionStatus').textContent = (job.expiresAt ? expiryLabel(job.expiresAt) + '. ' : '') + 'Save file opens the download. On iPhone, use the browser’s Share menu to save to Files.';
+}
+async function openActions(id) {
+  const job = getJob(id); if (!job || !user()) return;
+  state.actionId = id; const epoch = ++state.actionEpoch; state.share = null; state.ticket = null;
+  $('actionTitle').textContent = titleFor(job); $('actionStatus').textContent = job.error || job.phase || '';
+  $('saveFile').hidden = true; $('saveFile').removeAttribute('href'); $('shareFile').hidden = true; $('shareFile').disabled = false; $('shareFile').textContent = 'Prepare to share';
+  $('retryJob').hidden = ACTIVE.has(job.status) || job.kind === 'inspect'; $('cancelJob').hidden = !ACTIVE.has(job.status); $('cancelJob').textContent = job.kind === 'inspect' ? 'Cancel lookup' : 'Cancel download';
+  $('deleteJob').hidden = ACTIVE.has(job.status); $('deleteJob').disabled = false; $('cancelJob').disabled = false;
+  if (!$('actionDialog').open) $('actionDialog').showModal();
+  if (job.status === 'complete' && job.resultReady) {
+    $('actionStatus').textContent = 'Preparing your secure download…';
+    // Avoid loading large videos into mobile memory. File sharing is opt-in and
+    // capped; direct attachment delivery streams files of any accepted size.
+    $('shareFile').hidden = !(navigator.share && navigator.canShare && Number(job.size) > 0 && Number(job.size) <= 32 * 1024 * 1024);
+    try { await prepareTicket(job, epoch); } catch (error) { if (actionCurrent(id, epoch)) $('actionStatus').textContent = error.message; }
+  }
+}
+async function shareAction() {
+  const id = state.actionId, job = getJob(id), epoch = state.actionEpoch; if (!job) return;
+  if (state.share) {
+    // This call is made directly from the second tap, preserving iOS activation.
+    try { await navigator.share({files:[state.share], title:titleFor(job)}); } catch (error) { if (error.name !== 'AbortError' && actionCurrent(id, epoch)) $('actionStatus').textContent = 'Sharing is unavailable here. Use Save file instead.'; }
+    return;
+  }
+  $('shareFile').disabled = true; $('actionStatus').textContent = 'Preparing the file for your share sheet…';
+  try {
+    const blob = await request(jobPath(id) + '/file', {binary:true, timeout:90000});
+    if (!actionCurrent(id, epoch)) return;
+    if (blob.size > 32 * 1024 * 1024) throw new Error('Use Save file for this larger download.');
+    const file = new File([blob], job.filename || 'media', {type:blob.type || 'application/octet-stream'});
+    if (!navigator.canShare({files:[file]})) throw new Error('This file cannot be shared by your browser. Use Save file instead.');
+    state.share = file; $('shareFile').textContent = 'Share file'; $('actionStatus').textContent = 'Ready. Tap Share file to open your share sheet.';
+  } catch (error) { if (actionCurrent(id, epoch)) $('actionStatus').textContent = error.message; }
+  finally { if (actionCurrent(id, epoch)) $('shareFile').disabled = false; }
+}
+async function cancelAction() {
+  const id = state.actionId, epoch = accountEpoch(); $('cancelJob').disabled = true;
+  try { await request(jobPath(id) + '/cancel', {method:'POST'}); if (epoch !== accountEpoch()) return; $('actionDialog').close(); await refresh(); }
+  catch (error) { if (epoch === accountEpoch()) { $('actionStatus').textContent = error.message; $('cancelJob').disabled = false; } }
+}
+async function deleteAction() {
+  const id = state.actionId, job = getJob(id), epoch = accountEpoch(); if (!job) return;
+  if (!await confirmAction('Delete “' + titleFor(job) + '” and its saved file?')) return;
+  if (epoch !== accountEpoch()) return;
+  $('deleteJob').disabled = true;
+  try { await request(jobPath(id), {method:'DELETE'}); if (epoch !== accountEpoch()) return; state.olderJobs.delete(id); state.jobs = state.jobs.filter(item => item.id !== id); $('actionDialog').close(); renderJobs(); renderProcessing(); }
+  catch (error) { if (epoch === accountEpoch()) { $('actionStatus').textContent = error.message; $('deleteJob').disabled = false; } }
+}
+
+$('googleSignIn').onclick = () => void authenticate('google');
+$('emailSignIn').onsubmit = event => { event.preventDefault(); void authenticate('signin'); };
+$('createAccount').onclick = () => void authenticate('create'); $('resetPassword').onclick = () => void authenticate('reset');
+$('menuButton').onclick = () => setMenu(!state.menu); $('closeMenu').onclick = () => closeMenu(); $('menuScrim').onclick = () => closeMenu();
+$('profileButton').onclick = openAccount; $('menuAccount').onclick = openAccount; $('menuSignOut').onclick = () => void signOutAction(); $('accountSignOut').onclick = () => void signOutAction();
+for (const button of document.querySelectorAll('.close-dialog')) button.onclick = () => button.closest('dialog').close();
+for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', event => { if (event.target !== dialog) return; const box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close(); });
+$('actionDialog').addEventListener('close', () => { state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; $('saveFile').removeAttribute('href'); });
+document.addEventListener('keydown', event => {
+  if (!state.menu) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeMenu(); }
+  if (event.key === 'Tab') { const elements = [...$('navigation').querySelectorAll('a,button')], first = elements[0], last = elements.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }
+});
+$('sourceForm').onsubmit = event => { event.preventDefault(); void inspect(); };
+$('sourceInput').addEventListener('paste', () => { setTimeout(() => { const value = $('sourceInput').value.trim(); if (safeURL(value)) void inspect(value); }, 0); });
+$('sourceInput').addEventListener('input', () => { if (state.selected && $('sourceInput').value.trim() !== state.selected.url) { state.selected = null; $('selection').hidden = true; } });
+$('clearResults').onclick = () => { $('searchResults').hidden = true; };
+for (const radio of document.querySelectorAll('input[name=quality]')) radio.onchange = () => { state.quality = radio.value; if (state.selected?.url) { const url = state.selected.url; $('sourceInput').value = url; void inspect(url); } };
+$('downloadButton').onclick = () => void downloadSelected(); $('refreshButton').onclick = () => void refresh();
+$('loadOlder').onclick = () => void loadOlder();
+$('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
+$('retryJob').onclick = () => { const job = getJob(state.actionId); if (!job) return; $('actionDialog').close(); void downloadSelected(job.media?.url || job.input, job.quality || 'balanced'); };
+$('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
+window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else void refresh(); }); window.addEventListener('pageshow', () => { if (user()) void refresh(); });
+void loadMenuAnimation();
+void initAuth(accountChanged).catch(error => { $('authStatus').textContent = authError(error); });

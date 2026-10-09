@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools','InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools','InstallVortexTools','InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
@@ -26,7 +26,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1','vortex.py','vortex_network.py','vortex_worker.py','requirements-vortex.txt')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -278,7 +278,7 @@ function Stop-ProcessorForChange {
     }
     throw 'The Vision task did not stop. No application files should be changed until it stops.'
 }
-function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false, [bool]$CheckDocuments = $false, [bool]$CheckContext = $false, [bool]$CheckLocalTranscription = $false) {
+function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$CheckGoogleSignIn = $false, [bool]$CheckSoundEvents = $false, [bool]$CheckDocuments = $false, [bool]$CheckContext = $false, [bool]$CheckLocalTranscription = $false, [bool]$CheckVortex = $false) {
     Initialize-ServerConfiguration $Configuration
     # Validate staged imports and a disposable context project before any downtime.
     Invoke-Checked $PythonExe @((Join-Path $StageDirectory 'setup_context.py'),'--self-test')
@@ -301,11 +301,12 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         Stop-ProcessorForChange
         $Stopped = $true
         # A cold snapshot includes original projects, conversations, encrypted keys,
-        # SQLite WAL sidecars and derived indexes. No live data is migrated first.
+        # SQLite WAL sidecars and derived indexes. Expiring Vortex media must not
+        # survive its deadline in a rollback copy. No live data is migrated first.
         $DataDirectory = [string]$Configuration.dataDir
         if (-not $DataDirectory) { $DataDirectory = Join-Path $InstallRoot 'data' }
         if (-not [IO.Path]::IsPathRooted($DataDirectory)) { $DataDirectory = Join-Path $InstallRoot $DataDirectory }
-        Invoke-Checked $PythonExe @((Join-Path $StageDirectory 'setup_context.py'),'--backup-data',$DataDirectory,'--destination',(Join-Path $BackupDirectory 'snapshot'))
+        Invoke-Checked $PythonExe @((Join-Path $StageDirectory 'setup_context.py'),'--backup-data',$DataDirectory,'--destination',(Join-Path $BackupDirectory 'snapshot'),'--exclude-vortex-media')
         $BackupFiles = @($Files | ForEach-Object {
             $Entry = [ordered]@{ name = $_; existed = [bool]$PreviousFiles[$_] }
             if ($PreviousFiles[$_]) { $Entry.sha256 = (Get-FileHash -LiteralPath (Join-Path $BackupDirectory $_) -Algorithm SHA256).Hash }
@@ -345,6 +346,12 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
             $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
             if ($Health.firebaseAuth.enabled -ne $true -or $Health.firebaseAuth.projectId -ne $Configuration.firebaseAuth.projectId -or $Health.capabilities.accountProjects -ne $true) {
                 throw 'The processor did not confirm Google sign-in for the requested Firebase project.'
+            }
+        }
+        if ($CheckVortex) {
+            $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
+            if ($Health.vortex.ready -ne $true -or $Health.vortex.engines.'gallery-dl' -ne $true -or $Health.vortex.engines.spotdl -ne $true) {
+                throw 'The processor did not confirm all Vortex engines.'
             }
         }
     } catch {
@@ -641,6 +648,33 @@ This report can be shared for help. It cannot authorize connections by itself.
     Write-Host 'Vision HTML with these settings already embedded connects automatically. Otherwise import Vision-Connection.txt in Vision logo > Processor connection.'
 }
 
+function Install-VortexTools {
+    Assert-InstalledProcessor
+    $Configuration = Read-Configuration
+    if ($Configuration.firebaseAuth.enabled -ne $true) { throw 'EnableGoogleSignIn must be configured before installing Vortex tools.' }
+    $InstallId = [Guid]::NewGuid().ToString('N')
+    $StageDirectory = Join-Path $DownloadDir ('vortex-install-' + $InstallId)
+    $PackagesPath = Join-Path $ToolsDir ('vortex-packages-' + $InstallId)
+    New-Item -ItemType Directory -Path $StageDirectory,$PackagesPath | Out-Null
+    Set-PrivateDirectory $StageDirectory
+    Set-PrivateDirectory $PackagesPath
+    $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
+    Write-Stage '1/3 Staging Vortex engines in their own dependency directory'
+    foreach ($File in $ProcessorFiles) { Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File) }
+    Invoke-Checked $PythonExe (@('-m','py_compile') + @($ProcessorFiles | Where-Object { $_.EndsWith('.py') } | ForEach-Object { Join-Path $StageDirectory $_ }))
+    # A separate target prevents specialist-engine dependencies from replacing
+    # Flask, Whisper, document tools, or the current Vision yt-dlp installation.
+    Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','--target',$PackagesPath,'-r',(Join-Path $StageDirectory 'requirements-vortex.txt'))
+    Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, spotdl', $PackagesPath)
+    $Configuration = Read-Configuration
+    if (-not $Configuration.vortex) { $Configuration | Add-Member -NotePropertyName vortex -NotePropertyValue ([pscustomobject]@{}) }
+    $Configuration.vortex | Add-Member -NotePropertyName packagesPath -NotePropertyValue $PackagesPath -Force
+    Write-Stage '2/3 Activating Vortex with the existing update and rollback checks'
+    Set-ProcessorUpdate -Configuration $Configuration -StageDirectory $StageDirectory -CheckGoogleSignIn $true -CheckVortex $true
+    Write-Stage '3/3 Vortex engine availability verified'
+    Write-Host 'Vortex is ready. Files expire five days after completion; Spotify audio is matched from another public service.' -ForegroundColor Green
+}
+
 try {
     $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -683,6 +717,7 @@ try {
     if ($Action -eq 'Stop') { Stop-ScheduledTask -TaskName $TaskName; Write-Host 'Processor stopped. The startup task remains installed.'; exit 0 }
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
     if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
+    if ($Action -eq 'InstallVortexTools') { Install-VortexTools; exit 0 }
     if ($Action -eq 'InstallDocumentTools') {
         Assert-InstalledProcessor
         $DocumentHelper = Join-Path $DownloadDir ('document-tools-'+[Guid]::NewGuid().ToString('N')+'.ps1')
