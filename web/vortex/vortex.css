@@ -27,6 +27,7 @@
 .download-status{color:var(--beige);font-size:11px;line-height:1.5;text-align:center;overflow-wrap:anywhere}
 .download-fallback{display:block;color:var(--beige);font-size:11px;text-align:center;text-decoration:underline;text-underline-offset:3px;padding:4px 0;min-height:26px}
 @keyframes vortex-download-spin{to{transform:rotate(360deg)}}
+@media(max-width:380px){.download-status,.download-fallback{grid-column:1/-1}}
 
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.progress-track.indeterminate>span{width:100%;opacity:.5}}
 
