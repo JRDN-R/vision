@@ -1,9 +1,9 @@
-import {BACKEND, accountEpoch, authError, emailAction, googleSignIn, initAuth, request, signOut, user} from './auth.js';
+import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.2';
 
 const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', inspectInput:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, authBusy:false, requestIds:new Map()};
+const state = {jobs:[], olderJobs:new Map(), cursor:null, olderLoaded:false, revision:0, selected:null, inspectId:'', inspectInput:'', appliedInspect:'', quality:'balanced', pending:false, menu:false, timer:0, polling:false, pollEpoch:0, failures:0, actionId:'', actionEpoch:0, share:null, ticket:null, terminal:'', terminalTimer:0, animation:null, requestIds:new Map()};
 Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selectedQuality:'balanced', qualityTimer:0, quietInspection:false, qualityRefreshing:false});
 Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a', searchQuery:'', searchNextPage:null, searchSeen:new Set(), searchBusy:false, appendSearch:false, searchFailed:false, lookupGeneration:0});
 Object.assign(state, {queuedDownload:null, submittingDownload:null, autoSaveJobs:new Map(), readyDownload:null, downloadError:''});
@@ -63,7 +63,13 @@ function accountChanged(identity) {
   showServerVersion();
   notice();
   settleAuth(identity);
-  if (!identity) { $('historyEmpty').textContent = 'Sign in to see your history.'; $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
+  if (!identity) {
+    $('authGate').hidden = true;
+    $('authRestoring').hidden = false;
+    $('authRestoring').textContent = 'Opening Vision sign-in…';
+    location.replace($('visionSignIn').href);
+    return;
+  }
   $('profileInitial').textContent = (identity.displayName || identity.email || 'V').slice(0, 1).toUpperCase();
   $('accountName').textContent = identity.displayName || 'Your Vision account'; $('accountEmail').textContent = identity.email || '';
   try { state.inspectId = sessionStorage.getItem('vortex-inspection:' + identity.uid) || ''; } catch {}
@@ -89,17 +95,6 @@ async function loadProfile() {
   } catch { /* Keep this account's initials or saved photo when the PC is offline. */ }
   finally { if (epoch === accountEpoch()) state.profileLoading = false; }
 }
-async function authenticate(action) {
-  if (state.authBusy) return;
-  state.authBusy = true; $('authStatus').textContent = action === 'reset' ? 'Sending reset email…' : 'Signing in…';
-  for (const button of $('authGate').querySelectorAll('button')) button.disabled = true;
-  try {
-    if (action === 'google') await googleSignIn();
-    else { await emailAction(action, $('authEmail').value.trim(), $('authPassword').value); if (action === 'reset') $('authStatus').textContent = 'Password reset email sent. Check your inbox.'; }
-  } catch (error) { $('authStatus').textContent = authError(error); }
-  finally { state.authBusy = false; $('authPassword').value = ''; for (const button of $('authGate').querySelectorAll('button')) button.disabled = false; }
-}
-
 async function loadMenuAnimation() {
   try {
     const response = await fetch('../web/animations/menu-in-out.json');
@@ -745,9 +740,6 @@ async function deleteAction() {
   catch (error) { if (epoch === accountEpoch()) { $('actionStatus').textContent = error.message; $('deleteJob').disabled = false; } }
 }
 
-$('googleSignIn').onclick = () => void authenticate('google');
-$('emailSignIn').onsubmit = event => { event.preventDefault(); void authenticate('signin'); };
-$('createAccount').onclick = () => void authenticate('create'); $('resetPassword').onclick = () => void authenticate('reset');
 $('menuButton').onclick = () => setMenu(!state.menu); $('closeMenu').onclick = () => closeMenu(); $('menuScrim').onclick = () => closeMenu();
 $('profileButton').onclick = openAccount; $('menuAccount').onclick = openAccount; $('menuSignOut').onclick = () => void signOutAction(); $('accountSignOut').onclick = () => void signOutAction();
 for (const button of document.querySelectorAll('.close-dialog')) button.onclick = () => button.closest('dialog').close();

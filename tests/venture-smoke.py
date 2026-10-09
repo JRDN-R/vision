@@ -14,6 +14,7 @@ const R={safeFilename:n=>n};function escapeHTML(s){return String(s).replace(/[&<
 function bytesFromDataURL(s){return Uint8Array.from(atob(s.split(',')[1]),c=>c.charCodeAt(0));}
 function markDirty(){}function toast(s){window.testToast=s;}function checkpoint(){}function refreshExport(){}function renderAll(){renderConsole();}
 let accountFirebase={currentUser:{uid:'test-user',displayName:'Jordan Rapp',email:'jordan@example.test'}};
+const accountContinueURL='';
 function accountSignedIn(){return !!accountFirebase.currentUser;}function accountUpdateGate(){}function accountGoogleSignOut(){accountFirebase.currentUser=null;accountUpdateGate();}
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}

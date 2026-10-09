@@ -31,6 +31,8 @@
 <main aria-live="polite"><p id="loading">Loading Vision…</p><p id="fallback" hidden>Vision could not finish loading. <a href="./Vision.html">Open Vision directly</a>.</p><noscript><p><a href="./Vision.html">Open Vision</a> with JavaScript enabled to use the board.</p></noscript></main>
 <script>
 (async()=>{
+ // Preserve the requested app if the loader needs its direct-file fallback.
+ document.querySelector('#fallback a').href='./Vision.html'+location.search+location.hash;
  try{
   const response=await fetch('./Vision.html?v=0d0d81235477',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');

@@ -1,7 +1,16 @@
 // Firebase handles Google and email/password identity. Project data and account keys stay on FUPCJ Server.
 const VISION_FIREBASE={apiKey:'AIzaSyDh1AHhi41cAXcSFnvFkfeZWmxc8gI0zSg',authDomain:'visionboard-api.firebaseapp.com',projectId:'visionboard-api',appId:'1:150865729216:web:554423d0c7602d3a47bf25'};
 const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='vision-account-mode-v1';
+// Only an explicit, allowlisted destination on this visit can leave Vision.
+// Keep it in the URL so a refresh/reset attempt survives without sessionStorage.
+const accountContinueURL=(()=>{try{const url=new URL(location.href);return /^https?:$/.test(url.protocol)&&url.searchParams.get('continue')==='vortex'?new URL('./vortex/',url).href:'';}catch{return '';}})();
+let accountForwarding=false;
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
+function accountContinue(user){
+ if(!accountContinueURL||!user?.uid)return false;
+ if(!accountForwarding){accountForwarding=true;accountGateLocked=true;accountUpdateGate();location.replace(accountContinueURL);}
+ return true;
+}
 function accountSignedIn(){return !!(!accountGateLocked&&accountFirebase?.currentUser?.uid&&cloudAuth?.kind==='firebase-google'&&cloudAuth.uid===accountFirebase.currentUser.uid);}
 function accountUpdateGate(){
  const gate=$('accountGate');if(!gate)return;const locked=!accountCanUseApp();
@@ -11,11 +20,12 @@ function accountUpdateGate(){
   else if(el.hasAttribute('data-account-inert')){el.inert=el.getAttribute('data-account-inert')==='true';el.removeAttribute('data-account-inert');}
  }
  if(locked)for(const dialog of document.querySelectorAll('dialog[open]:not(#whyVisionDialog)'))dialog.close();
- $('accountGateStatus').textContent=accountError||(trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':'Sign in to save your work, or explore without an account.');
+ $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening Vortex…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to Vortex.':'Sign in to save your work, or explore without an account.');
  for(const id of ['accountGateSignIn','accountGateEmailSignIn','accountGateEmailCreate','accountGatePasswordReset']){const el=$(id);if(el)el.disabled=accountBusy||trialStarting;}
  trialPaint();$('accountGateSignIn').hidden=false;$('accountGateEmailArea').hidden=false;
  $('accountGateOnline').hidden=true;
  $('accountGateDetail').textContent=location.protocol==='file:'?'The interface is stored in this HTML file. Connect online to sign in and use your FUPCJ Server projects. Google opens a secure sign-in window; the workspace stays here.':'Your projects, files, and saved settings are stored on FUPCJ Server. Sign in with Google or email/password.';
+ if(accountContinueURL){$('accountGateTitle').textContent='Continue to Vortex';$('accountGateDetail').textContent='One Vision account for Vision, Venture, and Vortex. After sign-in, you’ll return to Vortex.';}
  if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountBusy?gate:$('accountGateSignIn');target.focus({preventScroll:true});}
 }
 function accountUsesGoogle(){try{return localStorage.getItem(ACCOUNT_MODE)==='google';}catch{return cloudAuth?.kind==='firebase-google';}}
@@ -44,6 +54,9 @@ function accountClearRunKey(){
  $('accountKeyStatus').textContent='';
 }
 async function accountSetUser(user){
+ // Hand back a restored or newly persisted Firebase identity before loading
+ // board recovery, preferences, projects, or welcome dialogs for another app.
+ if(accountContinue(user))return;
  const uid=user?.uid||'';
  if(accountLastUID===uid)return;
  if(user&&(trialSession||cloudAuth?.kind==='trial'))await trialFinish({message:''});
@@ -73,7 +86,7 @@ async function accountLoad(){
   authSDK.onAuthStateChanged(accountFirebase,user=>{
    if(accountLastUID===(user?.uid||''))return;
    accountGateLocked=true;accountUpdateGate();accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(user));
-   void accountTransition.then(()=>{if(user){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
+   void accountTransition.then(()=>{if(user&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
   });
   return accountFirebase;
  })().catch(error=>{accountLoadPromise=null;throw error;});
@@ -93,6 +106,7 @@ async function accountGoogleSignIn(){
   const credential=local?await local:null;
   const result=credential?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken)):await accountSDK.signInWithPopup(auth,provider);
   await accountTransition;await accountSetUser(result.user);
+  if(accountForwarding)return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
  }catch(error){if(location.protocol==='file:'&&localBridgeCancel)localBridgeCancel();accountError=accountErrorText(error);}finally{accountBusy=false;accountPaint();}
 }
@@ -110,6 +124,7 @@ async function accountEmailAction(action,prefix){
   if(password.length<6)throw new Error('Enter a password with at least 6 characters.');
   const result=action==='create'?await accountSDK.createUserWithEmailAndPassword(auth,email,password):await accountSDK.signInWithEmailAndPassword(auth,email,password);
   await accountTransition;await accountSetUser(result.user);
+  if(accountForwarding)return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
  }catch(error){accountError=accountErrorText(error);}finally{if($(prefix+'Password'))$(prefix+'Password').value='';accountBusy=false;accountPaint();}
 }

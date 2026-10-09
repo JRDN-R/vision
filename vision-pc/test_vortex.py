@@ -151,8 +151,10 @@ class VortexAccountTests(unittest.TestCase):
         self.assertIsNotNone(label)
         self.assertEqual(label.group(1), 'v' + vortex.VORTEX_VERSION)
         self.assertIn('aria-label="Vortex web app version ' + vortex.VORTEX_VERSION + '"', html)
-        for asset in ('app.js', 'sidebar-brand.css'):
+        for asset in ('app.js', 'sidebar-brand.css', 'vortex.css'):
             self.assertIn('../web/vortex/' + asset + '?v=' + vortex.VORTEX_VERSION + '"', html)
+        app = (Path(__file__).resolve().parents[1] / 'web' / 'vortex' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("from './auth.js?v=" + vortex.VORTEX_VERSION + "';", app)
 
     def test_authenticated_version_reporting_does_not_enqueue_work(self):
         for route in ('/api/vortex/jobs?kind=download', '/api/vortex/capabilities'):
