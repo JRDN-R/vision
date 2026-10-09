@@ -539,7 +539,7 @@ function historyStatus(job) {
   if (job.status === 'error') return 'Failed';
   if (job.status === 'cancelled') return 'Cancelled';
   if (job.status === 'queued') return 'Queued';
-  const progress = Number(job.progress);
+  const progress = job.progress == null ? NaN : Number(job.progress);
   return job.status === 'processing' ? (Number.isFinite(progress) && progress >= 0 ? Math.round(progress) + '%' : 'Processing') : 'Pending';
 }
 function historyDate(job) {
@@ -712,7 +712,17 @@ async function deleteAction() {
   if (!await confirmAction(ACTIVE.has(job.status) ? 'Remove “' + titleFor(job) + '” from the queue and delete its history?' : 'Delete “' + titleFor(job) + '” and its saved file and history?')) return;
   if (epoch !== accountEpoch()) return;
   $('deleteJob').disabled = true;
-  try { await request(jobPath(id), {method:'DELETE'}); if (epoch !== accountEpoch()) return; state.deletedIds.add(id); state.revision++; state.olderJobs.delete(id); state.sessionJobs.delete(id); state.jobs = state.jobs.filter(item => item.id !== id); if (state.cursor === id) { state.cursor = null; state.olderLoaded = false; state.olderJobs.clear(); scheduleRefresh(500); } $('loadOlder').hidden = !state.cursor; $('actionDialog').close(); renderJobs(); renderProcessing(); }
+  try {
+    await request(jobPath(id), {method:'DELETE'});
+    if (epoch !== accountEpoch()) return;
+    state.deletedIds.add(id); state.revision++; state.olderJobs.delete(id);
+    state.sessionJobs.delete(id); state.autoSaveJobs.delete(id);
+    if (state.readyDownload?.url && new URL(state.readyDownload.url, BACKEND).pathname === '/api' + jobPath(id) + '/file') state.readyDownload = null;
+    state.jobs = state.jobs.filter(item => item.id !== id);
+    if (state.cursor === id) { state.cursor = null; state.olderLoaded = false; state.olderJobs.clear(); scheduleRefresh(500); }
+    $('loadOlder').hidden = !state.cursor; $('actionDialog').close();
+    renderJobs(); renderProcessing(); renderDownloadStatus();
+  }
   catch (error) { if (epoch === accountEpoch()) { $('actionStatus').textContent = error.message; $('deleteJob').disabled = false; } }
 }
 
