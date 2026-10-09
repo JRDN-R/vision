@@ -619,8 +619,10 @@ def run():
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             assert page.locator('#navigation .nav-brand-head img').get_attribute('src') == '../vortex_character.png'
             head = page.locator('#navigation .nav-brand-head')
-            bounds = head.bounding_box()
-            assert bounds['width'] == 33 and bounds['height'] == 45, bounds
+            # CSS layout size is 33×45; the entrance animation can temporarily
+            # rotate/scale the rendered bounding box without changing layout.
+            size = head.evaluate("el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height})")
+            assert size == {'width': '33px', 'height': '45px'}, size
             assert head.evaluate("el=>getComputedStyle(el).animationName") == 'vortex-head-enter'
             font = page.locator('#navigation .nav-brand-name').evaluate(
                 "el=>({family:getComputedStyle(el).fontFamily,size:getComputedStyle(el).fontSize,color:getComputedStyle(el).color})")
