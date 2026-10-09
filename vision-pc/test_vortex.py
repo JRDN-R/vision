@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import signal
 import subprocess
@@ -120,6 +121,24 @@ class VortexAccountTests(unittest.TestCase):
         # shared Vortex history under the installation's connection key.
         with patch.dict(server.app.config, FIREBASE_IDENTITY=None):
             self.assertIn(self.submit(headers=self.legacy).status_code, (401, 403))
+
+    def test_release_version_matches_sidebar_and_cached_assets(self):
+        self.assertRegex(vortex.VORTEX_VERSION, r'^\d{1,4}\.\d{1,4}\.\d{1,4}$')
+        html = (Path(__file__).resolve().parents[1] / 'vortex' / 'index.html').read_text(encoding='utf-8')
+        label = re.search(r'id="vortexVersion"[^>]*>([^<]+)</span>', html)
+        self.assertIsNotNone(label)
+        self.assertEqual(label.group(1), 'v' + vortex.VORTEX_VERSION)
+        self.assertIn('aria-label="Vortex web app version ' + vortex.VORTEX_VERSION + '"', html)
+        for asset in ('app.js', 'sidebar-brand.css'):
+            self.assertIn('../web/vortex/' + asset + '?v=' + vortex.VORTEX_VERSION + '"', html)
+
+    def test_authenticated_version_reporting_does_not_enqueue_work(self):
+        for route in ('/api/vortex/jobs?kind=download', '/api/vortex/capabilities'):
+            response = self.client.get(route, headers=self.alice)
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(response.json['vortexVersion'], vortex.VORTEX_VERSION)
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM vortex_jobs').fetchone()[0], 0)
 
     def test_history_status_mutations_and_file_routes_are_uid_isolated(self):
         job = self.accepted()

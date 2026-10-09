@@ -49,6 +49,8 @@ class Fixture:
         self.unexpected = []
         self.held = None
         self.hold_list = False
+        self.server_version = '1.0.0'
+        self.list_error = False
         self.profile_version = 'saved-vision-avatar'
         self.hold_avatar = False
         self.held_avatar = None
@@ -120,8 +122,12 @@ class Fixture:
                     offset = next((index+1 for index, job in enumerate(jobs) if job['id'] == cursor), len(jobs))
                     jobs = jobs[offset:]
                 result = dict(jobs=jobs[:100], nextCursor=jobs[99]['id'] if len(jobs)>100 else None, serverTime=time.time())
+                if self.server_version is not None:
+                    result['vortexVersion'] = self.server_version
                 if request.method == 'POST':
                     self.respond(route, self.new_job(uid, **json.loads(request.post_data)), 202)
+                elif self.list_error:
+                    self.respond(route, dict(error='FUPCJ Server is temporarily unavailable.'), 503)
                 elif self.hold_list:
                     self.hold_list = False
                     self.held = (route, json.loads(json.dumps(result)))
@@ -308,6 +314,36 @@ def run():
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
+            # The menu reports the web release, not an assumed Windows version.
+            assert page.locator('#vortexVersion').text_content() == 'v1.0.0'
+            assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.0'
+            if width == 390:
+                api.server_version = '1.0.1'
+                refresh(page)
+                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
+                assert page.locator('#vortexVersion').text_content() == 'v1.0.0'
+                # Missing versions on older servers and malformed data
+                # are neutral; they neither block history nor inject markup.
+                for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.0'}):
+                    api.server_version = value
+                    refresh(page)
+                    assert page.locator('#serverVersion').text_content() == 'Vortex server version not reported.'
+                    assert page.locator('#serverVersion *').count() == 0
+                    assert page.locator('#connectionStatus').inner_text() == 'Connected to FUPCJ Server'
+                api.server_version = '1.0.0'
+                refresh(page)
+                api.list_error = True
+                refresh(page)
+                assert page.locator('#serverVersion').text_content() == 'Vortex server version unavailable.'
+                api.list_error = False
+                refresh(page)
+                page.evaluate("window.dispatchEvent(new Event('offline'))")
+                assert page.locator('#serverVersion').text_content() == 'Vortex server version unavailable.'
+                refresh(page)
+                page.locator('#profileButton').click()
+                assert page.locator('#serverVersion').is_visible()
+                assert page.locator('#serverVersion').inner_text() == 'Vortex server: v1.0.0'
+                page.locator('#accountDialog .close-dialog').click()
             # The header uses one scalable combined lockup, not a separate head and text.
             brand_logo = page.locator('.topbar .brand .brand-lockup')
             assert brand_logo.count() == 1
@@ -644,6 +680,15 @@ def run():
             assert page.locator('#navigation nav svg').count() == 0, 'App links should be text-only'
             assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
+            version = page.locator('#navigation #vortexVersion')
+            assert version.inner_text() == 'v1.0.0'
+            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.0'
+            name_box = page.locator('#navigation .nav-brand-name').bounding_box()
+            version_box = version.bounding_box()
+            links_box = page.locator('#navigation nav').bounding_box()
+            assert abs(name_box['x'] - version_box['x']) < 1, 'Version is not aligned with the Vortex name'
+            assert version_box['y'] >= name_box['y'] + name_box['height'], 'Version overlaps the brand'
+            assert version_box['y'] + version_box['height'] <= links_box['y'], 'Version overlaps the app links'
             assert page.locator('#navigation .nav-brand-head img').get_attribute('src') == '../vortex_character.png'
             head = page.locator('#navigation .nav-brand-head')
             # Animated transforms temporarily alter the rendered box; the base
@@ -699,6 +744,7 @@ def run():
                 page.wait_for_timeout(20)
             assert api.held_avatar is not None
             page.locator('#accountDialog .close-dialog').click()
+            api.server_version = '1.0.1'
             api.hold_list = True
             # A scheduled refresh may consume the held request and disable the
             # button first. Dispatch without waiting for actionability: either
@@ -708,6 +754,7 @@ def run():
             while api.held is None and time.monotonic() < deadline:
                 page.wait_for_timeout(20)
             assert api.held is not None
+            api.server_version = None
             page.evaluate("__switchUser('bob')")
             api.release()
             try:
@@ -723,11 +770,14 @@ def run():
             assert page.locator('#profileImage').is_hidden(), 'Alice profile image leaked into Bob account'
             assert page.locator('#profileImage').get_attribute('src') is None
             assert not page.locator('#notice').inner_text(), 'Old-account errors leaked into new account'
+            page.wait_for_function("document.querySelector('#serverVersion').textContent === 'Vortex server version not reported.'")
+            assert page.locator('#serverVersion').text_content() == 'Vortex server version not reported.', 'A stale version survived the account switch'
             page.locator('#profileButton').click()
             page.locator('#accountSignOut').click()
             page.locator('#confirmYes').click()
             page.locator('#authGate').wait_for(state='visible')
             assert page.locator('#application').is_hidden()
+            assert page.locator('#serverVersion').text_content() == 'Vortex server version unavailable.'
             assert not errors, errors
             assert not api.unexpected, api.unexpected
             assert all(call['token'].startswith('Bearer fixture-') for call in api.calls if not (call['path'].endswith('/file') and not call['token']))

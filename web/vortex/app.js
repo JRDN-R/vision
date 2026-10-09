@@ -25,6 +25,12 @@ function expiryLabel(value) { const remaining = seconds(value) - Date.now(); if 
 function sourceLabel(media) { if (media?.source) return String(media.source); try { return new URL(media?.url).hostname.replace(/^www\./, ''); } catch { return ''; } }
 function titleFor(job) { return job.media?.title || job.title || (job.kind === 'inspect' ? 'Finding media' : job.input) || 'Media download'; }
 function notice(message = '', error = false) { $('notice').textContent = message; $('notice').hidden = !message; $('notice').classList.toggle('error', error); }
+// Web and Windows deployments are independent; never infer the server release
+// from the menu label or keep a previously connected server's version on error.
+function showServerVersion(value, connected = false) {
+  const valid = typeof value === 'string' && /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(value);
+  $('serverVersion').textContent = valid ? 'Vortex server: v' + value : connected ? 'Vortex server version not reported.' : 'Vortex server version unavailable.';
+}
 function rememberInspection(id) { state.inspectId = id; try { if (user()) sessionStorage.setItem('vortex-inspection:' + user().uid, id); } catch {} }
 function upsert(job) { if (!job?.id) throw new Error('FUPCJ Server did not confirm this media job.'); const i = state.jobs.findIndex(item => item.id === job.id); if (i < 0) state.jobs.unshift(job); else state.jobs[i] = job; }
 function imageSource(image, value) { const url = safeURL(value); image.hidden = !url; if (url && image.getAttribute('src') !== url) { image.src = url; image.referrerPolicy = 'no-referrer'; } if (!url) image.removeAttribute('src'); image.onerror = () => { image.hidden = true; }; }
@@ -54,6 +60,7 @@ function accountChanged(identity) {
   $('accountName').textContent = ''; $('accountEmail').textContent = ''; $('profileImage').removeAttribute('src'); $('profileImage').hidden = true;
   $('selection').hidden = true; $('searchResults').hidden = true; $('processing').hidden = true; $('emptyActivity').hidden = false; $('connectionStatus').textContent = ''; $('downloadButton').disabled = false; $('sourceSubmit').disabled = false;
   renderDownloadStatus();
+  showServerVersion();
   notice();
   settleAuth(identity);
   if (!identity) { $('historyEmpty').textContent = 'Sign in to see your history.'; $('authStatus').textContent = 'Sign in to open your private media history.'; return; }
@@ -156,9 +163,11 @@ async function refresh() {
     if (!state.olderLoaded) state.cursor = data.nextCursor || null;
     $('loadOlder').hidden = !state.cursor;
     $('connectionStatus').textContent = 'Connected to FUPCJ Server'; $('connectionStatus').classList.remove('offline');
+    showServerVersion(data.vortexVersion, true);
     applyInspection(); renderJobs(); renderProcessing(); checkAutoSaves(); renderDownloadStatus();
   } catch (error) {
     if (epoch !== accountEpoch() || generation !== state.pollEpoch) return;
+    showServerVersion();
     state.failures++; $('connectionStatus').textContent = error.message; $('connectionStatus').classList.add('offline'); $('historyStatus').textContent = 'Could not refresh history: ' + error.message; renderHistory();
   } finally {
     if (epoch === accountEpoch() && generation === state.pollEpoch) { state.polling = false; $('refreshButton').disabled = false; scheduleRefresh(state.failures ? Math.min(30000, 5000 * state.failures) : state.jobs.some(job => ACTIVE.has(job.status)) ? 2000 : 15000); }
@@ -756,7 +765,7 @@ $('reexportMode').onchange = () => { const job = getJob(state.actionId); if (job
 $('reexportSubmit').onclick = submitReexport;
 $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
 window.addEventListener('pagehide', () => { state.visitEpoch++; state.sessionJobs.clear(); renderJobs(); renderProcessing(); });
-window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
+window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { showServerVersion(); $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { checkAutoSaves(); void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { checkAutoSaves(); void refresh(); void loadProfile(); } });
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { settleAuth(null); $('authStatus').textContent = authError(error); });

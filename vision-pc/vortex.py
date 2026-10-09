@@ -31,6 +31,7 @@ from flask import g, jsonify, request, send_file
 from uploaded_media import WindowsJob
 from vortex_network import engine_for, validate_input
 
+VORTEX_VERSION = '1.0.0'
 RETENTION_SECONDS = 5 * 86400
 MAX_BYTES = 2 * 1024**3
 ACCOUNT_BYTES = 10 * 1024**3
@@ -91,7 +92,7 @@ class VortexJobs:
                    (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'), ('spotdl', 'spotdl'))}
         ffmpeg = Path(self.app.config.get('FFMPEG', ''))
         ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and any(engines.values()) and ffmpeg.is_file()
-        return dict(ready=ready, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
+        return dict(ready=ready, vortexVersion=VORTEX_VERSION, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
                     maxItems=MAX_ITEMS, maxDuration=MAX_DURATION, persistentJobs=True,
                     firebaseRequired=True, videoFormats=['mp4', 'mov'], audioFormats=['m4a', 'mp3', 'wav'],
                     searchPagination=True, spotifyNote='Spotify supplies track metadata; audio is matched from another public service, not downloaded from Spotify.')
@@ -254,7 +255,8 @@ class VortexJobs:
                 rows = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND delete_requested=0' + clause +
                                   ' ORDER BY created_at DESC,id DESC LIMIT 101', args).fetchall()
             return jsonify(jobs=[self.snapshot(dict(row)) for row in rows[:100]],
-                           nextCursor=rows[99]['id'] if len(rows) > 100 else None, serverTime=time.time())
+                           nextCursor=rows[99]['id'] if len(rows) > 100 else None, serverTime=time.time(),
+                           vortexVersion=VORTEX_VERSION)
 
         @app.route('/api/vortex/jobs/<job_id>', methods=['GET', 'DELETE'])
         def vortex_item(job_id):
