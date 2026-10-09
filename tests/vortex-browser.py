@@ -190,6 +190,17 @@ def run():
             assert page.locator('.brand img').get_attribute('src') == '../vortex_character.png'
             assert page.locator('.brand span').evaluate('el=>getComputedStyle(el).fontFamily').startswith('"Lilita One"')
             assert page.locator('html').evaluate('el=>getComputedStyle(el).backgroundColor') == 'rgb(16, 19, 20)'
+            # The moving silver finish follows the transparent mascot, not a rectangle.
+            page.wait_for_function("document.querySelector('.brand img').naturalWidth > 0")
+            shimmer = page.locator('.brand').evaluate("""element => {
+                const effect = getComputedStyle(element, '::after');
+                return {animation:effect.animationName, mask:effect.webkitMaskImage || effect.maskImage,
+                        width:effect.width, pointerEvents:effect.pointerEvents};
+            }""")
+            assert shimmer['animation'] == 'vortex-character-shimmer'
+            assert 'vortex_character.png' in shimmer['mask']
+            assert shimmer['pointerEvents'] == 'none'
+            assert shimmer['width'] == ('38px' if width <= 380 else '40px' if width <= 600 else '44px')
 
             # URL inspection is a persistent server job; unknown progress has no number.
             page.locator('#sourceInput').fill(VIDEO['url'])
@@ -344,6 +355,7 @@ def run():
             assert page.evaluate('document.activeElement.id') == 'menuButton'
             page.emulate_media(reduced_motion='reduce')
             assert page.locator('#progressFill').evaluate('el=>getComputedStyle(el).animationName') == 'none'
+            assert page.locator('.brand').evaluate("el=>getComputedStyle(el,'::after').animationName") == 'none'
             page.locator('#menuButton').click()
             page.keyboard.press('Escape')
 
