@@ -6,23 +6,23 @@ from pathlib import Path
 import json
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
-HTML=(ROOT/'activity.html').read_text()
+HTML=(ROOT/('activity.html' if (ROOT/'activity.html').exists() else 'index.html')).read_text()
 now=1791044000
 fixture={'version':'v1','checkedAt':now,'users':[
- {'id':'a'*64,'name':'Jordan Owner','email':'one@example.test','firstSeen':now-1000,'lastSeen':now,'signIns':2,'eventCount':2,'lastActivity':now},
- {'id':'b'*64,'name':'Jordan Other','email':'two@example.test','firstSeen':now-1000,'lastSeen':now-5,'signIns':1,'eventCount':1,'lastActivity':now-5}],
+ {'id':'a'*64,'provider':'google','apps':[{'app':'vision','lastSeen':now},{'app':'vortex','lastSeen':now}],'name':'Jordan Owner','email':'one@example.test','firstSeen':now-1000,'lastSeen':now,'signIns':2,'eventCount':2,'lastActivity':now},
+ {'id':'b'*64,'provider':'password','apps':[{'app':'vortex','lastSeen':now}],'name':'Jordan Other','email':'two@example.test','firstSeen':now-1000,'lastSeen':now-5,'signIns':1,'eventCount':1,'lastActivity':now-5}],
  'events':[{'id':3,'userId':'a'*64,'at':now,'kind':'project_saved','details':{'httpStatus':200,'outcome':'accepted'}},
  {'id':2,'userId':'b'*64,'at':now-5,'kind':'video_uploaded','details':{'httpStatus':413,'outcome':'rejected'}},
  {'id':1,'userId':'a'*64,'at':now-10,'kind':'google_sign_in','details':{}}],
  'totalEvents':3,'hasMore':False}
-gemini={'accessRequests':[{'userId':'b'*64,'name':'Jordan Other','email':'two@example.test','status':'pending','requestedAt':now-60,'waitingJobs':2}], 'pendingCount':1,
- 'usage':{'requests':[{'id':'request-1','userId':'a'*64,'name':'Jordan Owner','email':'one@example.test','projectId':'project-1','jobId':'job-1','kind':'sound','eventStart':14.2,'eventEnd':18.6,'clipDuration':7.4,'model':'gemini-sound-test','status':'succeeded','startedAt':now-30,'finishedAt':now-28,'httpStatus':200,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'billableTokens':252,'rawUsage':{'promptTokenCount':214,'candidatesTokenCount':38,'totalTokenCount':252},'estimate':{'currency':'USD','cost':.00042,'available':True,'pricingVersion':'pricing-v2'},'historicalEstimate':{'currency':'USD','cost':.00036,'available':True,'pricingVersion':'pricing-v1'}}],
+gemini={'accessRequests':[{'userId':'b'*64,'provider':'password','apps':[{'app':'vortex','lastSeen':now}],'name':'Jordan Other','email':'two@example.test','status':'pending','requestedAt':now-60,'waitingJobs':2}], 'pendingCount':1,
+ 'usage':{'requests':[{'id':'request-1','userId':'a'*64,'provider':'google','apps':[{'app':'vision','lastSeen':now},{'app':'vortex','lastSeen':now}],'name':'Jordan Owner','email':'one@example.test','projectId':'project-1','jobId':'job-1','kind':'sound','eventStart':14.2,'eventEnd':18.6,'clipDuration':7.4,'model':'gemini-sound-test','status':'succeeded','startedAt':now-30,'finishedAt':now-28,'httpStatus':200,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'billableTokens':252,'rawUsage':{'promptTokenCount':214,'candidatesTokenCount':38,'totalTokenCount':252},'estimate':{'currency':'USD','cost':.00042,'available':True,'pricingVersion':'pricing-v2'},'historicalEstimate':{'currency':'USD','cost':.00036,'available':True,'pricingVersion':'pricing-v1'}}],
  'totals':{'requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0},
  'byJob':[{'jobId':'job-1','projectId':'project-1','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}],
- 'byUser':[{'userId':'a'*64,'name':'Jordan Owner','email':'one@example.test','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}],
+ 'byUser':[{'userId':'a'*64,'provider':'google','apps':[{'app':'vision','lastSeen':now},{'app':'vortex','lastSeen':now}],'name':'Jordan Owner','email':'one@example.test','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}],
  'byDay':[{'day':'2026-10-04','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}], 'hasMore':False,'pricingVersion':'pricing-v2'}}
 MOCK=r'''<script>
-window.__data=FIXTURE;window.__gemini=GEMINI_FIXTURE;window.__actionMode='ok';window.__mode='ok';window.__reads=[];window.__tokenCalls=[];window.__held=[];
+window.__vortex={available:true,jobs:[{id:'vortex-1',userId:'a'.repeat(64),kind:'download',mode:'audio',format:'mp3',quality:'max',status:'complete',outputBytes:1024,createdAt:1791044000,updatedAt:1791044001,expiresAt:1791476001}],totals:{jobs:1,downloads:1,inspections:0,queued:0,processing:0,readyDownloads:1,retainedBytes:1024,error:0,expired:0},hasMore:false};window.__vortexMode='ok';window.__data=FIXTURE;window.__gemini=GEMINI_FIXTURE;window.__actionMode='ok';window.__mode='ok';window.__reads=[];window.__tokenCalls=[];window.__held=[];
 window.__owner={uid:'owner',email:'one@example.test',getIdToken:async force=>{window.__tokenCalls.push(!!force);return 'FAKE-TEST-TOKEN';}};
 window.__auth={currentUser:window.__owner};
 window.__appSDK={initializeApp:()=>({})};
@@ -40,10 +40,11 @@ window.fetch=async(url,options)=>{
    const body=JSON.parse(options.body),row=window.__gemini.accessRequests.find(item=>item.userId===body.userId);row.status=body.decision;row.decidedAt=Date.now()/1000;row.waitingJobs=0;window.__gemini.pendingCount=window.__gemini.accessRequests.filter(item=>item.status==='pending').length;
    return new Response(JSON.stringify({userId:body.userId,status:body.decision,releasedJobs:body.decision==='approved'?2:0,pendingCount:window.__gemini.pendingCount}),{status:200});
  }
+ if(parsed.pathname==='/api/admin/vortex'){if(window.__vortexMode==='missing')return new Response('{}',{status:404});if(window.__vortexMode==='denied')return new Response('{}',{status:403});const data=structuredClone(window.__vortex);if(person&&person!=='a'.repeat(64)){data.jobs=[];data.totals={jobs:0,downloads:0,inspections:0,queued:0,processing:0,readyDownloads:0,retainedBytes:0,error:0,expired:0};}return new Response(JSON.stringify(data),{status:200});}
  if(parsed.pathname==='/api/admin/gemini')return new Response(JSON.stringify(window.__gemini),{status:200});
  let data=structuredClone(window.__data);
  if(person){data.events=data.events.filter(e=>e.userId===person);data.totalEvents=data.events.length;}
- data.version += ':'+(person||'all');
+ const module=parsed.searchParams.get('module')||'all';data.module=module;data.moduleCounts={all:data.events.length,logins:data.events.filter(e=>e.kind==='google_sign_in').length,transcriptions:0};if(module==='logins')data.events=data.events.filter(e=>e.kind==='google_sign_in');if(module==='transcriptions')data.events=[];data.totalEvents=data.events.length;data.version += ':'+(person||'all')+':'+module;
  if(parsed.searchParams.get('version')===data.version)return new Response(JSON.stringify({unchanged:true,version:data.version,checkedAt:Date.now()/1000}),{status:200});
  return new Response(JSON.stringify(data),{status:200});
 };
@@ -60,13 +61,41 @@ with sync_playwright() as p:
  assert page.locator('.person-copy strong').all_text_contents()==['Everyone','Jordan','Jordan']
  assert 'a'*64 not in page.locator('body').inner_text()
  print('PASS names, duplicate names, hidden identifiers')
+ assert page.locator('#overviewPanel').is_visible()
+ assert page.locator('#geminiAdmin').is_hidden() and page.locator('#activityWorkspace').is_hidden()
+ assert page.locator('[role=tab]').count()==6
+ page.locator('#tab-logins').click();page.wait_for_timeout(150)
+ assert 'Email / password' in page.locator('#accountDirectory').inner_text()
+ assert 'Vortex' in page.locator('#accountDirectory').inner_text()
+ assert page.locator('.event').count()==1
+ page.locator('#tab-transcriptions').click();page.wait_for_timeout(150)
+ assert page.locator('.event').count()==0
+ page.locator('#tab-vortex').click();page.wait_for_timeout(150)
+ assert page.locator('#vortexJobTotal').inner_text()=='1'
+ assert 'Audio download · MP3' in page.locator('#vortexJobs').inner_text()
+ page.locator('#vortexJobs summary').click()
+ assert 'one@example.test' in page.locator('#vortexJobs').inner_text()
+ page.locator('#personScope').select_option('b'*64);page.wait_for_timeout(150)
+ assert page.locator('#vortexJobTotal').inner_text()=='0'
+ assert 'one@example.test' not in page.locator('#vortexJobs').inner_text()
+ page.locator('#personScope').select_option('');page.wait_for_timeout(150)
+ page.evaluate("window.__vortexMode='missing'");page.locator('#refresh').click();page.wait_for_timeout(150)
+ assert 'latest Vision PC update' in page.locator('#vortexNotice').inner_text()
+ assert page.locator('#dashboard').is_visible()
+ assert page.locator('#overviewVortex').inner_text()=='Unavailable'
+ page.evaluate("window.__vortexMode='denied'");page.locator('#refresh').click();page.wait_for_timeout(150)
+ assert page.locator('#dashboard').is_hidden() and page.locator('#vortexJobs').inner_text()==''
+ page.evaluate("window.__vortexMode='ok'");page.locator('#retry').click();page.wait_for_selector('#dashboard:not([hidden])')
+ page.locator('#tab-gemini').click()
+ print('PASS Vortex-only unavailability and owner-authorization loss')
+ print('PASS compact default, module switching, login providers, Vortex data and account scope')
  assert page.locator('#geminiAlert').is_visible()
  assert page.locator('#geminiAlertCount').inner_text()=='1'
  assert 'two@example.test' in page.locator('#geminiAccessList').inner_text()
  assert '2 waiting jobs' in page.locator('#geminiAccessList').inner_text()
  assert page.locator('#usageCostTotal').inner_text()=='$0.00042'
- page.locator('.usage-request summary').click()
- detail=page.locator('.usage-request').inner_text()
+ page.locator('#geminiUsageList .usage-request summary').click()
+ detail=page.locator('#geminiUsageList .usage-request').inner_text()
  for expected in ('7.4 s','214','38','252','pricing-v2','pricing-v1','$0.00036','project-1','job-1','Thought tokens','Raw API usage'):
   assert expected in detail,expected
  page.locator('#usageGroup').select_option('user')
@@ -93,7 +122,7 @@ with sync_playwright() as p:
  assert page.locator('.access-deny').inner_text()=='Revoke'
  page.locator('.access-deny').click();page.wait_for_timeout(150)
  page.locator('#accessFilter').select_option('denied')
- assert 'revoked' in page.locator('#geminiAccessList').inner_text()
+ assert 'revoked' in page.locator('#geminiAccessList').inner_text().lower()
  page.evaluate("window.__gemini.accessRequests[0].status='pending';window.__gemini.pendingCount=1;")
  page.locator('#refresh').click();page.wait_for_timeout(150)
  page.locator('#geminiAlert').click()
@@ -103,6 +132,7 @@ with sync_playwright() as p:
  assert page.evaluate('window.__gemini.accessRequests[0].status')=='denied'
  print('PASS approve, deny, revoke, failed mutation retry, bearer-authenticated account-level decisions')
 
+ page.locator('#tab-activity').click();page.wait_for_timeout(150)
  page.locator('.event details summary').first.click()
  assert page.locator('.event details[open]').count()==1
  page.evaluate("window.__data.version='v2';window.__data.users.push({id:'c'.repeat(64),name:'Andrea <img src=x onerror=alert(1)>',email:'three@example.test',firstSeen:1791044000,lastSeen:1791044000,signIns:1,eventCount:1});window.__data.events.unshift({id:4,userId:'c'.repeat(64),at:1791044001,kind:'google_sign_in',details:{}});window.__data.totalEvents=4;")
@@ -134,6 +164,7 @@ with sync_playwright() as p:
  assert page.locator('#dashboard').is_hidden()
  assert page.locator('#geminiAlert').is_hidden() and page.locator('.usage-request').count()==0
  assert page.locator('.access-row').count()==0
+ assert page.locator('#vortexJobs').inner_text()=='' and page.locator('#accountDirectory').inner_text()==''
  assert 'two@example.test' not in page.locator('body').inner_text()
  print('PASS authorization loss clears private records')
  page.evaluate("window.__mode='ok'");page.locator('#retry').click();page.wait_for_selector('#dashboard:not([hidden])')
@@ -149,7 +180,15 @@ with sync_playwright() as p:
   assert preview.locator('#demoBanner').is_visible()
   assert preview.locator('#geminiAlert').is_visible()
   assert preview.locator('.access-approve').is_disabled()
-  if width==390: preview.screenshot(path='/tmp/vision-status-mobile.png',full_page=True)
+  for module in ('vortex','logins','transcriptions','gemini','activity','overview'):
+   preview.locator('#tab-'+module).click()
+   assert not preview.evaluate('document.documentElement.scrollWidth>innerWidth'),(width,module)
+   assert preview.locator('[role=tabpanel]:visible').count()==1,(width,module)
+  preview.locator('#tab-overview').focus();preview.keyboard.press('ArrowRight')
+  assert preview.locator('#tab-vortex').get_attribute('aria-selected')=='true'
+  preview.keyboard.press('End');assert preview.locator('#tab-activity').get_attribute('aria-selected')=='true'
+  preview.keyboard.press('Home');assert preview.locator('#tab-overview').get_attribute('aria-selected')=='true'
+  if width in (390,1440): preview.screenshot(path='/tmp/vision-status-'+str(width)+'.png',full_page=True)
   # Screenshots are optional; no user data or authentication is used in this test.
   preview.close()
  print('PASS 320/390/768/1440 responsive layouts and explicit demo labeling')

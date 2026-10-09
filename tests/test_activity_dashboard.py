@@ -5,6 +5,7 @@ an installed PC. No live accounts or network credentials are used in these tests
 """
 import importlib.util
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import sys
@@ -20,6 +21,7 @@ def load(name):
     spec.loader.exec_module(module)
     return module
 api = load('activity_dashboard')
+audit_module = load('audit_logs')
 setup = load('setup_activity')
 SCHEMA = '''CREATE TABLE audit_users(uid TEXT PRIMARY KEY,name TEXT,email TEXT,
  first_seen REAL,last_seen REAL,auth_time REAL,sign_in_sightings INTEGER);
@@ -126,6 +128,65 @@ class ActivityTests(unittest.TestCase):
         reply=app.view_functions['vision_activity']()
         self.assertEqual(reply.status_code,403);self.assertEqual(calls,[])
         self.assertIn('no-store',reply.headers['Cache-Control'])
+        reply=app.view_functions['vision_vortex_admin']()
+        self.assertEqual(reply.status_code,403);self.assertEqual(calls,[])
+
+    def test_modules_filter_before_limit_and_change_revision(self):
+        with self.db() as db:
+            db.execute("INSERT INTO audit_events(uid,created_at,event,details) VALUES('firebase:owner',120,'audio_received','{}')")
+            db.executemany("INSERT INTO audit_events(uid,created_at,event,details) VALUES('firebase:owner',500,'project_saved','{}')", [()] * 110)
+        all_events=api.snapshot_payload(self.db,limit=1)
+        logins=api.snapshot_payload(self.db,limit=1,module='logins',version=all_events['version'])
+        self.assertEqual(logins['events'][0]['kind'],'google_sign_in')
+        self.assertEqual(logins['totalEvents'],1)
+        self.assertFalse(logins['hasMore'])
+        transcription=api.snapshot_payload(self.db,limit=1,module='transcriptions')
+        self.assertEqual(transcription['events'][0]['kind'],'audio_received')
+        self.assertEqual(transcription['moduleCounts']['transcriptions'],1)
+        with self.assertRaises(ValueError): api.snapshot_payload(self.db,module="all' OR 1=1")
+
+    def test_providers_apps_and_shared_session_do_not_inflate_signins(self):
+        audit=audit_module.AuditLogs(self.root/'logs',self.db,logging.getLogger('test'))
+        audit.initialize()
+        # Existing rows are not retroactively described as Google accounts.
+        self.assertTrue(all(u['provider']=='unknown' for u in api.snapshot_payload(self.db)['users']))
+        claims={'name':'Casey','email':'casey@example.test','auth_time':600,'firebase':{'sign_in_provider':'password'}}
+        audit.identity('firebase:casey',claims,app='vision')
+        audit.identity('firebase:casey',claims,app='vortex')
+        audit.identity('firebase:casey',claims,app='vortex')
+        value=api.snapshot_payload(self.db,api.public_id('firebase:casey'),module='logins')
+        person=next(u for u in value['users'] if u['id']==api.public_id('firebase:casey'))
+        self.assertEqual(person['provider'],'password');self.assertEqual(person['signIns'],1)
+        self.assertEqual([a['app'] for a in person['apps']],['vision','vortex'])
+        self.assertEqual([e['kind'] for e in value['events']],['app_first_seen','account_sign_in'])
+        audit.identity('firebase:casey',{**claims,'auth_time':700,'firebase':{'sign_in_provider':'google.com'}},app='vortex')
+        value=api.snapshot_payload(self.db,api.public_id('firebase:casey'),module='logins')
+        self.assertEqual(value['events'][0]['details']['authProvider'],'google')
+        audit.request_event('firebase:casey',SimpleNamespace(path='/api/vortex/jobs',method='POST',content_length=10),202,.5)
+        value=api.snapshot_payload(self.db,api.public_id('firebase:casey'),module='vortex')
+        self.assertEqual(value['events'][0]['kind'],'vortex_submitted')
+        self.assertEqual(value['events'][0]['details']['app'],'vortex')
+
+    def test_vortex_existing_jobs_are_private_scoped_and_expiry_aware(self):
+        self.assertFalse(api.vortex_payload(self.db)['available'])
+        with self.db() as db:
+            db.execute('''CREATE TABLE vortex_jobs(id TEXT,uid TEXT,kind TEXT,quality TEXT,status TEXT,
+                progress REAL,output_size INTEGER,options_json TEXT,created_at REAL,updated_at REAL,
+                completed_at REAL,expires_at REAL,delete_requested INTEGER,input TEXT,filename TEXT,media_json TEXT)''')
+            for id,uid,status,expires,deleted in [('a','owner','complete',1100,0),('b','second','complete',900,0),('c','owner','queued',None,0),('d','owner','complete',1200,1)]:
+                db.execute('INSERT INTO vortex_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (id,'firebase:'+uid,'download','max',status,50,1234,'{"downloadMode":"audio","audioFormat":"mp3","secret":"PRIVATE"}',100,200,200,expires,deleted,'SECRET-URL','SECRET-FILE','SECRET-TITLE'))
+        with patch.object(api.time,'time',return_value=1000):
+            value=api.vortex_payload(self.db,limit=1)
+            scoped=api.vortex_payload(self.db,api.public_id('firebase:owner'))
+        self.assertEqual(value['totals']['jobs'],3);self.assertEqual(value['totals']['expired'],1)
+        self.assertEqual(value['totals']['readyDownloads'],1);self.assertEqual(value['totals']['retainedBytes'],1234)
+        self.assertTrue(value['hasMore']);self.assertEqual(len(value['jobs']),1)
+        self.assertEqual(scoped['totals']['jobs'],2);self.assertEqual(scoped['totals']['queued'],1)
+        self.assertEqual(scoped['jobs'][0]['format'],'mp3')
+        for secret in ('SECRET','PRIVATE','firebase:owner','firebase:second'):
+            self.assertNotIn(secret,json.dumps(value));self.assertNotIn(secret,json.dumps(scoped))
+        with self.assertRaises(ValueError):api.vortex_payload(self.db,limit=2001)
     def test_setup_patch_apply_and_rollback(self):
         raw=b"from pathlib import Path\ndef connect_db(): pass\ndef authorize(): pass\n# g.uid, g.auth_kind = 'firebase:'\n# app.config['AUDIT_LOGS']\nif __name__ == '__main__':\n    pass\n"
         (self.root/'server.py').write_bytes(raw)

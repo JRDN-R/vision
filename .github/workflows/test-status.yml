@@ -1,0 +1,39 @@
+name: Test status dashboard
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'activity.html'
+      - 'vision-pc/activity_dashboard.py'
+      - 'vision-pc/audit_logs.py'
+      - 'vision-pc/server.py'
+      - 'vision-pc/vortex.py'
+      - 'tests/activity_browser_smoke.py'
+      - 'tests/test_activity_dashboard.py'
+      - '.github/workflows/test-status.yml'
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r vision-pc/requirements.txt playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Audit access, reporting and account isolation
+        run: |
+          python -m unittest discover -s tests -p test_activity_dashboard.py -v
+          python -m unittest discover -s vision-pc -p test_firebase_auth.py -v
+          python -m unittest discover -s vision-pc -p test_gemini_server.py -v
+          python -m unittest discover -s vision-pc -p test_vortex.py -v
+      - name: Modules, responsive layout and auth races
+        run: |
+          node tests/gemini-admin.test.cjs
+          python tests/activity_browser_smoke.py

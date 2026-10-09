@@ -95,6 +95,28 @@ class VortexAccountTests(unittest.TestCase):
         self.assertTrue(self.service._finish(job, {'filename': 'media.mp4'}))
         return self.service.row(job)
 
+    def test_owner_reporting_reads_existing_jobs_without_exposing_media(self):
+        from activity_dashboard import public_id
+        self.client.get('/api/vortex/capabilities',headers=self.bob)
+        with patch.object(self.service,'capability',return_value={'ready':True,'engines':{'yt-dlp':True}}):
+            job=self.accepted()
+        self.complete(job)
+        self.assertEqual(self.client.get('/api/admin/vortex',headers=self.alice).status_code,403)
+        (Path(server.app.config['DATA_DIR'])/'activity-admins.json').write_text(json.dumps({'uids':['firebase:alice']}))
+        response=self.client.get('/api/admin/vortex',headers=self.alice)
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertIn('no-store',response.headers['Cache-Control'])
+        self.assertEqual(response.json['totals']['readyDownloads'],1)
+        self.assertEqual(response.json['jobs'][0]['id'],job)
+        for secret in ('private-media-bytes','Private media','youtube.com','media.mp4','firebase:alice'):
+            self.assertNotIn(secret,response.get_data(as_text=True))
+        self.assertEqual(self.client.get('/api/admin/vortex',headers=self.bob).status_code,403)
+        scoped=self.client.get('/api/admin/vortex?user='+public_id('firebase:bob'),headers=self.alice)
+        self.assertEqual(scoped.json['jobs'],[])
+        activity=self.client.get('/api/admin/activity?module=vortex',headers=self.alice).json
+        self.assertEqual([event['kind'] for event in activity['events']],['vortex_finished','vortex_submitted'])
+        self.assertEqual(activity['events'][0]['details']['app'],'vortex')
+
     def test_all_routes_require_account_and_reject_installation_access(self):
         trial = self.client.post('/api/trial/start', json={'deviceId': 'd' * 64},
                                  headers={'Origin': 'https://jrdn-r.github.io'},

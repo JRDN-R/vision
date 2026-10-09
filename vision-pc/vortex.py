@@ -523,6 +523,10 @@ class VortexJobs:
             db.execute("UPDATE vortex_jobs SET status='complete',phase=?,progress=100,filename=?,output_size=?,completed_at=?,expires_at=?,updated_at=? WHERE id=?",
                        ('Ready to save' if filename else 'Media identified', filename, size, now,
                         now + RETENTION_SECONDS if filename else None, now, job_id))
+        audit = self.app.config.get('AUDIT_LOGS')
+        if audit:
+            audit.event(row['uid'], 'vortex_finished', app='vortex', jobType=row['kind'],
+                        outcome='complete', outputBytes=size)
         return True
 
     @staticmethod
@@ -560,6 +564,7 @@ class VortexJobs:
         job_id = row['id']
         directory = self.root / job_id
         shutil.rmtree(directory, ignore_errors=True)
+
         directory.mkdir(mode=0o700)
         specification = dict(id=job_id, input=row['input'], kind=row['kind'], quality=row['quality'],
                              directory=str(directory.resolve()), ffmpeg=self.app.config['FFMPEG'],
@@ -677,3 +682,8 @@ class VortexJobs:
                     db.execute("UPDATE vortex_jobs SET status='error',phase='Unable to finish',error=?,progress=NULL,completed_at=?,updated_at=? WHERE id=?",
                                (failed or 'Vortex could not retrieve this media. It may be unavailable or require sign-in.', now, now, job_id))
         shutil.rmtree(directory, ignore_errors=True)
+        audit = self.app.config.get('AUDIT_LOGS')
+        if audit and current and not interrupted:
+            audit.event(row['uid'], 'vortex_finished', app='vortex', jobType=row['kind'],
+                        outcome='cancelled' if current['cancel_requested'] or current['delete_requested'] else 'error',
+                        processingWallSeconds=time.monotonic() - start)
