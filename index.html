@@ -32,7 +32,7 @@
 <script>
 (async()=>{
  try{
-  const response=await fetch('./Vision.html?v=9ce3197d733f',{credentials:'same-origin'});
+  const response=await fetch('./Vision.html?v=5611d46d4578',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
   const html=(await response.text()).replace('<button id="downloadAppBtn"','<button id="downloadAppBtn" hidden');
   if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
