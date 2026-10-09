@@ -143,15 +143,70 @@ the server logger. Raw exceptions, URLs, cookies and signed streams are not logg
 
 ### Optional Cobalt service on FUPCJ
 
+For an existing Vision PC, `Setup-Vortex-Windows.ps1` installs the Windows
+prerequisites and Cobalt in one workflow. Run this in **64-bit Windows PowerShell
+as administrator**, from the account that normally signs into FUPCJ:
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    $VortexBootstrap = Join-Path $env:TEMP 'Setup-Vortex-Windows.ps1'
+    Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vortex-Windows.ps1' -OutFile $VortexBootstrap
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexBootstrap -AcceptDockerLicense
+    if ($LASTEXITCODE -eq 3010) {
+        Write-Host 'Restart Windows when convenient, sign in, and paste this same block again.'
+    } elseif ($LASTEXITCODE -ne 0) {
+        throw 'Vortex setup stopped. See the message above.'
+    }
+}
+```
+
+`-AcceptDockerLicense` permits Docker's documented unattended license acceptance
+flag. Review the [Docker Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/)
+before running it. This does not purchase a subscription or create an account.
+
+The installer enables WSL and Virtual Machine Platform without restarting the PC,
+installs modern WSL if necessary, installs Docker with `--backend=wsl-2`, downloads
+official portable MinGit if Git is missing, and runs the existing Cobalt service
+installer and health check. It verifies Microsoft/Docker installer signatures and
+the published GitHub release SHA-256 digests for WSL and MinGit. It does not need
+winget or install an Ubuntu distribution, Git Bash, or a Linux desktop. Existing
+native Vortex packages are checked and only installed when missing.
+
+A **restart-required** result is a pause, not installation failure. Feature states,
+Windows restart markers, and a saved boot identifier prevent starting Docker before
+the reboot. Save other work, restart Windows, sign back in, and rerun the same block.
+The script never reboots automatically or changes BIOS settings. If virtualization
+is disabled, enable AMD SVM/Intel VT-x in firmware first. An older `wsl.exe` printing
+its help text for `--update` or `--version` does not mean modern WSL is installed.
+
+Docker settings are backed up, unrelated settings are retained, and Docker is set
+to use WSL 2, start at this user's **Windows sign-in**, and keep its dashboard closed.
+Applying those settings briefly restarts Docker Desktop and its existing containers;
+run this maintenance outside a live service. Engine requests explicitly target the
+local `desktop-linux` context, never an administrator's saved remote Docker endpoint.
+Neither unattended Windows sign-in nor Docker startup before sign-in is configured.
+Close PowerShell after success; the existing Vision task, Funnel and Docker continue
+in the background. Do not quit Docker from its tray menu if Cobalt should stay available.
+
+The bootstrap does not impose a global WSL CPU/RAM limit or change limits for other
+Windows apps. The Cobalt containers retain the limits below; native FFmpeg workers
+are separate Windows processes. A first-run Docker dialog, blocked download, invalid
+publisher signature, or engine startup timeout stops setup with a readable message.
+No Windows/Docker deployment was performed by the automated installer tests.
+
+The lower-level service actions remain available when the prerequisites are
+already installed:
+
 After installing the reviewed processor and native tools, with **Docker's Linux
 container daemon running** and Git available to the administrator:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action InstallVortexServices -SourceRef REVIEWED_COMMIT_SHA
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action CheckVortexServices -SourceRef REVIEWED_COMMIT_SHA
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action InstallVortexServices
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action CheckVortexServices
 ```
 
-`Vortex-Services.ps1` checks prerequisites without changing Windows features,
+`Vortex-Services.ps1` itself checks prerequisites without changing Windows features,
 clones the audited Cobalt commit, builds its upstream Dockerfile, starts Compose,
 checks API health/commit and activates the server configuration through the
 existing update/rollback path. Docker/WSL installation is a prerequisite, not an

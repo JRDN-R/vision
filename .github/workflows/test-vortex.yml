@@ -46,10 +46,14 @@ jobs:
         run: |
           $ParseErrors = $null
           $Tokens = $null
-          foreach ($File in @('vision-pc/Setup-Vision-PC.ps1','vision-pc/Vortex-Services.ps1')) {
+          foreach ($File in @('vision-pc/Setup-Vision-PC.ps1','vision-pc/Vortex-Services.ps1','vision-pc/Setup-Vortex-Windows.ps1')) {
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $File), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
             if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
           }
+      - name: Windows 5.1 prerequisite and reboot checks
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_vortex_windows_setup.ps1
       - name: Validate optional service configuration (Linux)
         if: runner.os == 'Linux'
         run: docker compose -f vision-pc/vortex-services.compose.yml config --quiet
