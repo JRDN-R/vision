@@ -89,40 +89,148 @@ the file and tapping Share are separate steps so iOS receives a fresh user
 gesture. Save file uses a short-lived URL and the browser's download/Save to
 Files workflow, without holding a large video in page memory.
 
-## Engines and scope
+## Parallel extraction and engine availability
 
-| Input | Engine | Behavior |
-| --- | --- | --- |
-| YouTube searches and supported public video/audio URLs | yt-dlp | One media item, native download, local stream packaging |
-| YouTube Music songs and selected music search results | yt-dlp + FFmpeg | Highest available audio source exported as M4A, MP3 or WAV; music identity stays attached |
-| Instagram Reel/video links | yt-dlp, then gallery-dl if public metadata lookup fails | Video-specific inspection first; sharing query parameters are removed |
-| Supported public gallery/post URLs, including Instagram, Reddit, Imgur, Flickr, DeviantArt and Pixiv | gallery-dl | One file or a ZIP for a bounded collection |
-| Spotify track URLs and `spotify:` searches | spotDL + yt-dlp | Spotify metadata matched to public YouTube Music/YouTube audio |
+A user action still creates exactly one SQLite job and one history row. Within
+that job, `vortex_urls.py` canonicalizes known provider URLs and the guarded
+worker expands supported share links. Unknown hosts, identifiers and signed
+query strings are not guessed. Music identity and non-first X media selections
+are retained. Each redirect is validated before fetching it.
 
-Spotify downloads are **matched audio**, not Spotify's original stream; the
-interface identifies this explicitly. Availability and matching depend on the
-source services. DRM content, logged-in sources requiring cookies, live streams
-and unbounded playlists are not supported. No account cookies, Firebase token
-or saved model API key is passed to the media engines.
-Some Instagram Reels are visible in a signed-in browser but unavailable to
-anonymous server requests. Vortex reports source sign-in, request-limit and
-connection failures with specific messages. The alternate extractor does not
-bypass those source restrictions.
+`vortex_adapters.py` defines compatibility and adapter dispatch;
+`vortex_race.py` owns isolated processes, scheduling and cancellation. All
+installed/configured compatible inspections start together (maximum five).
+For Small/Balanced inspection, the first usable result returns. Max inspection
+waits for bounded candidate catalogs and selects the greatest known source
+height. A download first collects compatible inspections, then races at most
+two downloads in the best known quality cohort. Small/Balanced heights are
+compared after their 480p/1080p cap. Lower or unknown-quality candidates remain
+available if better candidates fail. No candidate is declared successful solely
+because metadata was returned. Re-extraction cannot silently lower a known
+resolution; conversion is never allowed to upscale it.
 
-Spotify metadata uses the official API. If the engine's default application is
-rate-limited or unavailable, the PC administrator can configure
-`VORTEX_SPOTIFY_CLIENT_ID` and `VORTEX_SPOTIFY_CLIENT_SECRET` in the Windows
-service environment and restart the processor. Those optional credentials are
-sent only to the isolated Spotify worker and never returned to the browser.
+Each attempt has a separate generated working directory and process tree.
+Downloads run through the existing FFmpeg export pipeline. A winner must have
+the requested container and streams, valid duration, acceptable size/resolution,
+and pass a full local FFmpeg decode. The worker moves exactly one winning file
+to the job directory, reaps competitors and removes temporary files before
+returning success. Losing attempt failures never create jobs/history entries.
+No engine configuration comes from a browser request.
 
-The source of truth for engine availability is authenticated
-`GET /api/vortex/capabilities`. A missing engine produces a specific installation
-message rather than pretending a source was downloaded successfully.
+| Integration | Implementation and deployment status |
+| --- | --- |
+| yt-dlp | Native public video/audio inspection and download; compatible providers and existing YouTube search/pagination. Installed by Update/InstallVortexTools. |
+| gallery-dl | Native public gallery/video extraction; now races yt-dlp for X, Instagram and Reddit. X candidates must match the requested tweet ID; quotes, replies and previews are excluded. Installed by InstallVortexTools. |
+| spotDL | Existing official Spotify metadata and public YouTube/YouTube Music audio matching. Only compatible Spotify work is dispatched here. Installed by InstallVortexTools. |
+| FFmpeg/FFprobe | Existing Windows tools; shared local conversion plus mandatory final file verification. |
+| Cobalt | Implemented opt-in API adapter and pinned self-hosted Linux-container provisioning. The local service must pass health checks; unsupported services, picker responses and unavailable streams fail only this adapter. It is not enabled by a normal Update. |
+| FxEmbed/FxTwitter | Implemented opt-in metadata/stream adapter for the current v2 API, with v1 envelope parsing compatibility. It verifies exact post identity, rejects quoted/external/multiple-video ambiguity, chooses MP4 variants, and downloads the actual public stream through the guarded worker. No default endpoint; not automatically provisioned. |
+| twitter-video-dl | **Not installed or advertised as operational.** Reviewed upstream is from 2023, has no request timeouts, may match media from the entire thread, follows the first detected repost, and writes request state to its package directory. Its guest-token lookup failed on both supplied X examples in live upstream checks. Substituting a fake wrapper would not add a reliable independent engine. |
+
+Engine presence is not proof that a provider accepts anonymous requests. Missing
+packages, failed imports, unhealthy services and per-source failures are isolated.
+Spotify audio remains matched audio, not Spotify's original stream. DRM, private
+accounts, browser-cookie collection, CAPTCHA bypass, live streams and unbounded
+playlists are not supported. Optional Spotify credentials continue to be scoped
+to the Spotify child; no Firebase tokens or unrelated credentials are forwarded.
+
+All browser messages are neutral (Finding media, Preparing download, Downloading
+media, Converting to the selected format). All-engine failure yields one concise
+retrieval error. Progress is indeterminate unless a foreground candidate has real
+byte/fragment/encode measurements. Internal diagnostic events contain only an
+allowlisted engine, failure category and elapsed milliseconds, and are sent to
+the server logger. Raw exceptions, URLs, cookies and signed streams are not logged.
+
+### Optional Cobalt service on FUPCJ
+
+After installing the reviewed processor and native tools, with **Docker's Linux
+container daemon running** and Git available to the administrator:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action InstallVortexServices -SourceRef REVIEWED_COMMIT_SHA
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VortexSetup -Action CheckVortexServices -SourceRef REVIEWED_COMMIT_SHA
+```
+
+`Vortex-Services.ps1` checks prerequisites without changing Windows features,
+clones the audited Cobalt commit, builds its upstream Dockerfile, starts Compose,
+checks API health/commit and activates the server configuration through the
+existing update/rollback path. Docker/WSL installation is a prerequisite, not an
+unattended OS change. The API is bound only to `127.0.0.1:9000`. Containers have
+restart-on-daemon-start behavior, CPU/memory/PID limits, read-only root filesystems
+and no request logs or account cookies. Docker must start with Windows for the
+sidecar to be available after reboot. `CheckVortexServices` reports service state;
+`docker compose --project-name vision-vortex-services --file <serviceDirectory>\vortex-services.compose.yml restart`
+restarts it. A Docker health check reports an unhealthy process; request workers
+exclude it until the service recovers. Failed activation brings back the previous
+Compose configuration when one exists.
+
+Cobalt shares a dedicated network namespace with a small firewall container.
+The namespace is attached only to a Docker **internal** network. Its IPv4/IPv6
+OUTPUT policy permits loopback, established replies and the exact egress proxy
+port only, including blocking the host bridge gateway. Cobalt has no NET_ADMIN
+capability. A small CONNECT proxy is the only outward route; it rejects private/mixed DNS results, pins the checked
+IP, restricts ports to 80/443, and bounds connections, transfer bytes and time.
+Cobalt uses its documented HTTP_PROXY/HTTPS_PROXY support. Anything ignoring that
+proxy fails closed on the internal network. The proxy is not published to the
+host. No public Cobalt instance is used. Container base images/dependencies still
+need routine administrator updates; the Cobalt source itself is commit-pinned.
+
+Cobalt does not return a rich inspection object. Its adapter downloads and probes
+a bounded real file for inspection, and reuses that file if it wins the subsequent
+race. This can cost more bandwidth than native metadata inspection. Picker and
+local-processing responses are deliberately rejected rather than guessing a media
+item or running remote FFmpeg inputs. Some providers require unavailable accounts
+or service features; other adapters remain available in those cases.
+
+### FxEmbed and explicitly authorized endpoints
+
+The inspected FxEmbed upstream now has a Docker/Workers-runtime recipe, but its
+runtime does not share Python's network guard or Cobalt's confirmed proxy path.
+Its example configuration also includes external services and optional credential
+infrastructure. Automatically starting that recipe would weaken Vortex's network
+and privacy boundary. This PR therefore supplies the API adapter but does **not**
+activate a native Windows or public FxEmbed service. Administrators must first
+provision a service with public-only egress and no external relays/credential
+sources, then configure it explicitly. This limitation is intentional.
+
+Example protected `config.json` fragment for an already secured local instance:
+
+```json
+{
+  "vortex": {
+    "services": {
+      "fxembed": {
+        "enabled": true,
+        "url": "http://127.0.0.1:8787/",
+        "apiHost": "api.fxtwitter.com",
+        "publicEgressOnly": true
+      }
+    }
+  }
+}
+```
+
+`publicEgressOnly` is an administrator assertion about a separately enforced
+policy, not a switch that creates a firewall. `apiHost` selects the local Workers
+API realm; it does not send traffic to the public FxTwitter service. A public
+HTTPS service additionally requires `allowExternal: true`, explicitly authorizing
+sending normalized public links to that instance. Neither adapter currently sends
+service API keys or source-account cookies. Non-loopback private service origins,
+URL credentials, API redirects and arbitrary local tunnel targets are rejected.
+Returned public media is validated through the normal socket guard; Cobalt local
+tunnels are restricted to the exact configured origin and `/tunnel` path.
+
+### Audited upstream sources (2026-10-09)
+
+- [Cobalt API and service deployment](https://github.com/imputnet/cobalt/tree/a636575b09de1fc55d9b8cd98cac88f5f2f16b42): v11.7.1, documented service list, `POST /`, `GET /`, tunnels, proxy settings and Dockerfile.
+- [FxEmbed source](https://github.com/FxEmbed/FxEmbed/tree/f3d17f0484c2c9a3ed7ff8a14dde6d004051ff52) and [API documentation](https://docs.fxembed.com/api/introduction/): v2 `/2/status/{id}`, API schema and Docker/Workers runtime.
+- [twitter-video-dl](https://github.com/inteoryx/twitter-video-dl/tree/35a24a8e432f2f247c5cccfaa47b2f321c612fdf): reviewed token lookup, broad regex selection, repost recursion and downloader behavior.
+- Native adapter checks used yt-dlp 2026.08.19 and gallery-dl 1.32.16.
 
 ## Storage and job lifecycle
 
 Jobs are committed to the existing SQLite database before acceptance. A single
-Vortex worker processes that durable queue independently of any browser. On
+Vortex supervisor processes that durable queue independently of any browser. On
 restart, interrupted jobs are requeued, with a bounded three-attempt restart
 policy. Cancelling stops the extractor process and its descendants; deleting an
 active item requests cancellation and removes its output.
@@ -149,6 +257,10 @@ database remain included in the existing backup process.
 | Gallery contents | 50 files |
 | Search page size / maximum pages | 8 videos + 8 songs / 50 pages |
 | Lookup / download timeout | 3 / 45 minutes |
+| Parallel adapter inspections / downloads | 5 / 2 within one durable job |
+| Per-attempt memory / event output | 2 GiB / 1 MiB |
+| Aggregate temporary disk | Existing 3 × 2 GiB allowance, shared across attempts |
+| Per-attempt lookup / download timeout | 2 / 40 minutes |
 | File delivery URL lifetime | At most 5 minutes and never beyond file expiry |
 
 Paths live under the configured `dataDir/vortex/`, using generated job IDs and
@@ -172,6 +284,47 @@ metadata/results, progress, history recovery, account changes, actions, menu
 placement and reduced motion. Offline backend tests cover the durable queue,
 ownership, idempotency, retention, cancellation, file tickets, byte ranges,
 path checks, public-network boundaries and engine adapters.
+
+### Verification for this upgrade
+
+Offline regression checks include URL normalization and redirect SSRF rejection,
+actual concurrent subprocess execution, winner selection, failed inspection and
+download candidates, Max quality ordering, descendant cancellation, aggregate disk
+limits, per-account/global quotas, normalized idempotency and diagnostic redaction.
+Real local FFmpeg checks cover MP4/MOV and MP3/WAV/M4A plus corrupt-file rejection.
+Existing shared Firebase/session, persistence, expiry, delivery and ownership tests
+remain in the suite. The Windows CI job parses both installer scripts and runs the
+same backend tests; Linux CI also validates Compose.
+
+Live upstream checks on 2026-10-09 used anonymous requests through the development
+environment's configured HTTPS proxy and its trusted system CA. This is **not** a
+FUPCJ production-network test: direct DNS to X is unavailable in this workspace,
+so Vortex's guarded public-network worker cannot perform an end-to-end live job
+here. TLS verification remained enabled throughout the upstream checks. No public
+third-party extraction API or user cookies were used.
+
+| Supplied X post | yt-dlp 2026.08.19 | gallery-dl 1.32.16 | Self-hosted Cobalt 11.7.1 upstream API | Legacy twitter-video-dl |
+| --- | --- | --- | --- | --- |
+| `2104675740168155503` (`moviehub222`) | Matching post metadata, 9 formats, 240.266-second source | Matching tweet ID and MP4 media | HTTP 200, direct-media response | Guest lookup assertion failure |
+| `2108340421264912569` (`shamarupdates`) | No usable result (not-found failure) | Extraction aborted | HTTP 400, `error.api.fetch.empty` | Guest lookup assertion failure |
+
+The working post also completed a real 35,518,894-byte MP4 download and a full
+FFmpeg decode in the upstream check (720 × 974, 240.326531 seconds). This verifies
+that one public source file, not the Windows deployment.
+
+X's own syndication endpoint returned a `TweetTombstone` and no media for the
+second post. That does not establish whether the cause is deletion, account
+restrictions or another availability rule. **No alternate engine was verified to
+download the second post.** FxEmbed was not tested live because no authorized,
+secured instance was configured. Mocked API responses are adapter-contract tests
+only and are not presented as evidence of public-media availability.
+
+The Cobalt API was started locally from the exact audited upstream source for
+these checks; the Windows Docker/egress-proxy deployment was not exercised here
+because Docker and the FUPCJ host are unavailable. The installer must be exercised
+on FUPCJ with the reviewed commit before considering that sidecar deployed. Browser
+regression execution was blocked by the available Chromium download returning an
+invalid archive in this workspace; the existing browser CI job remains enabled.
 
 These tests do not authenticate to the production PC or guarantee that every
 upstream service accepts downloads from its IP. After activation, sign in to

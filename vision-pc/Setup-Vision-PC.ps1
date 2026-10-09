@@ -5,7 +5,7 @@ The application downloads its own private runtime; no existing Python/Node insta
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools','InstallVortexTools','InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')]
+    [ValidateSet('Setup','Update','EnablePublic','EnableGoogleSignIn','ExportConnection','Start','Stop','InstallLocalTranscription','EnableLocalTranscription','DisableLocalTranscription','CheckLocalTranscription','InstallSoundEvents','DisableSoundEvents','CheckSoundEvents','InstallDocumentTools','InstallVortexTools','InstallVortexServices','CheckVortexServices','InstallContextEngine','CheckContextEngine','EnableContextEngine','DisableContextEngine','Rollback')]
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
@@ -26,7 +26,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1','vortex.py','vortex_network.py','vortex_worker.py','requirements-vortex.txt')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','venture.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1','vortex.py','vortex_network.py','vortex_worker.py','vortex_urls.py','vortex_adapters.py','vortex_race.py','vortex_services.py','vortex_egress.py','Vortex-Services.ps1','vortex-services.compose.yml','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh','requirements-vortex.txt')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -665,6 +665,9 @@ function Install-VortexTools {
     # A separate target prevents specialist-engine dependencies from replacing
     # Flask, Whisper, document tools, or the current Vision yt-dlp installation.
     Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-warn-script-location','--no-input','--only-binary=:all:','--target',$PackagesPath,'-r',(Join-Path $StageDirectory 'requirements-vortex.txt'))
+    # The supervisor uses psutil too. Keep this small core dependency available
+    # when InstallVortexTools is run directly without a preceding Update.
+    Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-input','--only-binary=:all:','psutil>=7.2,<8')
     Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, spotdl', $PackagesPath)
     $Configuration = Read-Configuration
     if (-not $Configuration.vortex) { $Configuration | Add-Member -NotePropertyName vortex -NotePropertyValue ([pscustomobject]@{}) }
@@ -718,6 +721,13 @@ try {
     if ($Action -eq 'ExportConnection') { Export-Connection; exit 0 }
     if ($Action -eq 'InstallLocalTranscription') { Install-LocalTranscription; exit 0 }
     if ($Action -eq 'InstallVortexTools') { Install-VortexTools; exit 0 }
+    if ($Action -in @('InstallVortexServices','CheckVortexServices')) {
+        $ServiceScript = Join-Path $DownloadDir ('Vortex-Services-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+        Get-Download "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc/Vortex-Services.ps1" $ServiceScript
+        . $ServiceScript
+        if ($Action -eq 'InstallVortexServices') { Install-VortexServices } else { Check-VortexServices }
+        exit 0
+    }
     if ($Action -eq 'InstallDocumentTools') {
         Assert-InstalledProcessor
         $DocumentHelper = Join-Path $DownloadDir ('document-tools-'+[Guid]::NewGuid().ToString('N')+'.ps1')

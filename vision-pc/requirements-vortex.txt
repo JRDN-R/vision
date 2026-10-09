@@ -4,3 +4,6 @@
 yt-dlp[default]>=2026.8.19
 gallery-dl>=1.32.15,<2
 spotdl>=4.5.2,<5
+# Cobalt/FxEmbed are services, not PyPI downloaders. See Vortex-Services.ps1.
+# twitter-video-dl is intentionally not installed: see the upstream audit.
+psutil>=7.2,<8

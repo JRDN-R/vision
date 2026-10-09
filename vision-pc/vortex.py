@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import psutil
 
 from flask import g, jsonify, request, send_file
 
@@ -89,7 +90,7 @@ class VortexJobs:
         engines = {name: bool(available(module)) for name, module in
                    (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'), ('spotdl', 'spotdl'))}
         ffmpeg = Path(self.app.config.get('FFMPEG', ''))
-        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and engines['yt-dlp'] and ffmpeg.is_file()
+        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and any(engines.values()) and ffmpeg.is_file()
         return dict(ready=ready, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
                     maxItems=MAX_ITEMS, maxDuration=MAX_DURATION, persistentJobs=True,
                     firebaseRequired=True, videoFormats=['mp4', 'mov'], audioFormats=['m4a', 'mp3', 'wav'],
@@ -115,7 +116,7 @@ class VortexJobs:
         expired = value['status'] == 'complete' and value.get('expires_at') is not None and value['expires_at'] <= time.time()
         status = 'expired' if expired else value['status']
         return dict(id=value['id'], requestId=value['request_id'], input=value['input'],
-                    kind=value['kind'], quality=value['quality'], engine=value['engine'],
+                    kind=value['kind'], quality=value['quality'], engine=None,
                     **json.loads(value.get('options_json') or '{}'), searchNextPage=value.get('search_next_page'),
                     status=status, phase='File expired' if expired else value['phase'],
                     progress=value['progress'], error=value.get('error'),
@@ -191,8 +192,21 @@ class VortexJobs:
         capability = self.capability()
         if not capability['ready']:
             raise self.Error('Vortex is not ready on FUPCJ Server. Update the processor and enable Firebase sign-in.', 503)
-        if not capability['engines'].get(engine):
-            raise self.Error('This media engine is not installed. Run Setup-Vision-PC.ps1 -Action InstallVortexTools on FUPCJ Server.', 503)
+        # Availability/health is evaluated per compatible adapter in the worker.
+        # A missing preferred adapter must not reject a usable alternative.
+        from vortex_adapters import ADAPTERS
+        from vortex_services import service_config
+        compatible = [adapter for adapter in ADAPTERS if adapter.compatible(value)]
+        service_ready = False
+        for adapter in compatible:
+            if adapter.service:
+                try:
+                    service_config((self.app.config.get('VORTEX_SERVICES') or {}).get(adapter.name))
+                    service_ready = True
+                except (ValueError, TypeError):
+                    pass
+        if not service_ready and not any(capability['engines'].get(a.name) for a in compatible):
+            raise self.Error('This source is unavailable on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallVortexTools.', 503)
         now, job_id = time.time(), secrets.token_hex(12)
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -441,7 +455,7 @@ class VortexJobs:
                     db.execute('BEGIN IMMEDIATE')
                     row = db.execute("SELECT * FROM vortex_jobs WHERE status='queued' AND cancel_requested=0 AND delete_requested=0 ORDER BY created_at,id LIMIT 1").fetchone()
                     if row:
-                        db.execute("UPDATE vortex_jobs SET status='processing',phase='Starting media engine',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), row['id']))
+                        db.execute("UPDATE vortex_jobs SET status='processing',phase='Finding media…',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), row['id']))
                 if row:
                     try:
                         self.process(dict(row))
@@ -458,6 +472,16 @@ class VortexJobs:
 
     def _event(self, job_id, event):
         if not isinstance(event, dict):
+            return
+        if 'diagnostic' in event:
+            data = event['diagnostic']
+            if isinstance(data, dict):
+                from vortex_race import CATEGORIES
+                from vortex_adapters import ADAPTERS
+                if (data.get('engine') in {a.name for a in ADAPTERS} and data.get('category') in CATEGORIES
+                        and type(data.get('elapsedMs')) is int and 0 <= data['elapsedMs'] <= 48 * 60 * 60 * 1000):
+                    self.app.logger.info('Vortex attempt engine=%s category=%s elapsed_ms=%d',
+                                         data['engine'], data['category'], data['elapsedMs'])
             return
         updates = {'updated_at': time.time()}
         if 'searchNextPage' in event:
@@ -501,6 +525,17 @@ class VortexJobs:
 
     @staticmethod
     def terminate(process):
+        # Descendants of the orchestrator include competing extractors and
+        # their local FFmpeg children, all belonging to this one durable job.
+        try:
+            descendants = psutil.Process(process.pid).children(recursive=True)
+            for child in reversed(descendants):
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
         try:
             if os.name == 'nt':
                 if process.poll() is None:
@@ -528,6 +563,7 @@ class VortexJobs:
                              directory=str(directory.resolve()), ffmpeg=self.app.config['FFMPEG'],
                              deno=self.app.config.get('DENO'), maxBytes=MAX_BYTES, maxItems=MAX_ITEMS,
                              maxDuration=MAX_DURATION, packagesPath=self.app.config.get('VORTEX_PACKAGES'))
+        specification['services'] = self.app.config.get('VORTEX_SERVICES') or {}
         specification.update(json.loads(row.get('options_json') or '{}'))
         request_path = directory / 'request.json'
         request_path.write_text(json.dumps(specification), encoding='utf-8')
@@ -618,7 +654,7 @@ class VortexJobs:
                                 path.unlink(missing_ok=True)
                     return
         except Exception:
-            failed = 'The media engine could not finish this item. Try another public link or update Vortex tools.'
+            failed = 'Vortex could not retrieve this media. It may be unavailable or require sign-in.'
         finally:
             if process:
                 self.terminate(process)
@@ -637,5 +673,5 @@ class VortexJobs:
                     db.execute("UPDATE vortex_jobs SET status='queued',phase='Waiting for server restart',progress=NULL,updated_at=? WHERE id=?", (now, job_id))
                 else:
                     db.execute("UPDATE vortex_jobs SET status='error',phase='Unable to finish',error=?,progress=NULL,completed_at=?,updated_at=? WHERE id=?",
-                               (failed or 'The media engine stopped before finishing. Try this item again.', now, now, job_id))
+                               (failed or 'Vortex could not retrieve this media. It may be unavailable or require sign-in.', now, now, job_id))
         shutil.rmtree(directory, ignore_errors=True)

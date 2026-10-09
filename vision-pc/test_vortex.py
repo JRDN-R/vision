@@ -314,10 +314,47 @@ class VortexAccountTests(unittest.TestCase):
         self.assertEqual(self.service.snapshot(self.service.row(job))['progress'], 32.25)
         unavailable = {'ready': True, 'engines': {'yt-dlp': True, 'gallery-dl': False, 'spotdl': False}}
         with patch.object(self.service, 'capability', return_value=unavailable):
-            for value in ('https://open.spotify.com/track/example', 'https://instagram.com/p/example'):
+            for value in ('https://open.spotify.com/track/example',):
                 response = self.submit(input=value, requestId='missing-tool')
                 self.assertEqual(response.status_code, 503, response.json)
                 self.assertIn('InstallVortexTools', response.json['error'])
+            response = self.submit(input='https://instagram.com/p/example', requestId='alternative-tool')
+            self.assertEqual(response.status_code, 202, response.json)
+
+    def test_normalized_receipt_is_one_job_and_account_limits_still_apply(self):
+        first = self.submit(input='youtu.be/abcdefghijk?t=30', requestId='same')
+        again = self.submit(input='https://www.youtube.com/watch?v=abcdefghijk&t=30', requestId='same')
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(first.json['id'], again.json['id'])
+        for i in range(2):
+            self.assertEqual(self.submit(requestId='extra-' + str(i)).status_code, 202)
+        self.assertEqual(self.submit(requestId='over-limit').status_code, 429)
+        other = self.submit(headers=self.bob, requestId='same')
+        self.assertEqual(other.status_code, 202)
+        self.assertNotEqual(other.json['id'], first.json['id'])
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM vortex_jobs').fetchone()[0], 4)
+
+    def test_shared_global_queue_and_storage_limits_are_not_per_engine(self):
+        with patch.object(vortex, 'MAX_GLOBAL_ACTIVE', 1):
+            self.accepted()
+            self.assertEqual(self.submit(headers=self.bob, requestId='bob').status_code, 429)
+        with patch.object(vortex, 'ACCOUNT_BYTES', vortex.MAX_BYTES):
+            self.assertEqual(self.submit(requestId='quota').status_code, 507)
+
+    def test_sanitized_diagnostics_never_become_public_job_state(self):
+        job = self.accepted()
+        with server.connect_db() as db:
+            db.execute("UPDATE vortex_jobs SET status='processing' WHERE id=?", (job,))
+        before = self.service.snapshot(self.service.row(job))
+        with patch.object(server.app.logger, 'info') as log:
+            self.service._event(job, {'diagnostic': {'engine': 'yt-dlp', 'category': 'timeout', 'elapsedMs': 9,
+                                                    'url': 'https://example.com/?signed=secret', 'cookie': 'secret'}})
+            self.assertEqual(log.call_count, 1)
+            self.assertNotIn('secret', str(log.call_args))
+            self.service._event(job, {'diagnostic': {'engine': 'secret', 'category': 'oops', 'elapsedMs': 1}})
+            self.assertEqual(log.call_count, 1)
+        self.assertEqual(before, self.service.snapshot(self.service.row(job)))
 
 
 class ProcessTreeCancellationTests(unittest.TestCase):
