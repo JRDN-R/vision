@@ -193,7 +193,17 @@ def next_job(page, api, previous):
 
 
 def no_overflow(page):
-    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), 'Horizontal page overflow'
+    overflow = page.evaluate("""() => {
+      const viewport = innerWidth, scroll = document.documentElement.scrollWidth;
+      if (scroll <= viewport + 1) return null;
+      const items = [...document.querySelectorAll('body *')].map(el => {
+        const r = el.getBoundingClientRect();
+        return {tag: el.tagName, id: el.id, className: typeof el.className === 'string' ? el.className.slice(0, 85) : '',
+          left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width)};
+      }).filter(v => v.right > viewport + 1 || v.left < -10).slice(0, 18);
+      return {viewport, scroll, items};
+    }""")
+    assert overflow is None, f'Horizontal page overflow: {overflow}'
 
 
 def verify_delayed_auth_restore(browser):
