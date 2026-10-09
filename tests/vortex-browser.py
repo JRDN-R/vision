@@ -391,7 +391,7 @@ def run():
             page.screenshot(path=str(SHOTS/f'vortex-processing-{width}.png'), full_page=True)
             # Recovery is fetched from the server, with the same shared account session.
             page.reload()
-            page.locator('#activityList .activity-item').wait_for()
+            page.locator(f'[data-id="{downloaded["id"]}"]').wait_for()
             assert page.locator('#authGate').is_hidden()
             assert page.locator(f'[data-id="{downloaded["id"]}"] .item-title').inner_text() == VIDEO['title']
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
