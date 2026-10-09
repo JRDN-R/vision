@@ -72,7 +72,7 @@ def validate_input(value, kind='inspect', resolve=True):
     value = value.strip()
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or '\\' in value:
         raise ValueError('This link or search contains unsupported characters.')
-    if value.lower().startswith(('www.', 'youtu.be/', 'youtube.com/', 'open.spotify.com/')):
+    if value.lower().startswith(('www.', 'youtu.be/', 'youtube.com/', 'music.youtube.com/', 'instagram.com/', 'open.spotify.com/')):
         value = 'https://' + value
     parsed = urlsplit(value)
     if parsed.scheme.lower() not in ('http', 'https'):
@@ -97,12 +97,21 @@ def validate_input(value, kind='inspect', resolve=True):
     return urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path or '/', parsed.query, ''))
 
 
+def is_instagram_reel(value):
+    parsed = urlsplit(value)
+    host = (parsed.hostname or '').lower()
+    return (host == 'instagram.com' or host.endswith('.instagram.com')) and bool(
+        re.fullmatch(r'/(?:[A-Za-z0-9_.]+/)?(?:reels?|tv)/[A-Za-z0-9_-]+/?', parsed.path))
+
+
 def engine_for(value):
     if value.lower().startswith('spotify:'):
         return 'spotdl'
     host = (urlsplit(value).hostname or '').lower()
     if host in ('open.spotify.com', 'spotify.link', 'spoti.fi'):
         return 'spotdl'
+    if is_instagram_reel(value):
+        return 'yt-dlp'
     galleries = ('reddit.com', 'redd.it', 'imgur.com', 'flickr.com', 'deviantart.com', 'pixiv.net', 'instagram.com')
     if any(host == domain or host.endswith('.' + domain) for domain in galleries):
         return 'gallery-dl'

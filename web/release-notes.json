@@ -1,9 +1,9 @@
 {
-  "title": "Meet Vortex",
+  "title": "Vortex search and account fixes",
   "items": [
-    "Open Vortex below Help in Vision, or above the server-storage footer in Venture.",
-    "Find and download public media with your existing account. Accepted downloads continue on FUPCJ Server when you leave.",
-    "Return to view progress, save a completed file, or cancel and delete items. Files expire five days after completion.",
-    "Vortex requires the matching Windows processor update. Gallery and Spotify support use the optional Vortex tools installer."
+    "Search YouTube videos and YouTube Music songs together. A long search result no longer stops the search.",
+    "Instagram Reels use a video lookup first, with an alternate gallery lookup and clearer source errors.",
+    "Vortex uses your saved Vision profile photo. Quality changes update in the background without hiding media details.",
+    "Run the Windows processor Update action on FUPCJ Server to activate the source fixes."
   ]
 }

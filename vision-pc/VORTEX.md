@@ -39,12 +39,20 @@ a simple source reference. Publishing the new webpage does not update Windows.
 ## Use
 
 Paste a supported public media URL and submit the field. Text queries search
-YouTube; prefix a Spotify search with `spotify:` (for example, `spotify: artist song`).
+YouTube videos and YouTube Music songs together; prefix a Spotify search with
+`spotify:` (for example, `spotify: artist song`). A temporary failure in one
+YouTube search source does not discard matches from the other. Long or live
+search results can be listed; the duration/live restrictions apply when an
+individual result is selected, never to the whole search.
 Select a result to load actual source properties, choose Small,
 Balanced or Max, then Download. Source details remain blank until supplied by
 the engine. Unknown progress stays indeterminate; a percentage appears only
 when a stream's byte count or fragment count is known. Percentages describe the
 current stream or gallery file, not a fabricated estimate for the whole job.
+Changing Small, Balanced or Max refreshes properties in the background while
+keeping the current media visible. A failed quality refresh retains the last
+confirmed properties and preset. The profile button uses the saved Vision
+account photo from the shared authenticated profile endpoint.
 
 Small prefers source video up to 480p, Balanced up to 1080p, and Max the highest
 available source quality. Audio downloads retain the best available source
@@ -64,6 +72,8 @@ Files workflow, without holding a large video in page memory.
 | Input | Engine | Behavior |
 | --- | --- | --- |
 | YouTube searches and supported public video/audio URLs | yt-dlp | One media item, native download, local stream packaging |
+| YouTube Music songs and selected music search results | yt-dlp | Highest available original audio; music identity stays attached to the result |
+| Instagram Reel/video links | yt-dlp, then gallery-dl if public metadata lookup fails | Video-specific inspection first; sharing query parameters are removed |
 | Supported public gallery/post URLs, including Instagram, Reddit, Imgur, Flickr, DeviantArt and Pixiv | gallery-dl | One file or a ZIP for a bounded collection |
 | Spotify track URLs and `spotify:` searches | spotDL + yt-dlp | Spotify metadata matched to public YouTube Music/YouTube audio |
 
@@ -72,6 +82,10 @@ interface identifies this explicitly. Availability and matching depend on the
 source services. DRM content, logged-in sources requiring cookies, live streams
 and unbounded playlists are not supported. No account cookies, Firebase token
 or saved model API key is passed to the media engines.
+Some Instagram Reels are visible in a signed-in browser but unavailable to
+anonymous server requests. Vortex reports source sign-in, request-limit and
+connection failures with specific messages. The alternate extractor does not
+bypass those source restrictions.
 
 Spotify metadata uses the official API. If the engine's default application is
 rate-limited or unavailable, the PC administrator can configure

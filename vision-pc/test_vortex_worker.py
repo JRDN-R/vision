@@ -164,6 +164,88 @@ class VortexAdapterTests(unittest.TestCase):
         self.assertFalse(captured['usenetrc'])
         self.assertFalse(captured['allow_unplayable_formats'])
 
+    def test_real_search_processing_keeps_long_live_results_and_adds_music(self):
+        targets = []
+        # Keep yt-dlp's real flat-playlist processing and match-filter calls.
+        # Only replace the remote extractor response.
+        def extract(ydl, value, download=False, **unused):
+            targets.append(value)
+            music = value.startswith('https://music.youtube.com/search?')
+            entries = [dict(_type='url', ie_key='Youtube', id='abcdefghij1' if music else 'abcdefghij2',
+                            url='https://www.youtube.com/watch?v=abcdefghij1' if music else 'https://www.youtube.com/watch?v=abcdefghij2',
+                            title='Music match' if music else 'Eight hour result', duration=180 if music else 28800),
+                       dict(_type='url', ie_key='Youtube', id='abcdefghij3',
+                            url='https://www.youtube.com/watch?v=abcdefghij3', title='Live result', is_live=True)]
+            return ydl.process_ie_result(dict(_type='playlist', id='search', title='Search', entries=entries,
+                                              extractor='youtube:search', extractor_key='YoutubeSearch', webpage_url=value), download=False)
+        with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            result = worker.run_ytdlp(self.request(input='evening music', kind='inspect'))
+        self.assertEqual(result['results'][0]['duration'], 28800)
+        self.assertEqual(result['results'][1]['source'], 'YouTube Music')
+        self.assertEqual(result['results'][1]['mediaType'], 'audio')
+        self.assertEqual(result['results'][1]['url'], 'https://music.youtube.com/watch?v=abcdefghij1')
+        self.assertTrue(any(item['title'] == 'Live result' for item in result['results']))
+        self.assertEqual(len(targets), 2)
+        self.assertIn('#songs', targets[1])
+
+    def test_search_survives_one_provider_failure(self):
+        def extract(_ydl, value, download=False):
+            if value.startswith('ytsearch'):
+                raise yt_dlp.utils.DownloadError('HTTP Error 429')
+            return {'entries': [dict(id='abcdefghij1', title='Available song', _type='url',
+                                     url='https://www.youtube.com/watch?v=abcdefghij1')]}
+        with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            result = worker.run_ytdlp(self.request(input='evening music', kind='inspect'))
+        self.assertEqual(result['results'][0]['source'], 'YouTube Music')
+
+    def test_selected_long_media_still_obeys_duration_limit(self):
+        with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info',
+                return_value=dict(id='long', title='Long video', duration=28800)):
+            with self.assertRaisesRegex(worker.WorkerError, 'two-hour'):
+                worker.run_ytdlp(self.request(kind='inspect'))
+
+    def test_youtube_music_selection_preserves_music_url_and_best_audio(self):
+        info = dict(self.audio(256), id='abcdefghij1', title='Song', duration=180,
+                    webpage_url='https://www.youtube.com/watch?v=abcdefghij1')
+        captured = {}
+        def extract(ydl, value, download=False):
+            captured.update(ydl.params)
+            return info
+        value = 'https://music.youtube.com/watch?v=abcdefghij1'
+        with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            result = worker.run_ytdlp(self.request(input=value, kind='inspect', quality='small'))
+        self.assertEqual(result['media']['source'], 'YouTube Music')
+        self.assertEqual(result['media']['url'], value)
+        self.assertEqual(result['media']['mediaType'], 'audio')
+        self.assertEqual(captured['format'], worker.format_selector('max', audio=True))
+
+    def test_instagram_reel_uses_video_engine_then_gallery_fallback(self):
+        value = 'https://www.instagram.com/reel/DeOrpiojEW2/?cplk=aXN3NHRmejExbW1l'
+        complete = {'complete': True, 'media': {'title': 'Reel'}}
+        with patch.object(worker, 'run_ytdlp', return_value=complete) as video, patch.object(worker, 'run_gallery') as gallery:
+            self.assertEqual(worker.run(self.request(input=value)), complete)
+            self.assertEqual(video.call_args.args[0]['input'], 'https://www.instagram.com/reel/DeOrpiojEW2/')
+            gallery.assert_not_called()
+        with patch.object(worker, 'run_ytdlp', side_effect=worker.SourceError('Provider lookup failed')), \
+                patch.object(worker, 'run_gallery', return_value=complete) as gallery:
+            self.assertEqual(worker.run(self.request(input=value)), complete)
+            gallery.assert_called_once()
+        with patch.object(worker, 'run_ytdlp', side_effect=worker.WorkerError('File exceeds size limit')), \
+                patch.object(worker, 'run_gallery') as gallery:
+            with self.assertRaisesRegex(worker.WorkerError, 'size limit'):
+                worker.run(self.request(input=value))
+            gallery.assert_not_called()
+
+    def test_provider_errors_are_specific_without_exposing_signed_urls(self):
+        value = 'https://www.instagram.com/reel/DeOrpiojEW2/'
+        for detail, expected in [('Login required https://cdn.example/video?secret=private', 'signed-in session'),
+                                 ('HTTP Error 429 secret=private', 'limiting requests'),
+                                 ('connection timed out secret=private', 'could not be reached')]:
+            message = worker.source_error_message(value, RuntimeError(detail))
+            self.assertIn(expected, message)
+            self.assertNotIn('private', message)
+            self.assertIn('Instagram', message)
+
     def test_gallery_packaging_uses_safe_flat_names_and_size_limits(self):
         class FakeResponse:
             headers = {'Content-Length': '3'}

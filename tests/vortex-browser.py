@@ -49,6 +49,9 @@ class Fixture:
         self.unexpected = []
         self.held = None
         self.hold_list = False
+        self.profile_version = 'saved-vision-avatar'
+        self.hold_avatar = False
+        self.held_avatar = None
         self.serial = 0
 
     def new_job(self, uid='alice', **fields):
@@ -72,6 +75,24 @@ class Fixture:
     def route(self, route):
         request = route.request
         url = urlparse(request.url)
+        if request.url.startswith(BACKEND + '/api/venture/profile'):
+            if request.method == 'OPTIONS':
+                self.respond(route, {})
+                return
+            token = request.headers.get('authorization', '')
+            uid = token.removeprefix('Bearer fixture-')
+            self.calls.append(dict(path=url.path, method=request.method, uid=uid, token=token, body={}))
+            if uid not in self.jobs:
+                self.respond(route, {'error':'Unauthorized'}, 401)
+            elif url.path.endswith('/avatar'):
+                if self.hold_avatar:
+                    self.hold_avatar = False
+                    self.held_avatar = route
+                else:
+                    route.fulfill(body=(ROOT/'vortex_character.png').read_bytes(), content_type='image/png', headers={'Access-Control-Allow-Origin':'*'})
+            else:
+                self.respond(route, dict(hasAvatar=uid=='alice', avatarVersion=self.profile_version if uid=='alice' else None))
+            return
         if request.url.startswith(BACKEND + '/api/vortex/'):
             if request.method == 'OPTIONS':
                 self.respond(route, {})
@@ -153,6 +174,15 @@ def submitted(page):
     page.wait_for_function('!document.querySelector("#sourceSubmit").disabled')
 
 
+def next_job(page, api, previous):
+    deadline = time.monotonic() + 7
+    while api.jobs['alice'][0]['id'] == previous and time.monotonic() < deadline:
+        page.wait_for_timeout(20)
+    assert api.jobs['alice'][0]['id'] != previous, 'New media request was not submitted'
+    submitted(page)
+    return api.jobs['alice'][0]
+
+
 def no_overflow(page):
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), 'Horizontal page overflow'
 
@@ -185,6 +215,8 @@ def run():
             page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
             assert page.evaluate('__persistence') == 'LOCAL'
             assert page.evaluate('__providerOptions.prompt') == 'select_account'
+            page.wait_for_function("document.querySelector('#profileImage').src.startsWith('blob:') && document.querySelector('#profileImage').naturalWidth > 0")
+            assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
             assert page.locator('.brand img').get_attribute('src') == '../vortex_character.png'
@@ -223,11 +255,38 @@ def run():
             assert page.locator('#processing').is_hidden()
             page.locator('input[name=quality][value=max]').check()
             assert page.locator('input[name=quality][value=max]+span').evaluate('el=>getComputedStyle(el).backgroundColor') == 'rgb(209, 186, 162)'
-            submitted(page)
-            quality_inspect = api.jobs['alice'][0]
+            page.wait_for_function("document.querySelector('#selection').getAttribute('aria-busy')==='true'")
+            quality_inspect = next_job(page, api, inspected['id'])
             assert quality_inspect['kind'] == 'inspect' and quality_inspect['quality'] == 'max'
+            assert page.locator('#selection').is_visible(), 'Changing quality hid selected media'
+            assert '3840 × 2160' in page.locator('#mediaInfo').inner_text()
+            assert page.locator('#processing').is_hidden(), 'Background quality lookup exposed the full processing display'
+            assert page.locator('#downloadButton').is_disabled()
             quality_inspect.update(status='complete', phase='Media ready', progress=None, media=VIDEO, results=[VIDEO])
             refresh(page)
+            assert page.locator('#selection').get_attribute('aria-busy') is None
+
+            # Failed refreshes retain the prior metadata and selected quality.
+            page.locator('input[name=quality][value=small]').check()
+            failed_quality = next_job(page, api, quality_inspect['id'])
+            failed_quality.update(status='error', error='Fixture provider temporarily unavailable')
+            refresh(page)
+            assert page.locator('#selection').is_visible()
+            assert page.locator('input[name=quality][value=max]').is_checked()
+            assert '3840 × 2160' in page.locator('#mediaInfo').inner_text()
+
+            # Rapid quality changes cancel superseded lookups; only the latest applies.
+            page.locator('input[name=quality][value=small]').check()
+            superseded = next_job(page, api, failed_quality['id'])
+            page.locator('input[name=quality][value=balanced]').check()
+            page.locator('input[name=quality][value=max]').check()
+            latest_quality = next_job(page, api, superseded['id'])
+            assert superseded['status'] == 'cancelled'
+            assert latest_quality['quality'] == 'max'
+            latest_quality.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
+            refresh(page)
+            assert page.locator('input[name=quality][value=max]').is_checked()
+            assert page.locator('#selection').is_visible()
             page.locator('#downloadButton').click()
             page.locator('#activityList .activity-item').wait_for()
             downloaded = api.jobs['alice'][0]
@@ -373,6 +432,15 @@ def run():
                 assert page.locator('#activityList .activity-item').count() == expected, 'Refresh collapsed loaded history'
 
             # An in-flight Alice history result must not reappear after switching to Bob.
+            # The same boundary must protect a delayed private Vision avatar.
+            api.profile_version = 'changed-avatar'
+            api.hold_avatar = True
+            page.locator('#profileButton').click()
+            deadline = time.monotonic() + 7
+            while api.held_avatar is None and time.monotonic() < deadline:
+                page.wait_for_timeout(20)
+            assert api.held_avatar is not None
+            page.locator('#accountDialog .close-dialog').click()
             api.hold_list = True
             # A scheduled refresh may consume the held request and disable the
             # button first. Dispatch without waiting for actionability: either
@@ -384,11 +452,17 @@ def run():
             assert api.held is not None
             page.evaluate("__switchUser('bob')")
             api.release()
+            try:
+                api.held_avatar.fulfill(body=(ROOT/'vortex_character.png').read_bytes(), content_type='image/png', headers={'Access-Control-Allow-Origin':'*'})
+            except Exception:
+                pass  # The old identity's request was aborted.
             page.wait_for_timeout(150)
             assert page.locator('#activityList .activity-item').count() == 0
             assert page.locator('#selection').is_hidden() and page.locator('#searchResults').is_hidden()
             assert page.locator('#sourceInput').input_value() == ''
             assert page.locator('#accountEmail').inner_text() == 'bob@example.test'
+            assert page.locator('#profileImage').is_hidden(), 'Alice profile image leaked into Bob account'
+            assert page.locator('#profileImage').get_attribute('src') is None
             assert not page.locator('#notice').inner_text(), 'Old-account errors leaked into new account'
             page.locator('#profileButton').click()
             page.locator('#accountSignOut').click()
