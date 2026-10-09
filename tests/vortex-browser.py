@@ -476,8 +476,21 @@ def run():
             # Menu traps focus, shares links, closes with Escape, and respects motion settings.
             page.locator('#menuButton').click()
             page.wait_for_timeout(350)
-            assert page.locator('#navigation a').all_text_contents() == ['Vision', 'Venture', 'Vortex']
-            assert page.locator('#navigation a').nth(1).get_attribute('href') == '../?view=venture'
+            assert page.locator('#navigation nav a').all_text_contents() == ['Vision', 'Venture']
+            assert page.locator('#navigation nav a').nth(0).get_attribute('href') == '../?view=vision'
+            assert page.locator('#navigation nav a').nth(1).get_attribute('href') == '../?view=venture'
+            assert page.locator('#navigation nav svg').count() == 0, 'App links should be text-only'
+            assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
+            assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
+            assert page.locator('#navigation .nav-brand-head img').get_attribute('src') == '../vortex_character.png'
+            head = page.locator('#navigation .nav-brand-head')
+            bounds = head.bounding_box()
+            assert bounds['width'] == 33 and bounds['height'] == 45, bounds
+            assert head.evaluate("el=>getComputedStyle(el).animationName") == 'vortex-head-enter'
+            font = page.locator('#navigation .nav-brand-name').evaluate(
+                "el=>({family:getComputedStyle(el).fontFamily,size:getComputedStyle(el).fontSize,color:getComputedStyle(el).color})")
+            assert 'Lilita One' in font['family'] and font['size'] == '30px', font
+            assert font['color'] == page.locator('.brand span').evaluate('el=>getComputedStyle(el).color')
             assert page.locator('#mainContent').evaluate('el=>el.inert')
             no_overflow(page)
             page.screenshot(path=str(SHOTS/f'vortex-menu-{width}.png'), full_page=True)
@@ -491,6 +504,7 @@ def run():
             assert page.locator('#progressFill').evaluate('el=>getComputedStyle(el).animationName') == 'none'
             assert page.locator('.brand').evaluate("el=>getComputedStyle(el,'::after').animationName") == 'none'
             page.locator('#menuButton').click()
+            assert head.evaluate("el=>getComputedStyle(el).animationName") == 'none'
             page.keyboard.press('Escape')
 
             # Download history remains reachable beyond the first 100 records.
