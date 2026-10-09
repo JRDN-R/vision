@@ -57,6 +57,9 @@ jobs:
       - name: Validate optional service configuration (Linux)
         if: runner.os == 'Linux'
         run: docker compose -f vision-pc/vortex-services.compose.yml config --quiet
+      - name: Run isolated proxy without Windows host mounts (Linux)
+        if: runner.os == 'Linux'
+        run: python tests/test_vortex_service_image.py -v
       - name: Check isolated specialist dependencies
         if: runner.os == 'Windows'
         shell: pwsh

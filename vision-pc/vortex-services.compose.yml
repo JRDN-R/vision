@@ -56,7 +56,9 @@ services:
     logging:
       driver: none
   egress:
-    image: python:3.13-slim
+    build:
+      context: .
+      dockerfile: vortex-egress.Dockerfile
     init: true
     restart: unless-stopped
     read_only: true
@@ -68,11 +70,12 @@ services:
     pids_limit: 32
     networks: [engines, public]
     working_dir: /app
-    volumes:
-      - ./vortex_egress.py:/app/vortex_egress.py:ro
-      - ./vortex_network.py:/app/vortex_network.py:ro
-      - ./vortex_urls.py:/app/vortex_urls.py:ro
     command: ['python', '-B', 'vortex_egress.py']
+    healthcheck:
+      test: ['CMD', 'python', '-B', '-c', "import socket; socket.create_connection(('127.0.0.1',8080),3).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
     logging:
       driver: none
 networks:

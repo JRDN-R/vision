@@ -219,6 +219,14 @@ restarts it. A Docker health check reports an unhealthy process; request workers
 exclude it until the service recovers. Failed activation brings back the previous
 Compose configuration when one exists.
 
+The egress proxy's three public Python modules are copied into its image during
+the elevated build, with explicit read permissions for the unprivileged container
+user. No runtime Windows bind mounts or changes to Vision's directory permissions
+are needed. This avoids Docker Desktop's `CreateFile ... vortex_network.py: Access
+is denied` error when its normal user cannot read the administrator-only service
+folder. After this error, rerun the corrected installer; the existing native
+engines remain available and previously downloaded Docker layers can be reused.
+
 Cobalt shares a dedicated network namespace with a small firewall container.
 The namespace is attached only to a Docker **internal** network. Its IPv4/IPv6
 OUTPUT policy permits loopback, established replies and the exact egress proxy

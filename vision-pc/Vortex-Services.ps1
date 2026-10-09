@@ -21,7 +21,7 @@ function Install-VortexServices {
     Set-PrivateDirectory $ServiceDirectory
     $SourceBase = "https://raw.githubusercontent.com/JRDN-R/vision/$SourceRef/vision-pc"
     foreach ($File in $ProcessorFiles) { Get-Download "$SourceBase/$File" (Join-Path $StageDirectory $File) }
-    foreach ($File in @('vortex-services.compose.yml','vortex_egress.py','vortex_network.py','vortex_urls.py','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh')) {
+    foreach ($File in @('vortex-services.compose.yml','vortex_egress.py','vortex_network.py','vortex_urls.py','vortex-egress.Dockerfile','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh')) {
         Copy-Item -LiteralPath (Join-Path $StageDirectory $File) -Destination (Join-Path $ServiceDirectory $File)
     }
     $CobaltSource = Join-Path $ServiceDirectory 'cobalt'
