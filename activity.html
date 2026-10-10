@@ -257,10 +257,15 @@ function paintDirectory(){
   const uses=[person.projects?person.projects+' project'+(person.projects===1?'':'s'):'—',person.conversations?person.conversations+' chat'+(person.conversations===1?'':'s'):'—',person.vortex?person.vortex+' job'+(person.vortex===1?'':'s'):'—'];
   const usage=accountAdmin?.available?uses.join(' / '):(person.apps||[]).map(a=>a.app==='vortex'?'Vortex':'Vision').join(', ')||'Not recorded';
   const action=node('td'),remove=node('button','account-delete',person.deleteStatus?'Resume removal':'Delete');
-  remove.type='button';remove.disabled=DEMO||!accountAdmin?.available||!person.canDelete||!person.email||deleteBusy;
-  remove.title=person.canDelete?'Permanently delete this user and all stored account data.':'Administrator accounts cannot be removed from here.';
+  // Only the full Firebase directory supplies verified deletion permissions.
+  // Observed activity records have no canDelete field and are not administrators by default.
+  const directoryAvailable=accountAdmin?.available===true;
+  const isProtected=directoryAvailable&&person.canDelete===false;
+  const canDelete=directoryAvailable&&person.canDelete===true;
+  remove.type='button';remove.disabled=DEMO||!canDelete||!person.email||deleteBusy;
+  remove.title=!directoryAvailable?'Account deletion requires Firebase Admin on the PC.':isProtected?'Administrator accounts cannot be removed from here.':canDelete?'Permanently delete this user and all stored account data.':'Deletion permission is unavailable for this account.';
   remove.addEventListener('click',()=>openDeleteAccount(person));action.append(remove);
-  if(!person.canDelete)action.append(node('small','', 'Protected administrator'));
+  if(isProtected)action.append(node('small','', 'Protected administrator'));
   if(person.deleteStatus)action.append(node('small','', 'Deletion incomplete; retry'));
   row.append(firstCell,node('td','',lastName),emailCell,node('td','',providerLabel(person.provider)),node('td','',usage),node('td','',number.format(person.signIns||0)),action);
   body.append(row);
