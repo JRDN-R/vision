@@ -194,6 +194,7 @@ class ActivityTests(unittest.TestCase):
         (self.root/'config.json').write_text(json.dumps(config))
         stage=self.root/'stage';stage.mkdir()
         (stage/'activity_dashboard.py').write_text((ROOT/'vision-pc/activity_dashboard.py').read_text())
+        (stage/'account_administration.py').write_text((ROOT/'vision-pc/account_administration.py').read_text())
         with patch('builtins.input',return_value='YES'):
             setup.prepare(self.root,stage,'one@example.test')
         self.assertEqual((self.root/'server.py').read_bytes(),raw)
