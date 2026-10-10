@@ -1,9 +1,9 @@
 {
-  "title": "Vortex thumbnails and media formats",
+  "title": "Live Venture API balance",
   "items": [
-    "YouTube search results show thumbnails and load more videos and songs as you scroll.",
-    "Open a selected or recent item's thumbnail to visit its original source.",
-    "Choose MP4 or MOV video, or extract audio as M4A, MP3 or WAV. New media exports no longer use MKV or WebM.",
-    "Run the Windows processor Update action on FUPCJ Server to activate search pagination and media conversion."
+    "The API balance now shows a precise remaining percentage and refreshes every second while open.",
+    "Live input and output estimates reconcile with reported model usage, caching, reasoning and tool costs.",
+    "Terra and the other built-in models now have verified prices in the funding catalog.",
+    "Update FUPCJ Server, then refresh Vision. If the previous meter missed charges, set your current balance once after active work finishes."
   ]
 }

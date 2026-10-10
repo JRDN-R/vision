@@ -545,4 +545,4 @@ class Venture:
                 if not kid:raise self.Error('Save your API key before calibrating its funding estimate.')
                 if body.get('connectionId',kid)!=kid:raise self.Error('Your API connection changed. Check its balance before saving.',409)
                 return jsonify(self.funding.calibrate(uid,kid,body))
-            return jsonify(self.funding.status(uid,kid))
+            return jsonify(self.funding.status(uid,kid,request.args.get('model', '')[:100]))
