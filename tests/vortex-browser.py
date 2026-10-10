@@ -484,7 +484,8 @@ def verify_login_gateway(browser):
         sign_in(page, method)
         assert page.locator('#authGate').is_hidden()
         assert not api.vision_calls, 'Vortex login opened Vision projects or preferences'
-        assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
+        assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+        assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
 
         # Returning to Vortex with a saved identity needs no login or gateway.
         visits = []
@@ -589,8 +590,9 @@ def run():
             sign_in(page)
             page.locator('#application').wait_for(state='visible')
             page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
-            assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
-            assert page.evaluate("JSON.parse(localStorage.getItem('__fixtureProvider')).prompt") == 'select_account'
+            assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+            assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
+            assert page.evaluate("localStorage.getItem('__fixtureProvider')") is None  # No forced account picker
             page.wait_for_function("document.querySelector('#profileImage').src.startsWith('blob:') && document.querySelector('#profileImage').naturalWidth > 0")
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
