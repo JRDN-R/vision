@@ -28,7 +28,7 @@
 .scope-toolbar{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;margin-bottom:22px}.scope-toolbar label{font-size:11px;color:var(--muted)}.scope-toolbar select{margin-left:8px;max-width:280px;font-size:12px}.scope-toolbar .subtle{font-size:11px}
 .module-panel{min-width:0;padding-bottom:24px}.module-intro{margin:0 0 20px}.module-intro h2{font-size:22px;font-weight:550;letter-spacing:-.5px;margin:0 0 5px}.module-intro p{margin:0;font-size:12px;color:var(--muted)}
 .overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.overview-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:23px;text-align:left;min-height:156px}.overview-card:hover{background:var(--panel2);border-color:#526545}.overview-card strong{display:block;font:27px var(--mono);margin:12px 0 6px;color:var(--text)}.overview-card span{color:var(--accent);font-size:13px}.overview-card small{display:block;color:var(--muted);font-size:11px}.overview-card[data-open-module=vortex] span{color:#cfb8ef}
-.module-note{font-size:11px;color:var(--muted);margin:18px 0 0}.module-panel .workspace.single{grid-template-columns:minmax(0,1fr)}.account-table{max-height:360px}.account-table td{white-space:normal!important;font-family:var(--sans)!important}.account-pick{border:0;background:none;color:var(--accent);padding:0;text-align:left;cursor:pointer;font:inherit}.directory-search{max-width:240px}.directory{margin-bottom:20px}.vortex-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.vortex-jobs{max-height:660px;overflow:auto}.job-state{color:var(--accent)}.job-state.error{color:var(--danger)}
+.module-note{font-size:11px;color:var(--muted);margin:18px 0 0}.module-panel .workspace.single{grid-template-columns:minmax(0,1fr)}.account-table{max-height:360px}.account-table td{white-space:normal!important;font-family:var(--sans)!important}.account-pick{border:0;background:none;color:var(--accent);padding:0;text-align:left;cursor:pointer;font:inherit}.directory-search{max-width:240px}.directory{margin-bottom:20px}.remove-account{background:transparent;border:1px solid #70483f;border-radius:7px;color:#ffaaa1;padding:7px 10px;min-height:34px;cursor:pointer;white-space:nowrap}.remove-account:hover{background:#432824}.remove-account[disabled]{opacity:.4;cursor:not-allowed}.remove-dialog{width:min(460px,calc(100vw - 28px));max-height:calc(100vh - 28px);padding:26px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:15px;box-shadow:0 20px 70px #000b}.remove-dialog::backdrop{background:#000c}.remove-dialog h2{margin:0 0 9px;font-size:20px}.remove-dialog p{font-size:12px;line-height:1.6;color:var(--muted)}.remove-dialog label{display:block;margin:17px 0;font-size:12px}.remove-dialog label input{display:block;width:100%;margin-top:6px;padding:10px;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:7px}.remove-dialog .delete-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:22px}.remove-dialog button{padding:10px 13px;border-radius:7px;min-height:40px}.remove-dialog .delete-final{background:#8a3127;border:1px solid #b94a3c;color:white}.remove-dialog .delete-final[disabled]{opacity:.45}.remove-dialog .delete-warning{color:#ffaea5}.remove-dialog .delete-stats{font:11px/1.6 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:12px;white-space:pre-wrap}.remove-dialog .delete-message{min-height:20px;margin-top:12px}.vortex-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.vortex-jobs{max-height:660px;overflow:auto}.job-state{color:var(--accent)}.job-state.error{color:var(--danger)}
 @media(max-width:680px){.module-tabs{margin-left:-2px;margin-right:-2px}.module-tab{flex:0 0 auto;min-width:105px;min-height:44px}.scope-toolbar{gap:10px}.scope-toolbar select{max-width:205px}.overview-grid{gap:10px}.overview-card{padding:17px;min-height:152px}.overview-card strong{font-size:23px}.vortex-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.vortex-summary>div:nth-child(3){border-left:0;border-top:1px solid var(--line)}.vortex-summary>div:nth-child(4){border-top:1px solid var(--line)}.module-intro h2{font-size:20px}.account-table{max-height:300px}}
 </style>
 </head>
@@ -65,12 +65,22 @@
 <div class="module-intro"><h2>Vortex</h2><p>Media jobs, download availability, and retained history.</p></div><div id="vortexNotice" class="banner" role="status" hidden></div>
 <section class="feed-panel"><div class="gemini-summary vortex-summary"><div><strong id="vortexJobTotal">—</strong><span>Retained jobs</span></div><div><strong id="vortexActiveTotal">—</strong><span>Queued / processing</span></div><div><strong id="vortexReadyTotal">—</strong><span>Ready downloads</span></div><div><strong id="vortexBytesTotal">—</strong><span>Ready file size</span></div></div>
 <div class="gemini-heading"><h2>Recent jobs</h2><p id="vortexScope">All accounts · newest first</p></div><div id="vortexJobs" class="vortex-jobs"></div><div class="feed-footer"><div id="vortexCount" class="foot-count">Loading Vortex…</div><button id="vortexLoadMore" class="ghost" hidden>Load older</button></div><div class="gemini-foot"><p>Files are available for five days. Ready means the server prepared the file; it does not confirm a save on someone’s device. Removed jobs are excluded.</p></div></section></section>
-<section id="loginsPanel" class="module-panel" role="tabpanel" aria-labelledby="tab-logins" hidden><div class="module-intro"><h2>Logins &amp; accounts</h2><p>Google and email/password accounts share this directory, including Vortex users.</p></div><section class="feed-panel directory"><div class="gemini-heading"><div class="gemini-toolbar"><h2>Account directory</h2><input id="accountSearch" class="directory-search" type="search" placeholder="Find a name or email…" aria-label="Search accounts" autocomplete="off"></div><p>Method is the last verified sign-in provider. Older records may not include it.</p></div><div class="gemini-body"><div id="accountDirectory" class="gemini-table-wrap account-table"></div></div></section></section>
+<section id="loginsPanel" class="module-panel" role="tabpanel" aria-labelledby="tab-logins" hidden><div class="module-intro"><h2>Logins &amp; accounts</h2><p>View first and last names, sign-in methods, and Vision, Venture, and Vortex accounts. Remove an account and its saved data using owner-only controls.</p></div><section class="feed-panel directory"><div class="gemini-heading"><div class="gemini-toolbar"><h2>Account directory</h2><input id="accountSearch" class="directory-search" type="search" placeholder="Find a name or email…" aria-label="Search accounts" autocomplete="off"></div><p>Names come from verified account profiles. Unprovided names display as unavailable. Removal is permanent and requires a separate PC administrator credential.</p></div><div class="gemini-body"><div id="accountDirectory" class="gemini-table-wrap account-table"></div></div></section></section>
 <section id="transcriptionsPanel" class="module-panel" role="tabpanel" aria-labelledby="tab-transcriptions" hidden><div class="module-intro"><h2>Transcriptions</h2><p>Local and Gemini transcription submissions and results. Open Gemini for API tokens, costs, and individual requests.</p></div></section>
 <section id="activityPanel" class="module-panel" role="tabpanel" aria-labelledby="tab-activity" hidden><div class="workspace" id="activityWorkspace"><aside class="people"><div class="section-head"><h2>People</h2><span class="count" id="peopleCount"></span></div><label class="sr" for="peopleSearch">Find a person by name or email</label><input id="peopleSearch" type="search" placeholder="Find a person…" autocomplete="off"><nav class="person-list" id="peopleList" aria-label="Filter activity by person"></nav><p class="side-note">Names up front. Separate accounts stay separate, even when the names match.<br><br>Last seen means the PC observed a request, not that the person is online now.</p></aside>
 <section class="feed-panel" aria-label="Event timeline"><div class="feed-header"><div class="feed-topline"><h2 id="feedTitle">Everyone’s activity</h2></div><div class="feed-sub" id="feedSubtitle">Latest retained records, newest first.</div><div class="filters" role="group" aria-label="Filter loaded events"><button class="filter" data-filter="all" aria-pressed="true">All activity</button><button class="filter" data-filter="signin" aria-pressed="false">Sign-ins</button><button class="filter" data-filter="work" aria-pressed="false">Work</button><button class="filter" data-filter="issues" aria-pressed="false">Issues</button></div></div><div id="moduleNotice" class="gemini-body subtle" hidden></div><div class="profile" id="profile" hidden></div><div id="events"></div><div class="feed-footer"><div class="foot-count" id="eventCount">Loading activity…</div><button class="ghost" id="loadMore" hidden>Load older</button></div></section></div>
 </section>
 </main>
+<dialog id="removeAccountDialog" class="remove-dialog" aria-labelledby="removeAccountTitle" aria-describedby="removeAccountWarning">
+<h2 id="removeAccountTitle">Remove account</h2>
+<p id="removeAccountWarning" class="delete-warning">This permanently deletes the account, its Vision projects, Venture conversations, Vortex jobs, saved files, and associated local account data. This cannot be undone.</p>
+<p id="removeAccountIdentity"></p>
+<div class="delete-stats" id="removeAccountStats">Checking account and saved data…</div>
+<label>Enter the exact account email<input id="removeAccountEmail" type="email" autocomplete="off" spellcheck="false" placeholder="account@example.com"></label>
+<label>Type DELETE to confirm<input id="removeAccountPhrase" autocomplete="off" spellcheck="false" placeholder="DELETE"></label>
+<p id="removeAccountMessage" class="delete-message" role="status" aria-live="polite"></p>
+<div class="delete-actions"><button type="button" class="ghost" id="removeAccountCancel">Cancel</button><button type="button" class="delete-final" id="removeAccountConfirm" disabled>Delete account and data</button></div>
+</dialog>
 <footer class="bottom"><span>Usage metadata only. No prompts, file contents, passwords, or API keys.</span><span id="timezone"></span></footer>
 <div class="sr" id="announcer" role="status" aria-live="polite"></div>
 </div>
@@ -95,7 +105,7 @@ const TITLES={google_sign_in:'Account sign-in recorded',account_sign_in:'Account
 function title(event){if(['google_sign_in','account_sign_in'].includes(event.kind)&&['google','password'].includes(event.details?.authProvider))return providerLabel(event.details.authProvider)+' sign-in recorded';let text=TITLES[event.kind]||event.kind.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());const d=event.details||{};if(event.kind==='processing_finished'){const source=({youtube:'YouTube',transcription:'Audio',video:'Video',sound:'Sound'})[d.jobType]||'Media';text=source+' processing '+(issue(event)?'failed':d.outcome==='complete'||d.outcome==='completed'?'finished':d.outcome==='cancelled'?'cancelled':'ended');}else if(issue(event)){const names={project_saved:'Project save',project_claimed:'Project link',audio_submitted:'Audio submission',video_uploaded:'Video upload',run_submitted:'AI run submission',youtube_submitted:'YouTube submission',api_key_saved:'API key save',api_key_removed:'API key removal'};text=names[event.kind]?names[event.kind]+' rejected':text.replace(/finished$/,'ended with an issue');if(text===TITLES[event.kind]&&!text.includes('issue'))text+=' · needs attention';}return text;}
 function explanation(event){const d=event.details||{};if(isLogin(event))return 'The PC observed this verified account session or first Vortex visit. This is an observation time, not necessarily the exact time the person signed in. Sign-in methods were not recorded by older PC versions.';if(issue(event))return 'This action was rejected or ended with an issue. The original usage log records its result and timing, but does not include the content or a detailed error message.';if(event.kind.includes('submitted'))return 'Vision accepted this processing request. Submission does not mean processing has finished; a later completion event may appear separately.';if(event.kind==='api_key_saved'||event.kind==='api_key_removed')return 'Only the account-setting change was logged. The API key itself is never included in this activity view.';if(event.kind.includes('finished'))return 'The processing attempt ended with the recorded result below. Elapsed time is wall-clock duration, not CPU utilization.';if(event.kind==='project_saved')return 'Vision recorded a project-save request. This activity view does not read the project’s title, files, prompts, or contents.';return 'This is a server-recorded activity event. The details below contain usage metadata only; request and file contents are not recorded.';}
 function status(state,text){$('connection').dataset.state=state;$('statusText').textContent=text;$('syncNote').textContent=DEMO?'Not live':lastSync?'Updated '+clock.format(new Date(lastSync)):'Owner access only';}
-function clearPrivate(){clearGemini();clearModules();snapshot=null;selected='';version='';limit=100;lastSync=0;expanded.clear();$('dashboard').hidden=true;$('peopleList').replaceChildren();$('events').replaceChildren();$('profile').replaceChildren();$('peopleSearch').value='';for(const id of ['totalPeople','totalEvents','totalSignIns'])$(id).textContent='0';$('notice').hidden=true;$('feedTitle').textContent='Everyone’s activity';$('feedSubtitle').textContent='Latest retained records, newest first.';}
+function clearPrivate(){closeRemoval();clearGemini();clearModules();snapshot=null;selected='';version='';limit=100;lastSync=0;expanded.clear();$('dashboard').hidden=true;$('peopleList').replaceChildren();$('events').replaceChildren();$('profile').replaceChildren();$('peopleSearch').value='';for(const id of ['totalPeople','totalEvents','totalSignIns'])$(id).textContent='0';$('notice').hidden=true;$('feedTitle').textContent='Everyone’s activity';$('feedSubtitle').textContent='Latest retained records, newest first.';}
 function personButton(person){const all=!person,el=node('button','person');el.type='button';el.setAttribute('aria-pressed',String(selected===(person?.id||'')));const avatar=node('span','avatar',all?'◈':first(person).slice(0,2).toUpperCase()),copy=node('span','person-copy');copy.append(node('strong','',all?'Everyone':first(person)),node('small','',all?'All accounts':person.email||person.name||'Account'));el.append(avatar,copy);if(person){el.title=(person.name||first(person))+' · '+person.email;el.append(node('span','person-time',age(Math.max(person.lastSeen||0,person.lastActivity||0))));}el.addEventListener('click',()=>selectPerson(person?.id||''));return el;}
 function paintPeople(){const list=$('peopleList'),q=$('peopleSearch').value.trim().toLocaleLowerCase();list.replaceChildren(personButton(null));const people=snapshot.users.filter(u=>[u.name,u.email].join(' ').toLocaleLowerCase().includes(q));people.forEach(u=>list.append(personButton(u)));if(!people.length)list.append(node('p','subtle','No matching people.'));$('peopleCount').textContent=number.format(snapshot.users.length)+' ACCOUNTS';}
 function dayTitle(seconds){const date=new Date(seconds*1000),today=new Date(),yesterday=new Date();yesterday.setDate(today.getDate()-1);if(date.toDateString()===today.toDateString())return 'Today';if(date.toDateString()===yesterday.toDateString())return 'Yesterday';return date.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:date.getFullYear()===today.getFullYear()?undefined:'numeric'});}
@@ -165,15 +175,103 @@ function paintOverview(){
  $('totalPeople').textContent=number.format(users.length);$('totalEvents').textContent=number.format(users.reduce((n,u)=>n+(u.eventCount||0),0));$('totalSignIns').textContent=number.format(users.reduce((n,u)=>n+(u.signIns||0),0));
  $('overviewNote').textContent=(selected?'Selected account':'All accounts')+' · Retained records, not lifetime totals. Sign-in sightings count distinct verified sessions.';
 }
+function accountNames(person){
+ const name=String(person.name||'').trim().replace(/\\s+/g,' ');
+ const divider=name.lastIndexOf(' ');
+ return {first:String(person.firstName||'').trim()||(divider<0?name:name.slice(0,divider)),
+         last:String(person.lastName||'').trim()||(divider<0?'':name.slice(divider+1))};
+}
 function paintDirectory(){
  const wrap=$('accountDirectory');wrap.replaceChildren();if(!snapshot)return;
- const q=$('accountSearch').value.trim().toLowerCase(),users=snapshot.users.filter(p=>(!selected||p.id===selected)&&[p.name,p.email].join(' ').toLowerCase().includes(q));
+ const q=$('accountSearch').value.trim().toLocaleLowerCase();
+ const users=snapshot.users.filter(p=>{
+  const names=accountNames(p);return(!selected||p.id===selected)&&[names.first,names.last,p.name,p.email].join(' ').toLocaleLowerCase().includes(q);
+ });
  if(!users.length){wrap.append(node('p','subtle','No accounts match this view.'));return;}
  const table=node('table','gemini-table'),head=node('thead'),tr=node('tr'),body=node('tbody');
- for(const label of ['Account','Sign-in method','Apps observed','Sessions','Last seen'])tr.append(node('th','',label));head.append(tr);table.append(head);
- for(const person of users){const row=node('tr'),name=node('td'),button=node('button','account-pick',person.name||person.email||'Unnamed account');button.type='button';button.addEventListener('click',()=>selectPerson(person.id));name.append(button);if(person.email)name.append(node('small','',person.email));const apps=(person.apps||[]).map(a=>a.app==='vortex'?'Vortex':'Vision').join(', ');row.append(name,node('td','',providerLabel(person.provider)),node('td','',apps||'Not recorded'),node('td','',number.format(person.signIns||0)),node('td','',stamp(person.lastSeen)));body.append(row);}
+ for(const label of ['First name','Last name','Email','Sign-in','Apps','Sessions','Last seen','Manage'])tr.append(node('th','',label));
+ head.append(tr);table.append(head);
+ for(const person of users){
+  const names=accountNames(person),row=node('tr'),firstCell=node('td'),pick=node('button','account-pick',names.first||'Not provided');
+  pick.type='button';pick.addEventListener('click',()=>selectPerson(person.id));firstCell.append(pick);
+  const apps=(person.apps||[]).map(a=>({vision:'Vision',vortex:'Vortex',venture:'Venture'})[a.app]).filter(Boolean).join(', ');
+  const action=node('td');
+  const remove=node('button','remove-account','Remove');remove.type='button';
+  remove.setAttribute('aria-label','Remove account '+(person.email||person.name||''));
+  remove.disabled=DEMO;remove.title=DEMO?'Unavailable in sample preview':'Delete account and all saved files';
+  remove.addEventListener('click',()=>void openRemoval(person));action.append(remove);
+  row.append(firstCell,node('td','',names.last||'Not provided'),node('td','',person.email||'—'),
+   node('td','',providerLabel(person.provider)),node('td','',apps||'Not recorded'),
+   node('td','',number.format(person.signIns||0)),node('td','',stamp(person.lastSeen)),action);
+  body.append(row);
+ }
  table.append(body);wrap.append(table);
 }
+let removalTarget=null,removalBusy=false,removalController=null,removalEpoch=0;
+function closeRemoval(){
+ removalController?.abort();removalController=null;removalTarget=null;removalBusy=false;removalEpoch++;
+ const dialog=$('removeAccountDialog');if(dialog?.open)dialog.close();
+ if($('removeAccountEmail'))$('removeAccountEmail').value='';
+ if($('removeAccountPhrase'))$('removeAccountPhrase').value='';
+ if($('removeAccountMessage'))$('removeAccountMessage').textContent='';
+}
+function paintRemovalButton(){
+ $('removeAccountConfirm').disabled=!removalTarget?.canDelete||removalBusy||
+  $('removeAccountEmail').value!==removalTarget.email||$('removeAccountPhrase').value!=='DELETE';
+ $('removeAccountCancel').disabled=removalBusy;
+}
+async function openRemoval(person){
+ if(DEMO||!user||removalBusy)return;
+ closeRemoval();const current=removalEpoch,authEpoch=epoch;
+ $('removeAccountTitle').textContent='Remove account';
+ $('removeAccountIdentity').textContent=(person.name||'Unnamed account')+' · '+(person.email||'No email');
+ $('removeAccountStats').textContent='Checking account and saved data…';
+ $('removeAccountMessage').textContent='';
+ $('removeAccountDialog').showModal();removalController=new AbortController();
+ try{
+  const result=await adminApi('/api/admin/accounts/'+encodeURIComponent(person.id),{signal:removalController.signal,forceToken:true});
+  if(current!==removalEpoch||authEpoch!==epoch||!$('removeAccountDialog').open)return;
+  removalTarget=result;
+  $('removeAccountStats').textContent='Vision projects: '+result.counts.projects+
+   '\\nVenture conversations: '+result.counts.ventureConversations+
+   '\\nVortex jobs/files: '+result.counts.vortexJobs+
+   '\\nVision imports: '+result.counts.visionImports;
+  if(result.hasActiveWork)$('removeAccountMessage').textContent='This account has active processing work. Finish or cancel it before deletion.';
+  else if(!result.adminConfigured)$('removeAccountMessage').textContent='Account removal requires Firebase Admin credentials configured on the Vision PC.';
+  else $('removeAccountMessage').textContent='Enter the email and DELETE to enable permanent removal.';
+  paintRemovalButton();
+ }catch(error){
+  if(current!==removalEpoch||authEpoch!==epoch)return;
+  $('removeAccountMessage').textContent=error.status===404?'Update the Vision PC to enable account removal.':error.message||'Cannot inspect this account.';
+  $('removeAccountStats').textContent='The account was not changed.';
+ }
+}
+async function confirmRemoval(){
+ if(!removalTarget||removalBusy||DEMO||!user)return;
+ const target=removalTarget;
+ if($('removeAccountEmail').value!==target.email||$('removeAccountPhrase').value!=='DELETE')return;
+ removalBusy=true;paintRemovalButton();
+ $('removeAccountMessage').textContent='Removing account and saved data…';
+ const authEpoch=epoch;const current=removalEpoch;
+ try{
+  const response=await adminApi('/api/admin/accounts/'+encodeURIComponent(target.id)+'/delete',{
+   method:'POST',body:{email:target.email,confirmation:'DELETE'},forceToken:true
+  });
+  if(authEpoch!==epoch||current!==removalEpoch)return;
+  if(!response.deleted)throw new Error('The PC did not confirm deletion.');
+  closeRemoval();selected='';limit=100;version='';geminiVersion='';vortexVersion='';
+  $('announcer').textContent='Account removed from Vision, Venture, and Vortex.';
+  void refresh(true);
+ }catch(error){
+  if(authEpoch!==epoch||current!==removalEpoch)return;
+  $('removeAccountMessage').textContent=error.message||'Removal is incomplete. Retry from this directory.';
+ }finally{if(current===removalEpoch){removalBusy=false;paintRemovalButton();}}
+}
+$('removeAccountCancel').addEventListener('click',closeRemoval);
+$('removeAccountEmail').addEventListener('input',paintRemovalButton);
+$('removeAccountPhrase').addEventListener('input',paintRemovalButton);
+$('removeAccountConfirm').addEventListener('click',()=>void confirmRemoval());
+$('removeAccountDialog').addEventListener('cancel',event=>{if(removalBusy)event.preventDefault();else closeRemoval();});
 function clearVortex(){vortexUnavailable=false;vortexSnapshot=null;vortexVersion='';vortexLimit=100;vortexExpanded.clear();$('vortexJobs').replaceChildren();$('vortexNotice').hidden=true;$('vortexCount').textContent='';$('vortexScope').textContent='';$('vortexLoadMore').hidden=true;for(const id of ['vortexJobTotal','vortexActiveTotal','vortexReadyTotal','vortexBytesTotal','overviewVortex'])$(id).textContent='—';}
 function clearModules(){clearVortex();$('accountDirectory').replaceChildren();$('personScope').replaceChildren(node('option','','Everyone'));$('accountSearch').value='';for(const id of ['overviewTranscriptions','overviewGemini','overviewLogins'])$(id).textContent='—';}
 function vortexPath(){const params=new URLSearchParams({limit:String(vortexLimit)});if(selected)params.set('user',selected);return '/api/admin/vortex?'+params;}
