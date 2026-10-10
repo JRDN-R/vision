@@ -6,6 +6,28 @@ Venture manifest identifies one owner, project and saved revision; it is **not**
 an offline project export. Ordinary Vision imports, exports and portable HTML do
 not require this index to stay editable.
 
+### Downloading RAG context
+
+Vision's main **Export** button offers **Download RAG (recommended)** and
+**Download ZIP**. RAG saves the latest board revision and uses the existing
+authenticated context status/search endpoints to download a readable `.rag.txt`
+snapshot for the project's main task. It does not require a new PC deployment
+when the context engine is already installed. ZIP opens the existing image and
+attachment export options.
+
+The RAG text includes retrieved instructions, evidence, source references and
+coverage limitations. Included text is readable offline, but source references
+do not grant another AI access to FUPCJ. Images, binary originals and the vector
+index are not embedded. File size depends on the evidence selected; this is not
+a lossless compression format or an editable project backup. If retrieval is
+incomplete, Vision displays its limitations before a second click downloads the
+available text. Choose ZIP when the task requires original files or images.
+
+Preparation is cancellable and tied to one account, project and saved revision.
+An account/project switch, new edit, mismatched response or unavailable index
+cannot silently produce a stale RAG download. No paid generation or embedding
+request is introduced by this export.
+
 The implementation combines exact/FTS5 matches, complete record groups, connected
 nodes and optional local semantic embeddings. Complete-enumeration requests expand
 the source set, and a context limit defers whole evidence units with explicit
