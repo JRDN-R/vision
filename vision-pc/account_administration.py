@@ -210,17 +210,35 @@ def _remove_local_files(app, uid, projects, vortex, media, result_paths):
             candidate.unlink()
 
 
-def _remove_context(context, uid):
-    if context is None:
-        return
-    with context.db() as db:
+def _remove_context(context, uid, data_dir):
+    """Purge the context index even when indexing is currently disabled."""
+    def purge(db):
         db.execute("BEGIN IMMEDIATE")
         tables = _tables(db)
-        if _count(db, tables, "context_jobs", "owner=? AND status='processing'", (uid,)):
+        if _count(db, tables, "context_jobs", "owner=? AND status='processing'", (uid,)) and context:
             raise RemovalError("Context indexing is still active. Retry after it finishes.", 409)
         for table in ("context_fts", "context_chunks", "context_sources", "context_generations",
                       "context_heads", "context_jobs", "context_cache", "context_vectors"):
             _delete(db, tables, table, "owner=?", (uid,))
+
+    if context:
+        with context.db() as db:
+            purge(db)
+        return
+    path = Path(data_dir) / "context" / "context.sqlite3"
+    if path.is_symlink():
+        raise RemovalError("The saved context index uses a symbolic link. Review this on the PC.", 409)
+    if not path.is_file():
+        return
+    db = sqlite3.connect(path, timeout=30)
+    try:
+        purge(db)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _purge_database(db, uid, projects, tables):
@@ -306,7 +324,8 @@ def register(app, connect_db, owner_access, forbidden, respond):
                         raise RemovalError("A previous processing job is still finishing. Retry removal shortly.", 409)
                     result_paths = [r[0] for r in db.execute("SELECT result_path FROM jobs WHERE uid=?", (uid,))] if "jobs" in tables else []
                     media = _media_directories(db, tables, projects)
-                _remove_context(getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None), uid)
+                _remove_context(getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None), uid,
+                                app.config["DATA_DIR"])
                 _remove_local_files(app, uid, projects, vortex, media, result_paths)
                 with connect_db() as db:
                     db.execute("BEGIN IMMEDIATE")
