@@ -104,8 +104,10 @@ class AccountAdminTests(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "private.txt").write_text("private", encoding="utf-8")
         self.app = Flask(__name__)
+        credentials_path = self.root / "firebase-admin.json"
+        credentials_path.write_text("test-credential-stub", encoding="utf-8")
         self.app.config.update(DATA_DIR=self.root, FIREBASE_IDENTITY=types.SimpleNamespace(project_id="demo-project"),
-                               FIREBASE_ADMIN_CREDENTIALS="configured", SESSIONS_CONTEXT=None)
+                               FIREBASE_ADMIN_CREDENTIALS=str(credentials_path), SESSIONS_CONTEXT=None)
         self.admin_allowed = True
 
         @self.app.before_request
