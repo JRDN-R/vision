@@ -7,6 +7,7 @@ cannot re-enter the PC (the ordinary token verifier does not check revocation).
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import re
@@ -202,14 +203,23 @@ class AccountAdministration:
                 return uid, clean(account.email), ''
         raise LookupError('This account no longer exists.')
 
+    @contextmanager
     def context_db(self):
         engine = self.sessions.context.engine
         if engine:
-            return engine.db()
+            with engine.db() as connection:
+                yield connection
+            return
         path = Path(self.app.config['DATA_DIR']) / 'context' / 'context.sqlite3'
         if not path.is_file() or path.is_symlink():
-            return None
-        return sqlite3.connect(path, timeout=30)
+            yield None
+            return
+        connection = sqlite3.connect(path, timeout=30)
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def active_work(self, uid, projects):
         with self.db() as db:
@@ -227,14 +237,11 @@ class AccountAdministration:
                     ('document_jobs', "project_id=? AND status IN ('queued','processing')")):
                     if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', (pid,)).fetchone():
                         return True
-        context = self.context_db()
-        if context:
-            try:
-                if context.execute("SELECT 1 FROM context_jobs WHERE owner=? AND status IN ('queued','processing') LIMIT 1",
-                                   (uid,)).fetchone():
-                    return True
-            finally:
-                context.close()
+        with self.context_db() as context:
+            if context and context.execute(
+                "SELECT 1 FROM context_jobs WHERE owner=? AND status IN ('queued','processing') LIMIT 1",
+                (uid,)).fetchone():
+                return True
         return False
 
     def owned(self, uid):
@@ -288,21 +295,14 @@ class AccountAdministration:
             remove_owned(audit.directory / audit._filename(uid))
 
     def erase_context(self, uid):
-        context = self.context_db()
-        if not context:
-            return
-        try:
+        with self.context_db() as context:
+            if not context:
+                return
             context.execute('BEGIN IMMEDIATE')
             context.execute('DELETE FROM context_fts WHERE rowid IN (SELECT id FROM context_chunks WHERE owner=?)', (uid,))
             for table in ('context_chunks','context_sources','context_cache','context_vectors',
                           'context_heads','context_generations','context_jobs'):
                 context.execute('DELETE FROM '+table+' WHERE owner=?', (uid,))
-            context.commit()
-        except Exception:
-            context.rollback()
-            raise
-        finally:
-            context.close()
 
     def erase_database(self, uid, projects):
         with self.db() as db:
