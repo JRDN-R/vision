@@ -60,7 +60,9 @@ def settings(root):
 def prepare(root, stage, email=''):
     _config, data = settings(root)
     module = stage / 'activity_dashboard.py'
+    accounts = stage / 'account_administration.py'
     compile(module.read_text(encoding='utf-8'), 'activity_dashboard.py', 'exec')
+    compile(accounts.read_text(encoding='utf-8'), 'account_administration.py', 'exec')
     db = sqlite3.connect((data / 'vision.sqlite3').as_uri() + '?mode=ro', uri=True)
     try:
         rows = db.execute('SELECT uid,name,email FROM audit_users ORDER BY name,email').fetchall()
@@ -92,9 +94,10 @@ def prepare(root, stage, email=''):
     backup.mkdir(exist_ok=True)
     (incoming / 'server.py').write_bytes(patch_server((root / 'server.py').read_bytes()))
     shutil.copy2(module, incoming / 'activity_dashboard.py')
+    shutil.copy2(accounts, incoming / 'account_administration.py')
     (incoming / 'activity-admins.json').write_text(json.dumps({'version': 1, 'uids': permitted}, indent=2) + '\n', encoding='utf-8')
     plan = []
-    for name, target in [('server.py', root / 'server.py'), ('activity_dashboard.py', root / 'activity_dashboard.py'), ('activity-admins.json', access)]:
+    for name, target in [('server.py', root / 'server.py'), ('activity_dashboard.py', root / 'activity_dashboard.py'), ('account_administration.py', root / 'account_administration.py'), ('activity-admins.json', access)]:
         old_hash = digest(target)
         if old_hash:
             shutil.copy2(target, backup / name)
