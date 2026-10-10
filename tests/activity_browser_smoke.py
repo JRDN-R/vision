@@ -22,7 +22,7 @@ gemini={'accessRequests':[{'userId':'b'*64,'provider':'password','apps':[{'app':
  'byUser':[{'userId':'a'*64,'provider':'google','apps':[{'app':'vision','lastSeen':now},{'app':'vortex','lastSeen':now}],'name':'Jordan Owner','email':'one@example.test','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}],
  'byDay':[{'day':'2026-10-04','requests':1,'inputTokens':214,'outputTokens':38,'thoughtTokens':0,'totalTokens':252,'estimatedCost':.00042,'unpricedRequests':0}], 'hasMore':False,'pricingVersion':'pricing-v2'}}
 MOCK=r'''<script>
-window.__vortex={available:true,jobs:[{id:'vortex-1',userId:'a'.repeat(64),kind:'download',mode:'audio',format:'mp3',quality:'max',status:'complete',outputBytes:1024,createdAt:1791044000,updatedAt:1791044001,expiresAt:1791476001}],totals:{jobs:1,downloads:1,inspections:0,queued:0,processing:0,readyDownloads:1,retainedBytes:1024,error:0,expired:0},hasMore:false};window.__vortexMode='ok';window.__data=FIXTURE;window.__gemini=GEMINI_FIXTURE;window.__actionMode='ok';window.__mode='ok';window.__reads=[];window.__tokenCalls=[];window.__held=[];
+window.__vortex={available:true,jobs:[{id:'vortex-1',userId:'a'.repeat(64),kind:'download',mode:'audio',format:'mp3',quality:'max',status:'complete',outputBytes:1024,createdAt:1791044000,updatedAt:1791044001,expiresAt:1791476001}],totals:{jobs:1,downloads:1,inspections:0,queued:0,processing:0,readyDownloads:1,retainedBytes:1024,error:0,expired:0},hasMore:false};window.__vortexMode='ok';window.__data=FIXTURE;window.__gemini=GEMINI_FIXTURE;window.__actionMode='ok';window.__mode='ok';window.__reads=[];window.__tokenCalls=[];window.__held=[];window.__removals=[];
 window.__owner={uid:'owner',email:'one@example.test',getIdToken:async force=>{window.__tokenCalls.push(!!force);return 'FAKE-TEST-TOKEN';}};
 window.__auth={currentUser:window.__owner};
 window.__appSDK={initializeApp:()=>({})};
@@ -35,6 +35,17 @@ window.fetch=async(url,options)=>{
  if(window.__mode==='expired'){window.__mode='ok';return new Response(JSON.stringify({error:'Expired'}),{status:401});}
  if(window.__mode==='missing')return new Response(JSON.stringify({error:'Not found'}),{status:404});
  const parsed=new URL(url),person=parsed.searchParams.get('user');
+ if(parsed.pathname.startsWith('/api/admin/accounts/')){
+   const id=parsed.pathname.split('/')[4],record=window.__data.users.find(p=>p.id===id);
+   if(!record)return new Response(JSON.stringify({error:'Account not found'}),{status:404});
+   if(options.method==='POST'){
+     const body=JSON.parse(options.body);
+     window.__removals.push({id,body,authorization:options.headers.Authorization});
+     return new Response(JSON.stringify({deleted:true,removedProjects:2,removedVortexJobs:1}),{status:200});
+   }
+   return new Response(JSON.stringify({id,email:record.email,name:record.name,counts:{projects:2,ventureConversations:1,vortexJobs:1,visionImports:0},
+     hasActiveWork:false,adminConfigured:true,canDelete:true}),{status:200});
+ }
  if(parsed.pathname==='/api/admin/gemini/access'){
    if(window.__actionMode==='fail')return new Response(JSON.stringify({error:'Test update rejected'}),{status:409});
    const body=JSON.parse(options.body),row=window.__gemini.accessRequests.find(item=>item.userId===body.userId);row.status=body.decision;row.decidedAt=Date.now()/1000;row.waitingJobs=0;window.__gemini.pendingCount=window.__gemini.accessRequests.filter(item=>item.status==='pending').length;
@@ -67,6 +78,23 @@ with sync_playwright() as p:
  page.locator('#tab-logins').click();page.wait_for_timeout(150)
  assert 'Email / password' in page.locator('#accountDirectory').inner_text()
  assert 'Vortex' in page.locator('#accountDirectory').inner_text()
+ assert 'First name' in page.locator('#accountDirectory').inner_text()
+ assert 'Last name' in page.locator('#accountDirectory').inner_text()
+ page.locator('#accountDirectory .remove-account').nth(1).click()
+ page.locator('#removeAccountDialog[open]').wait_for()
+ assert 'Venture conversations: 1' in page.locator('#removeAccountStats').inner_text()
+ assert page.locator('#removeAccountConfirm').is_disabled()
+ page.locator('#removeAccountEmail').fill('wrong@example.test')
+ page.locator('#removeAccountPhrase').fill('DELETE')
+ assert page.locator('#removeAccountConfirm').is_disabled()
+ page.locator('#removeAccountEmail').fill('two@example.test')
+ assert page.locator('#removeAccountConfirm').is_enabled()
+ page.locator('#removeAccountConfirm').click()
+ page.locator('#removeAccountDialog').wait_for(state='hidden')
+ removal=page.evaluate('window.__removals')
+ assert len(removal)==1 and removal[0]['body']=={'email':'two@example.test','confirmation':'DELETE'}
+ assert removal[0]['authorization']=='Bearer FAKE-TEST-TOKEN'
+ print('PASS first/last columns, account deletion preview, confirmation and owner token')
  assert page.locator('.event').count()==1
  page.locator('#tab-transcriptions').click();page.wait_for_timeout(150)
  assert page.locator('.event').count()==0
