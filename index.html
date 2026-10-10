@@ -34,7 +34,7 @@
  // Preserve the requested app if the loader needs its direct-file fallback.
  document.querySelector('#fallback a').href='./Vision.html'+location.search+location.hash;
  try{
-  const response=await fetch('./Vision.html?v=e5f8fc183f72',{credentials:'same-origin'});
+  const response=await fetch('./Vision.html?v=29552e88eec8',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
   const html=(await response.text()).replace('<button id="downloadAppBtn"','<button id="downloadAppBtn" hidden');
   if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
