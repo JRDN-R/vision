@@ -113,7 +113,8 @@ def _preview(app, db, actor, public_id):
     tables, projects, vortex = _scope(db, uid)
     context = getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)
     is_busy = _busy(db, tables, uid, projects, context)
-    configured = bool(app.config.get("FIREBASE_ADMIN_CREDENTIALS"))
+    credential_path = Path(str(app.config.get("FIREBASE_ADMIN_CREDENTIALS") or ""))
+    configured = credential_path.is_absolute() and credential_path.is_file() and not credential_path.is_symlink()
     schema_ready = "account_removals" in tables
     return target, projects, vortex, dict(
         id=public_id, name=target["name"], email=target["email"],
