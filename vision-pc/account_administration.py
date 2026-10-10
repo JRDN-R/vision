@@ -46,6 +46,7 @@ class AccountAdministration:
         self.transcriptions, self.media, self.documents = transcriptions, media, documents
         self.lock = threading.RLock()
         self.firebase_app = None
+        self.active_requests = {}
         self.register_routes()
 
     def initialize(self, config):
@@ -61,6 +62,23 @@ class AccountAdministration:
             return False
         with self.db() as db:
             return db.execute('SELECT 1 FROM account_deletions WHERE id=?', (public_id(uid),)).fetchone() is not None
+
+    def begin_request(self, uid):
+        # Pair authorization with deletion under one lock, so an in-flight
+        # project upload cannot recreate data after the account was purged.
+        with self.lock:
+            if self.blocked(uid):
+                return False
+            self.active_requests[uid] = self.active_requests.get(uid, 0) + 1
+            return True
+
+    def end_request(self, uid):
+        with self.lock:
+            current = self.active_requests.get(uid, 0)
+            if current <= 1:
+                self.active_requests.pop(uid, None)
+            else:
+                self.active_requests[uid] = current - 1
 
     def owner(self):
         return allowed(self.app.config, getattr(g, 'uid', ''), getattr(g, 'auth_kind', ''),
@@ -340,6 +358,8 @@ class AccountAdministration:
             from firebase_admin import auth
             app = self.firebase()  # No tombstone or local changes unless admin credentials are ready.
             projects, media_ids, uploads, vortex_ids, youtube_ids = self.owned(uid)
+            if self.active_requests.get(uid, 0):
+                raise BlockingIOError('An account request is still finishing. Try deletion again.')
             if self.active_work(uid, projects):
                 raise BlockingIOError('This user still has running or queued work. Finish or cancel their jobs, then retry deletion.')
             # Tombstone BEFORE revoking Firebase or removing files. A valid, already-
