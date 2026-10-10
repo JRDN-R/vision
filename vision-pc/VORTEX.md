@@ -1,9 +1,41 @@
 # Vortex
 
 Vortex runs at `https://jrdn-r.github.io/vision/vortex/`. Its page and modules are
-independent of the Vision board and Venture conversation interface. The only
-changes to those interfaces are their two Vortex links and release notes.
+independent of the Vision board and Venture conversation interface. Vision also offers Vortex imports in Add to board and the module Files tab.
 Opening Vortex in the same tab saves pending board changes first.
+
+## Import into Vision
+
+Choose **Vortex** in **Add to board**, or **+ Vortex** in a selected module's
+**Files** tab. Paste a video/audio URL, choose **Find**, then **Apply**. The red
+orbital URL field matches Vortex. Controls retain the current transcription
+provider and sound-effects preference, and let a Files import create a new module.
+There is no download or video/audio format chooser in this dialog.
+
+The server prefers 320–480p video where the source offers it, falls back to a
+small available stream, and converts processing audio to 16 kHz mono at 32 kbps.
+Video produces timestamped snapshots and a transcript. Audio-only links,
+including YouTube Music and individual Spotify tracks, produce a transcript.
+Spotify uses the existing metadata/matched-public-audio workflow. Source
+availability, DRM, sign-in requirements and the two-hour limit are unchanged.
+
+After Apply is accepted, download, snapshots and transcription run durably on
+FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
+the saved Vision project to receive the result. Completed import receipts remain
+available for 24 hours to cover delayed project saves. Original media is not embedded
+in Vision or its ZIP/RAG exports; the small processing copy is deleted once
+snapshots and the durable transcription receipt are saved.
+
+A separate account-owned **Balanced MP4** video or default **M4A** audio download
+is silently queued in Vortex history. It uses the usual five-day retention,
+account ownership, queue and disk limits. A full queue/storage retries the
+history handoff without blocking the Vision result or creating duplicate copies.
+History download failures remain visible in Vortex, without a Vision notification.
+
+**This integration requires a PC update.** Run the latest installer with
+`-Action Update` using the command below. An existing Vortex installation does
+not need its engines or Docker services reinstalled. The updater includes
+`vortex_imports.py`; the UI detects older processors and asks for the update.
 
 ## Version
 

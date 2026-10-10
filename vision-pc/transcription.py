@@ -369,6 +369,65 @@ class LocalTranscription:
             validated.append({**details, 'data': raw})
         return client, source, validated, duration, digest.hexdigest()
 
+    def enqueue(self, project_id, body, requester_uid, auth_kind):
+        """Shared durable queue entry; caller must authorize project ownership."""
+        client, source, sections, duration, content_hash = self.validate(body)
+        include_sounds = body.get('includeSoundEvents', False)
+        provider = body.get('provider', 'whisper')
+        if provider == 'local':
+            provider = 'whisper'
+        access = self.app.config.get('GEMINI_ACCESS')
+        if provider == 'gemini' and (auth_kind != 'firebase-google' or not access):
+            raise self.Error('Sign in with Google to request Gemini processing.', 403)
+        directory = None
+        try:
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                previous = db.execute('SELECT * FROM local_transcriptions WHERE project_id=? AND client_id=?', (project_id, client)).fetchone()
+                if previous:
+                    if previous['content_hash'] != content_hash:
+                        raise self.Error('This request identifier belongs to different audio. Start a new transcription.', 409)
+                    return dict(id=previous['id'], status=previous['status'])
+                if provider == 'whisper' and not self.capability()['ready']:
+                    raise self.Error('Server transcription is not ready. Enable the server transcription plugin on FUPCJ Server first.', 503)
+                if include_sounds and not self.sound_capability()['ready']:
+                    raise self.Error('Sound recognition is not ready. Run InstallSoundEvents on FUPCJ Server first, or turn off Include sound effects to transcribe speech only.', 503)
+                pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing','approval_waiting')").fetchone()[0]
+                if pending >= MAX_QUEUED:
+                    raise self.Error('The server transcription queue is full. Wait for a job to finish.', 429)
+                if shutil.disk_usage(self.root).free < DISK_RESERVE + sum(len(s['data']) for s in sections):
+                    raise self.Error('Free at least 1 GB on FUPCJ Server before uploading more audio.', 507)
+                job_id, now = secrets.token_hex(12), time.time()
+                directory = self.root / job_id
+                directory.mkdir(mode=0o700)
+                manifest = []
+                for index, section in enumerate(sections):
+                    path = directory / f'audio-{index:03d}.{section["format"]}'
+                    with path.open('xb') as out:
+                        out.write(section['data'])
+                        out.flush()
+                        os.fsync(out.fileno())
+                    manifest.append({k: v for k, v in section.items() if k != 'data'} | {'file': path.name})
+                access_status = access.request_access(requester_uid, db=db) if provider == 'gemini' else 'approved'
+                status = 'queued' if access_status == 'approved' else 'approval_waiting'
+                phase = ('Waiting for FUPCJ Server' if status == 'queued' else self.approval_phase(access_status))
+                atomic_json(directory / 'manifest.json', {'sections': manifest, 'includeSoundEvents': include_sounds,
+                    'provider': provider, 'geminiSettings': dict(self.gemini_settings) if provider == 'gemini' else None,
+                    'whisperSettings': dict(self.settings), 'soundSettings': dict(self.sound_settings) if include_sounds else None})
+                db.execute('''INSERT INTO local_transcriptions
+                    (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at,provider,requester_uid)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (job_id, project_id, client, content_hash, status, phase, source, duration, now, now, now + RETAIN_SECONDS,
+                     provider, requester_uid))
+            directory = None  # The committed receipt now owns these files.
+        finally:
+            if directory:
+                shutil.rmtree(directory, ignore_errors=True)
+        self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType=provider + ('_sound' if include_sounds else ''),
+                                                    uploadedBytes=sum(len(s['data']) for s in sections))
+        self.wake.set()
+        return dict(id=job_id, status=status, phase=phase)
+
     def register_routes(self):
         from flask import g, jsonify, request
 
@@ -377,63 +436,7 @@ class LocalTranscription:
             self.sessions.project(project_id)
             request.max_content_length = BODY_LIMIT
             body = request.get_json(silent=True)
-            client, source, sections, duration, content_hash = self.validate(body)
-            include_sounds = body.get('includeSoundEvents', False)
-            provider = body.get('provider', 'whisper')
-            if provider == 'local':
-                provider = 'whisper'
-            requester_uid = getattr(g, 'uid', None)
-            access = self.app.config.get('GEMINI_ACCESS')
-            if provider == 'gemini' and (getattr(g, 'auth_kind', None) != 'firebase-google' or not access):
-                raise self.Error('Sign in with Google to request Gemini processing.', 403)
-            directory = None
-            try:
-                with self.db() as db:
-                    db.execute('BEGIN IMMEDIATE')
-                    previous = db.execute('SELECT * FROM local_transcriptions WHERE project_id=? AND client_id=?', (project_id, client)).fetchone()
-                    if previous:
-                        if previous['content_hash'] != content_hash:
-                            raise self.Error('This request identifier belongs to different audio. Start a new transcription.', 409)
-                        return jsonify(id=previous['id'], status=previous['status']), 202
-                    if provider == 'whisper' and not self.capability()['ready']:
-                        raise self.Error('Server transcription is not ready. Enable the server transcription plugin on FUPCJ Server first.', 503)
-                    if include_sounds and not self.sound_capability()['ready']:
-                        raise self.Error('Sound recognition is not ready. Run InstallSoundEvents on FUPCJ Server first, or turn off Include sound effects to transcribe speech only.', 503)
-                    pending = db.execute("SELECT COUNT(*) FROM local_transcriptions WHERE status IN ('queued','processing','approval_waiting')").fetchone()[0]
-                    if pending >= MAX_QUEUED:
-                        raise self.Error('The server transcription queue is full. Wait for a job to finish.', 429)
-                    if shutil.disk_usage(self.root).free < DISK_RESERVE + sum(len(s['data']) for s in sections):
-                        raise self.Error('Free at least 1 GB on FUPCJ Server before uploading more audio.', 507)
-                    job_id, now = secrets.token_hex(12), time.time()
-                    directory = self.root / job_id
-                    directory.mkdir(mode=0o700)
-                    manifest = []
-                    for index, section in enumerate(sections):
-                        path = directory / f'audio-{index:03d}.{section["format"]}'
-                        with path.open('xb') as out:
-                            out.write(section['data'])
-                            out.flush()
-                            os.fsync(out.fileno())
-                        manifest.append({k: v for k, v in section.items() if k != 'data'} | {'file': path.name})
-                    access_status = access.request_access(requester_uid, db=db) if provider == 'gemini' else 'approved'
-                    status = 'queued' if access_status == 'approved' else 'approval_waiting'
-                    phase = ('Waiting for FUPCJ Server' if status == 'queued' else self.approval_phase(access_status))
-                    atomic_json(directory / 'manifest.json', {'sections': manifest, 'includeSoundEvents': include_sounds,
-                        'provider': provider, 'geminiSettings': dict(self.gemini_settings) if provider == 'gemini' else None,
-                        'whisperSettings': dict(self.settings), 'soundSettings': dict(self.sound_settings) if include_sounds else None})
-                    db.execute('''INSERT INTO local_transcriptions
-                        (id,project_id,client_id,content_hash,status,phase,source_name,duration,created_at,updated_at,expires_at,provider,requester_uid)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                        (job_id, project_id, client, content_hash, status, phase, source, duration, now, now, now + RETAIN_SECONDS,
-                         provider, requester_uid))
-                directory = None  # The committed receipt now owns these files.
-            finally:
-                if directory:
-                    shutil.rmtree(directory, ignore_errors=True)
-            self.app.config['AUDIT_LOGS'].project_event(project_id, 'audio_received', jobType=provider + ('_sound' if include_sounds else ''),
-                                                        uploadedBytes=sum(len(s['data']) for s in sections))
-            self.wake.set()
-            return jsonify(id=job_id, status=status, phase=phase), 202
+            return jsonify(self.enqueue(project_id, body, g.uid, g.auth_kind)), 202
 
         @self.app.get('/api/projects/<project_id>/transcriptions/<job_id>')
         def local_transcription_status(project_id, job_id):
