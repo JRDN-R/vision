@@ -176,7 +176,7 @@ function paintOverview(){
  $('overviewNote').textContent=(selected?'Selected account':'All accounts')+' · Retained records, not lifetime totals. Sign-in sightings count distinct verified sessions.';
 }
 function accountNames(person){
- const name=String(person.name||'').trim().replace(/\\s+/g,' ');
+ const name=String(person.name||'').trim().replace(/\s+/g,' ');
  const divider=name.lastIndexOf(' ');
  return {first:String(person.firstName||'').trim()||(divider<0?name:name.slice(0,divider)),
          last:String(person.lastName||'').trim()||(divider<0?'':name.slice(divider+1))};
@@ -233,9 +233,9 @@ async function openRemoval(person){
   if(current!==removalEpoch||authEpoch!==epoch||!$('removeAccountDialog').open)return;
   removalTarget=result;
   $('removeAccountStats').textContent='Vision projects: '+result.counts.projects+
-   '\\nVenture conversations: '+result.counts.ventureConversations+
-   '\\nVortex jobs/files: '+result.counts.vortexJobs+
-   '\\nVision imports: '+result.counts.visionImports;
+   '\nVenture conversations: '+result.counts.ventureConversations+
+   '\nVortex jobs/files: '+result.counts.vortexJobs+
+   '\nVision imports: '+result.counts.visionImports;
   if(result.hasActiveWork)$('removeAccountMessage').textContent='This account has active processing work. Finish or cancel it before deletion.';
   else if(!result.adminConfigured)$('removeAccountMessage').textContent='Account removal requires Firebase Admin credentials configured on the Vision PC.';
   else $('removeAccountMessage').textContent='Enter the email and DELETE to enable permanent removal.';
