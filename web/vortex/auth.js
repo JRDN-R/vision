@@ -21,7 +21,9 @@ export async function initAuth(callback) {
     if (!bundled) throw new Error('Sign-in could not load. Refresh the page to try again.');
     sdk = bundled.auth;
     const app = bundled.app.getApps().find(item => item.name === 'vision-account-login') || bundled.app.initializeApp(FIREBASE_CONFIG, 'vision-account-login');
-    auth = sdk.getAuth(app);
+    // Match Vision's durable session policy without initializing the popup helper
+    // during page load. Login popups are opened only by an explicit user action.
+    auth = sdk.initializeAuth(app, {persistence:[sdk.indexedDBLocalPersistence,sdk.browserLocalPersistence]});
     sdk.useDeviceLanguage(auth);
     await auth.authStateReady();
     changed(auth.currentUser);

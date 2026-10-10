@@ -7,8 +7,8 @@ const accountContinueURL=(()=>{try{const url=new URL(location.href);return /^htt
 let accountForwarding=false;
 let accountRestoring=true,accountRestoreFailed=false,accountObserver=null;
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
-async function accountWait(promise,message){
- let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),12000);})]);}
+async function accountWait(promise,message,timeoutMs=12000){
+ let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),timeoutMs);})]);}
  finally{clearTimeout(timer);}
 }
 function accountContinue(user){
@@ -39,7 +39,7 @@ function accountUpdateGate(){
 }
 function accountUsesGoogle(){try{return localStorage.getItem(ACCOUNT_MODE)==='google';}catch{return cloudAuth?.kind==='firebase-google';}}
 function accountMode(value){try{if(value)localStorage.setItem(ACCOUNT_MODE,value);else localStorage.removeItem(ACCOUNT_MODE);}catch{}}
-function accountErrorText(error){const code=error?.code||'';return ({'auth/unauthorized-domain':'Add jrdn-r.github.io to Firebase Authentication → Settings → Authorized domains.','auth/operation-not-allowed':'Enable the requested sign-in provider in Firebase Authentication → Sign-in method.','auth/popup-blocked':'Allow the Google sign-in popup for this site, then press Sign in again.','auth/popup-closed-by-user':'Google sign-in was closed. Press Sign in when ready.','auth/cancelled-popup-request':'A sign-in window is already open.','auth/network-request-failed':'Sign-in is unavailable on this connection. Check your internet connection and try again.','auth/invalid-credential':'Email or password is incorrect.','auth/wrong-password':'Email or password is incorrect.','auth/user-not-found':'Email or password is incorrect.','auth/invalid-email':'Enter a valid email address.','auth/email-already-in-use':'An account already uses that email. Sign in instead, or use Google if that is your existing Vision account.','auth/weak-password':'Use a password with at least 6 characters.','auth/too-many-requests':'Too many sign-in attempts. Wait a little and try again.'})[code]||error?.message||'Sign-in could not finish.';}
+function accountErrorText(error){const code=error?.code||'';return ({'auth/unauthorized-domain':'Add jrdn-r.github.io to Firebase Authentication → Settings → Authorized domains.','auth/operation-not-allowed':'Enable the requested sign-in provider in Firebase Authentication → Sign-in method.','auth/popup-blocked':'Allow the Google sign-in popup for this site, then press Sign in again.','auth/popup-closed-by-user':'Google sign-in was closed. Press Sign in when ready.','auth/cancelled-popup-request':'A sign-in window is already open.','auth/network-request-failed':'Sign-in is unavailable on this connection. Check your internet connection and try again.','auth/web-storage-unsupported':'This browser cannot store a persistent sign-in. Allow website storage on your iPhone, then reopen Vision.','auth/invalid-credential':'Email or password is incorrect.','auth/wrong-password':'Email or password is incorrect.','auth/user-not-found':'Email or password is incorrect.','auth/invalid-email':'Enter a valid email address.','auth/email-already-in-use':'An account already uses that email. Sign in instead, or use Google if that is your existing Vision account.','auth/weak-password':'Use a password with at least 6 characters.','auth/too-many-requests':'Too many sign-in attempts. Wait a little and try again.'})[code]||error?.message||'Sign-in could not finish.';}
 function accountPaint(){
  const user=cloudAuth?.kind==='firebase-google'?cloudAuth:null;
  const accountControl=$('accountButton');if(!accountControl.classList?.contains('workspace-nav-icon'))accountControl.textContent=user?'Account':'Sign in';accountControl.title=user?'Signed in as '+user.email:'Sign in';accountControl.setAttribute('aria-label',user?'Account':'Sign in');
@@ -93,12 +93,14 @@ async function accountLoad(){
   accountSDK=authSDK;const app=appSDK.initializeApp(VISION_FIREBASE,'vision-account-login');
   // Restoring a local session must not wait for Google's popup iframe on iOS.
   // Load that resolver only when the user actually asks to sign in with Google.
-  if(!accountFirebase)accountFirebase=authSDK.initializeAuth(app,{persistence:[authSDK.indexedDBLocalPersistence,authSDK.browserLocalPersistence,location.protocol==='file:'?authSDK.inMemoryPersistence:authSDK.browserSessionPersistence]});
+  // Prefer durable IndexedDB, then localStorage. A session-only fallback would
+  // silently log Home Screen users out on the next launch. Local HTML may use
+  // memory if browser storage is unavailable; hosted Vision must not choose SESSION.
+  const persistence=[authSDK.indexedDBLocalPersistence,authSDK.browserLocalPersistence];
+  if(location.protocol==='file:')persistence.push(authSDK.inMemoryPersistence);
+  if(!accountFirebase)accountFirebase=authSDK.initializeAuth(app,{persistence});
   authSDK.useDeviceLanguage(accountFirebase);
   await accountWait(accountFirebase.authStateReady(),'Your sign-in could not be restored. Check your connection and retry.');
-  // Finish persistence setup before showing a login button, preserving the
-  // user's click for the popup instead of doing storage work after it.
-  if(location.protocol!=='file:'&&!accountFirebase.currentUser)await accountWait(authSDK.setPersistence(accountFirebase,authSDK.browserLocalPersistence),'Sign-in storage could not be prepared. Retry to reconnect.');
   accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(accountFirebase.currentUser));
   await accountWait(accountTransition,'Your workspace could not open. Retry to reconnect.');
   if(!accountObserver)accountObserver=authSDK.onAuthStateChanged(accountFirebase,user=>{
@@ -120,13 +122,28 @@ async function accountIdToken(){
 }
 async function accountGoogleSignIn(){
  if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
- try{const local=location.protocol==='file:'?localGoogleConnect('signin'):null;if(local)local.catch(()=>{});const auth=await accountLoad(),provider=new accountSDK.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});
-  const credential=local?await local:null;
-  const result=credential?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken)):await accountSDK.signInWithPopup(auth,provider,accountSDK.browserPopupRedirectResolver);
-  await accountTransition;await accountSetUser(result.user);
+ try{
+  const local=location.protocol==='file:'?localGoogleConnect('signin'):null;
+  if(local)local.catch(()=>{});
+  const auth=await accountLoad();
+  // An existing session may finish restoring between the user's tap and this point.
+  // Never open a fresh Google window when Firebase already knows the account.
+  if(auth.currentUser){
+   await accountTransition;await accountSetUser(auth.currentUser);
+  }else{
+   const provider=new accountSDK.GoogleAuthProvider();
+   // Don't force Google's account chooser on every sign-in.
+   const credential=local?await local:null;
+   const result=credential
+    ?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken))
+    :await accountWait(accountSDK.signInWithPopup(auth,provider,accountSDK.browserPopupRedirectResolver),
+      'Google sign-in did not finish. Close the Google window and try again. You can also sign in with your Vision email and password.',90000);
+   await accountTransition;await accountSetUser(result.user);
+  }
   if(accountForwarding)return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
- }catch(error){if(location.protocol==='file:'&&localBridgeCancel)localBridgeCancel();accountError=accountErrorText(error);}finally{accountBusy=false;accountPaint();}
+ }catch(error){if(location.protocol==='file:'&&localBridgeCancel)localBridgeCancel();accountError=accountErrorText(error);}
+ finally{accountBusy=false;accountPaint();}
 }
 function accountEmailFields(prefix){
  const email=$(prefix+'Email')?.value.trim()||'',password=$(prefix+'Password')?.value||'';
