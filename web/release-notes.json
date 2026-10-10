@@ -1,6 +1,10 @@
 {
-  "title": "Choose RAG or ZIP when exporting",
+  "title": "Live Venture balance and RAG export",
   "items": [
+    "The API balance now shows a precise remaining percentage and refreshes every second while open.",
+    "Live input and output estimates reconcile with reported model usage, caching, reasoning and tool costs.",
+    "Terra and the other built-in models now have verified prices in the funding catalog.",
+    "Update FUPCJ Server, then refresh Vision. If the previous meter missed charges, set your current balance once after active work finishes.",
     "Export now offers Download RAG (recommended) or Download ZIP.",
     "RAG downloads a compact text snapshot for AI using the context engine already on FUPCJ. It includes source references and any retrieval limitations.",
     "Choose ZIP when your task needs original images or files. Save project still downloads your editable board.",

@@ -139,7 +139,12 @@ fresh local reconstruction rather than replaying stale cross-conversation excerp
 ## Estimated funding meter
 
 Click the account avatar to see a green/yellow/red bar with no dollar balance in
-its normal display. **Add funding** opens OpenAI's organization billing page;
+its normal display, plus a percentage such as **97.5% remaining**. The percentage
+shows up to three decimal places, and the bar uses the full unrounded fraction.
+It refreshes once per second while the account panel is visible, including usage
+from other conversations/devices on the same account and key. Hidden tabs pause
+refreshes and resume on return; an outage retains the last reading with a
+**Not updating** label. **Add funding** opens OpenAI's organization billing page;
 the completed-funding form is prepared automatically and restored on return.
 Entering the successfully purchased amount records the addition, without a
 separate record-funds option or opt-in. **Set balance** remains a separate
@@ -158,6 +163,33 @@ A reconciliation step retries local accounting without resubmitting an AI reques
 Changing keys requires a separate calibration. Identical top-up requests cannot
 be applied twice after a lost connection.
 
+For calibrated connections, each submitted response (including retrieval
+continuations) first attempts `POST /v1/responses/input_tokens` with its prepared
+input, instructions, tools, conversation chain, and reasoning/text settings.
+The count includes provider framing and supported multimodal inputs. The counter
+has a short timeout, does not retry, and failure never prevents the actual response.
+Only numeric telemetry is retained. A provisional overlay subtracts counted input
+and observed output while generation runs; no permanent debit is made until the
+provider's final usage is recorded. Known completed retrieval hops remain included
+throughout a continuation, without applying long-context rates to the sum of
+separate requests. Pending and settled data are read in a single database snapshot.
+
+Streamed visible output uses an already loaded model-specific tokenizer when
+available, otherwise a labeled text estimate. Hidden reasoning, caching and
+unreported tool activity cannot be measured from visible text; final reported usage
+replaces that provisional estimate. Consequently reconciliation can adjust the bar
+up or down. Output-token settings are a ceiling, not an amount to debit in advance;
+reasoning/pro/verbosity settings affect actual usage, not invented price multipliers.
+The compact token readout identifies in-progress usage or the last settled response.
+
+The 2026-10-10 catalog adds Terra (the default), GPT-6 Sol, GPT-4.1, GPT-4o and o3.
+It prices model-specific caching, context thresholds and verified service tiers.
+Older model snapshots with differing prices remain unpriced unless verified.
+Existing ledger entries retain their original price snapshot; if the old meter
+missed charges, use **Set balance** once with the current provider balance after
+active work finishes. Install the normal FUPCJ Server update above and refresh
+Vision to enable live accounting. An older server is identified in the meter.
+
 This is **not the official OpenAI prepaid balance**, a project wallet, or a hard
 spending limit. External usage, unobserved container activity, discounts, credits,
 missing usage fields and unknown charge categories can cause drift. Unknown
@@ -173,11 +205,17 @@ bank/payment action is used. Calibration amounts and keys are excluded from
 portable application downloads. Users should confirm actual funds on OpenAI's
 billing dashboard before relying on an estimate.
 
-Sources checked for the initial catalog on 2026-10-06:
+Sources checked for the updated catalog on 2026-10-10:
 - https://developers.openai.com/api/docs/pricing
 - https://developers.openai.com/api/docs/models/gpt-6-astra
 - https://developers.openai.com/api/docs/models/gpt-6.1-sol
 - https://developers.openai.com/api/docs/models/gpt-6-luna
+- https://developers.openai.com/api/docs/models/gpt-6-sol
+- https://developers.openai.com/api/docs/models/gpt-5.6-terra
+- https://developers.openai.com/api/docs/models/gpt-4.1
+- https://developers.openai.com/api/docs/models/gpt-4o
+- https://developers.openai.com/api/docs/models/o3
+- https://developers.openai.com/api/docs/guides/token-counting
 - https://developers.openai.com/api/docs/guides/reasoning
 - https://developers.openai.com/api/docs/guides/prompt-caching
 
