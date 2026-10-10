@@ -1,13 +1,13 @@
 {
-  "title": "Live Venture balance and RAG export",
+  "title": "Vortex imports in Vision",
   "items": [
+    "Add Vortex media from Add to board or the selected module’s Files tab. Paste a URL, Find, then Apply.",
+    "Vision automatically uses lightweight video with snapshots and transcription, or audio for music and audio-only links.",
+    "Accepted imports continue processing on FUPCJ Server while the page is closed. Reopen the saved project to receive the result.",
+    "A normal Balanced video or default M4A audio copy appears quietly in the same account’s Vortex history.",
+    "Update FUPCJ Server with the latest Setup-Vision-PC.ps1 -Action Update, then refresh Vision. Existing Vortex engines and Docker services do not need reinstalling.",
     "The API balance now shows a precise remaining percentage and refreshes every second while open.",
     "Live input and output estimates reconcile with reported model usage, caching, reasoning and tool costs.",
-    "Terra and the other built-in models now have verified prices in the funding catalog.",
-    "Update FUPCJ Server, then refresh Vision. If the previous meter missed charges, set your current balance once after active work finishes.",
-    "Export now offers Download RAG (recommended) or Download ZIP.",
-    "RAG downloads a compact text snapshot for AI using the context engine already on FUPCJ. It includes source references and any retrieval limitations.",
-    "Choose ZIP when your task needs original images or files. Save project still downloads your editable board.",
-    "If some evidence is unavailable, review the notice before downloading the available RAG text."
+    "Terra and the other built-in models now have verified prices in the funding catalog."
   ]
 }

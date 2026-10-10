@@ -738,7 +738,7 @@ function providerChoice(value,onchange,label){
  for(const provider of ['local','gemini']){const option=document.createElement('option');option.value=provider;option.textContent=transcriptionProviderLabel(provider);select.appendChild(option);}select.value=value;select.onchange=()=>onchange(select.value);wrapper.appendChild(select);return wrapper;
 }
 function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';if(typeof rememberImportPreference==='function')rememberImportPreference('transcriptionProvider',state.settings.transcriptionProvider);markDirty();syncTranscriptionProviderUI();}
-function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider','youtubeProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();syncSoundEventsChoice(id+'Sounds');}}
+function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider','youtubeProvider','vortexImportProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();syncSoundEventsChoice(id+'Sounds');}}
 function addQueueProviderControl(row,job){
  const choice=providerChoice(job.provider||'local',value=>changeQueuedProvider(job.id,value),'Transcription provider for '+job.sourceName);
  choice.querySelector('select').disabled=(job.submitted||!!job.remoteId)&&!job.remoteTerminal;

@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import threading
 import time
 from urllib.parse import urlparse
@@ -156,15 +157,21 @@ def initialize_db():
             db.execute('ALTER TABLE jobs ADD COLUMN include_sound_events INTEGER NOT NULL DEFAULT 0')
         if 'provider' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
             db.execute("ALTER TABLE jobs ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'")
+        columns = {r[1] for r in db.execute('PRAGMA table_info(jobs)')}
+        for name, definition in (('source_kind', "TEXT NOT NULL DEFAULT 'youtube'"),
+                                 ('import_options', "TEXT NOT NULL DEFAULT '{}'"),
+                                 ('retry_at', 'REAL NOT NULL DEFAULT 0')):
+            if name not in columns:
+                db.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
 
 
 def recover_jobs():
     """Only called once at startup, never while another worker is alive."""
     with connect_db() as db:
-        db.execute("UPDATE jobs SET status='error',phase='Stopped',error='Processing stopped repeatedly. Start this import again.' WHERE status='processing' AND attempts>=3")
+        db.execute("UPDATE jobs SET status='error',phase='Stopped',error='Processing stopped repeatedly. Start this import again.' WHERE status='processing' AND attempts>=3 AND source_kind='youtube'")
         db.execute("UPDATE jobs SET status='queued',phase='Resuming after restart',progress=0,updated_at=? WHERE status='processing'", (time.time(),))
     # Interrupted source downloads are private temporary data, never project files.
-    for directory in (app.config['DATA_DIR'] / 'temporary').glob('vision-youtube-*'):
+    for directory in (app.config['DATA_DIR'] / 'temporary').glob('vision-*'):
         if directory.is_dir():
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -359,14 +366,33 @@ def get_job(job_id):
 
 
 @app.post('/api/youtube')
+@app.post('/api/vortex/import')
 def youtube():
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         raise APIError('Send a YouTube link.')
-    try:
-        url = normalize_url(payload.get('url', ''))
-    except (ValueError, AttributeError):
-        raise APIError('Paste a direct YouTube video, Shorts, or youtu.be link.')
+    source_kind = 'vortex' if request.path == '/api/vortex/import' else 'youtube'
+    import_options = {}
+    if source_kind == 'vortex':
+        vortex._uid()
+        if not vortex.capability()['ready']:
+            raise APIError('Update FUPCJ Server and enable Vortex to apply media links.', 503)
+        project_id = payload.get('projectId')
+        if not isinstance(project_id, str):
+            raise APIError('Save the destination project before applying media.')
+        sessions.project(project_id)
+        import_options = dict(projectId=project_id)
+        from vortex_network import validate_input
+        try:
+            url = validate_input(payload.get('url', ''), 'download', resolve=False)
+        except ValueError as error:
+            raise APIError(str(error)) from None
+    else:
+        try:
+            url = normalize_url(payload.get('url', ''))
+        except (ValueError, AttributeError):
+            raise APIError('Paste a direct YouTube video, Shorts, or youtu.be link.')
+    options_json = json.dumps(import_options, sort_keys=True)
     client_id = payload.get('clientRequestId')
     if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
         raise APIError('Invalid request identifier.')
@@ -376,6 +402,8 @@ def youtube():
         raise APIError('Choose a supported transcription provider.')
     if provider == 'gemini' and g.auth_kind != 'firebase-google':
         raise APIError('Sign in with Google to request Gemini processing.', 403)
+    if source_kind == 'vortex' and provider == 'local' and not transcriptions.capability()['ready']:
+        raise APIError('Enable server transcription on FUPCJ Server before applying media.', 503)
     if not isinstance(include_sound_events, bool):
         raise APIError('Choose whether to include sound effects.')
     # Existing installation receipts retain their IDs. New accounts cannot collide
@@ -386,9 +414,9 @@ def youtube():
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
         if client_id:
-            old = db.execute('SELECT id,status,url,include_sound_events,provider FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
+            old = db.execute('SELECT id,status,url,include_sound_events,provider,source_kind,import_options FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
             if old:
-                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events or old['provider'] != provider:
+                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events or old['provider'] != provider or old['source_kind'] != source_kind or old['import_options'] != options_json:
                     raise APIError('This request identifier belongs to another video or sound setting.', 409)
                 return jsonify(id=old['id'], status=old['status']), 202
         if include_sound_events and not transcriptions.sound_capability()['ready']:
@@ -397,8 +425,8 @@ def youtube():
         if pending >= 25:
             raise APIError('The server queue is full. Wait for an import to finish.', 429)
         job_id, now = secrets.token_hex(12), time.time()
-        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events,provider)
-            VALUES(?,?,?,'queued','Waiting',?,?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events), provider))
+        db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events,provider,source_kind,import_options)
+            VALUES(?,?,?,'queued','Waiting',?,?,?,?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events), provider, source_kind, options_json))
         if provider == 'gemini':
             app.config['GEMINI_ACCESS'].request_access(g.uid, db=db)
     WAKE.set()
@@ -424,11 +452,11 @@ def process_next_job():
 def _process_next_job():
     with connect_db() as db:
         db.execute('BEGIN IMMEDIATE')
-        row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
+        row = db.execute("SELECT * FROM jobs WHERE status='queued' AND retry_at<=? ORDER BY created_at LIMIT 1", (time.time(),)).fetchone()
         if row is None:
             return False
         value = dict(row)
-        db.execute("UPDATE jobs SET status='processing',attempts=attempts+1,updated_at=? WHERE id=?", (time.time(), value['id']))
+        db.execute("UPDATE jobs SET status='processing',attempts=attempts+CASE WHEN source_kind='youtube' THEN 1 ELSE 0 END,updated_at=? WHERE id=?", (time.time(), value['id']))
     trial_id = 'trial-' + value['uid'][6:] if value['uid'].startswith('trial:') else ''
     deadline = None
     if trial_id:
@@ -447,18 +475,22 @@ def _process_next_job():
             os.replace(temporary, path)
             fields['result_path'] = str(path)
         terminal = fields.get('status') in ('complete', 'error')
-        if not terminal and time.monotonic() - last_write[0] < 0.5:
+        if not terminal and result is None and 'status' not in fields and time.monotonic() - last_write[0] < 0.5:
             return
         last_write[0] = time.monotonic()
         fields['updated_at'] = time.time()
         if terminal:
             fields['expires_at'] = time.time() + 86400
-        allowed = {'status', 'phase', 'progress', 'title', 'error', 'result_path', 'updated_at', 'expires_at'}
+        allowed = {'status', 'phase', 'progress', 'title', 'error', 'result_path', 'updated_at', 'expires_at', 'retry_at'}
         fields = {key: val for key, val in fields.items() if key in allowed}
         with connect_db() as db:
             db.execute('UPDATE jobs SET ' + ','.join(key + '=?' for key in fields) + ' WHERE id=?', [*fields.values(), job_id])
     processing_started = time.monotonic()
     try:
+        if value['source_kind'] == 'vortex':
+            from vortex_imports import advance
+            advance(sys.modules[__name__], value, update)
+            return True
         with MEDIA_LOCK:
             if trial_id and trials.expired(trial_id):
                 with connect_db() as db:
@@ -479,7 +511,8 @@ def _process_next_job():
         with connect_db() as db:
             final = db.execute('SELECT status,result_path FROM jobs WHERE id=?', (value['id'],)).fetchone()
         size = Path(final['result_path']).stat().st_size if final and final['result_path'] and Path(final['result_path']).exists() else 0
-        app.config['AUDIT_LOGS'].event(value['uid'], 'processing_finished', jobType='youtube',
+        if final and final['status'] in ('complete', 'error'):
+            app.config['AUDIT_LOGS'].event(value['uid'], 'processing_finished', jobType=value['source_kind'],
             outcome=final['status'] if final else 'removed', processingWallSeconds=time.monotonic()-processing_started,
             outputBytes=size)
     return True
@@ -493,7 +526,7 @@ def worker_loop():
                 continue
         except Exception:
             app.logger.error('Processing worker encountered a temporary local error.')
-        WAKE.wait(30)
+        WAKE.wait(3)
         WAKE.clear()
 
 

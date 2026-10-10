@@ -71,6 +71,7 @@ async function accountSetUser(user){
  if(user&&(trialSession||cloudAuth?.kind==='trial'))await trialFinish({message:''});
  accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
  if(typeof cancelGoogleSources==='function')cancelGoogleSources();
+ if(typeof cancelVortexImportDialog==='function')cancelVortexImportDialog();
  accountClearRunKey();
  if(typeof consoleClosePreview==='function')consoleClosePreview();
  if(user){accountMode('google');cloudConfig={kind:'private-pc',backendUrl:ACCOUNT_PC,publicAccess:true};cloudAuth={kind:'firebase-google',uid,email:user.email||'',provider:user.providerData?.some(item=>item.providerId==='google.com')?'google.com':'password',backendUrl:ACCOUNT_PC,remember:true};try{localStorage.setItem('vision-cloud-config',JSON.stringify(cloudConfig));}catch{}}

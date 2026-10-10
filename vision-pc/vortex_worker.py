@@ -103,7 +103,9 @@ def is_gallery(value):
     return any(host == domain or host.endswith("." + domain) for domain in GALLERY_HOSTS)
 
 
-def format_selector(quality="balanced", audio=False):
+def format_selector(quality="balanced", audio=False, processing=False):
+    if processing:
+        return "worstaudio/worst[acodec!=none]" if audio else "wv*[height>=320][height<=480]+wa/w[height>=320][height<=480][vcodec!=none]/bv*[height<=480]+wa/b[height<=480]/wv*+wa/w[vcodec!=none]/wa"
     if audio:
         # Some sources have audio only inside a combined video stream.
         return "bestaudio/best[acodec!=none]"
@@ -238,10 +240,11 @@ def export_media(artifact, media, request, *, stem='export'):
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
                '-i', str(artifact), '-map_metadata', '-1', '-map_chapters', '-1']
+    processing = request.get('processingProfile') == 'vision'
     if audio:
         command += ['-map', '0:a:0', '-vn']
         if extension == 'm4a':
-            command += ['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k']
+            command += ['-c:a', 'aac', '-ac', '1', '-ar', '16000', '-b:a', '32k'] if processing else (['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k'])
             command += ['-movflags', '+faststart']
         elif extension == 'mp3':
             command += ['-c:a', 'libmp3lame', '-q:a', '0', '-ac', '2']
@@ -256,9 +259,9 @@ def export_media(artifact, media, request, *, stem='export'):
             command += ['-c:v', 'copy']
         else:
             height = f'trunc(min(ih,{cap})/2)*2' if cap else 'trunc(ih/2)*2'
-            command += ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-threads', '2',
+            command += ['-c:v', 'libx264', '-preset', 'veryfast' if processing else 'fast', '-crf', '28' if processing else '18', '-threads', '2',
                         '-vf', f"scale=w=-2:h='{height}',format=yuv420p"]
-        command += ['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k']
+        command += ['-c:a', 'aac', '-ac', '1', '-ar', '16000', '-b:a', '32k'] if processing else (['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k'])
         command += ['-tag:v', 'avc1', '-movflags', '+faststart']
     cap_bytes = int(request.get('maxBytes', 2 * 1024**3))
     # An over-limit encode is rejected, never offered as a truncated success.
@@ -370,7 +373,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         "fixup": "never", "overwrites": True, "writethumbnail": False,
         "writeinfojson": False, "writesubtitles": False, "writeautomaticsub": False,
         "outtmpl": str(directory / "media.%(ext)s"),
-        "format": format_selector(request.get("quality", "balanced"), audio),
+        "format": format_selector(request.get("quality", "balanced"), audio, request.get("processingProfile") == "vision"),
         "merge_output_format": "mp4", "restrictfilenames": True,
         "allow_unplayable_formats": False,
     }
