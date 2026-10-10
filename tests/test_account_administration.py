@@ -187,6 +187,24 @@ class AccountAdminTests(unittest.TestCase):
         self.assertEqual(self.remove().status_code, 503)
         self.assertEqual(self.deleted, [])
 
+    def test_orphaned_context_index_is_purged_when_engine_disabled(self):
+        context_root = self.root / "context"
+        context_root.mkdir()
+        cache_path = context_root / "context.sqlite3"
+        with sqlite3.connect(cache_path) as db:
+            db.execute("CREATE TABLE context_heads(owner TEXT,project TEXT,revision INTEGER)")
+            db.execute("INSERT INTO context_heads VALUES(?,?,?)", (TARGET, PROJECT, 1))
+            db.execute("INSERT INTO context_heads VALUES(?,?,?)", (OWNER, "another-project", 1))
+        sources = context_root / "sources" / hashlib.sha256((TARGET + "\0" + PROJECT).encode()).hexdigest()
+        sources.mkdir(parents=True)
+        (sources / "original.txt").write_text("private", encoding="utf-8")
+        response = self.remove()
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertFalse(sources.exists())
+        with sqlite3.connect(cache_path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM context_heads WHERE owner=?", (TARGET,)).fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM context_heads WHERE owner=?", (OWNER,)).fetchone()[0], 1)
+
     def test_remote_failure_keeps_replay_blocker_and_data(self):
         def fails(uid, app=None):
             raise RuntimeError("simulated Firebase network failure")
