@@ -206,9 +206,18 @@ def verify_real_sdk_return(browser, html=None):
     assert page.evaluate("VisionFirebaseSDK.auth.getAuth(VisionFirebaseSDK.app.getApps()[0]).currentUser.uid") == 'alice'
     assert page.evaluate("VisionFirebaseSDK.auth.getAuth(VisionFirebaseSDK.app.getApps()[0]).currentUser.email") == 'alice@example.test'
     assert not api.helper_requests, 'Saved-session restoration unnecessarily loaded the Google popup helper'
+    # Closing the page and reopening the installed app's route must not sign out.
+    # This is a mobile Chromium approximation, not an actual iOS PWA test.
+    page.close()
+    reopened = context.new_page()
+    reopened.on('pageerror', lambda error: errors.append(str(error)))
+    reopened.goto(mod.URL.replace('vortex/', '?view=venture'))
+    reopened.locator('#accountGate').wait_for(state='hidden', timeout=10000)
+    assert reopened.evaluate("VisionFirebaseSDK.auth.getAuth(VisionFirebaseSDK.app.getApps()[0]).currentUser.uid") == 'alice'
+    assert not api.helper_requests, 'Reopening the Home Screen route loaded a Google popup helper'
     assert not errors, errors
     context.close()
-    print('Real Firebase SDK: persistent identity survives Vortex-to-Vision on the mobile code path without a popup helper', flush=True)
+    print('Real Firebase SDK: persistent identity survives navigation and mobile page reopening without a popup helper', flush=True)
 
 
 def run():

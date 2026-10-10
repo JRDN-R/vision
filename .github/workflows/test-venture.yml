@@ -38,6 +38,7 @@ jobs:
       - name: Build hosted application bundle
         run: |
           set -o pipefail
+          bash web/vendor/build-firebase.sh
           python web/build.py 2>&1 | tee tests/venture-logs/build.txt
           python tests/versioning-smoke.py
       - name: Browser-independent JavaScript checks
