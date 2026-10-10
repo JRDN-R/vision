@@ -93,8 +93,11 @@ def snapshot_payload(connect_db, person='', limit=100, version='', module='all')
         apps = {}
         if 'audit_user_apps' in tables:
             for row in db.execute('SELECT uid,app,last_seen FROM audit_user_apps ORDER BY app'):
-                if row['app'] in ('vision', 'vortex'):
+                if row['app'] in ('vision', 'vortex', 'venture'):
                     apps.setdefault(row['uid'], []).append({'app': row['app'], 'lastSeen': row['last_seen']})
+        if 'venture_conversations' in tables:
+            for row in db.execute('SELECT uid,MAX(updated_at) FROM venture_conversations GROUP BY uid'):
+                apps.setdefault(row[0], []).append({'app': 'venture', 'lastSeen': row[1]})
         rows = db.execute('''SELECT u.*, COALESCE(a.n,0) AS event_count,
             COALESCE(a.last_id,0) AS last_event_id, a.last_at AS last_activity,
             e.event AS latest_event, e.details AS latest_details
@@ -108,7 +111,12 @@ def snapshot_payload(connect_db, person='', limit=100, version='', module='all')
             key = public_id(row['uid'])
             if key == person:
                 selected_uid = row['uid']
-            users.append({'id': key, 'name': clean(row['name']), 'email': clean(row['email']),
+            full_name = clean(row['name'])
+            parts = full_name.rsplit(' ', 1)
+            users.append({'id': key, 'name': full_name,
+                'firstName': parts[0] if parts else '',
+                'lastName': parts[1] if len(parts) > 1 else '',
+                'email': clean(row['email']),
                 'provider': providers.get(row['uid'], 'unknown'), 'apps': apps.get(row['uid'], []),
                 'firstSeen': row['first_seen'], 'lastSeen': row['last_seen'],
                 'signIns': row['sign_in_sightings'], 'eventCount': row['event_count'],
@@ -314,3 +322,6 @@ def register(app, connect_db):
     app.add_url_rule('/api/admin/gemini/access', 'vision_gemini_decision', gemini_decision, methods=['POST'])
     app.add_url_rule('/api/admin/gemini/pricing', 'vision_gemini_pricing', gemini_pricing, methods=['GET', 'PUT'])
     app.add_url_rule('/api/gemini/access', 'vision_gemini_own_access', gemini_own_access, methods=['GET', 'POST'])
+
+    from account_administration import register as register_account_admin
+    register_account_admin(app, connect_db, owner_access, forbidden, respond)
