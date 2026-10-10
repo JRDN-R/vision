@@ -213,8 +213,9 @@ def authorize():
     # They are never accepted for inventory, mutations, or another application.
     if request.method in ('GET', 'HEAD') and re.fullmatch(r'/api/vortex/jobs/[0-9a-f]{24}/file', request.path) and request.args.get('ticket'):
         vortex.authorize_ticket()
-        if account_admin.blocked(g.uid):
+        if not account_admin.begin_request(g.uid):
             raise APIError('This Vision account has been removed.', 403, 'account-removed')
+        g.account_admin_tracked = True
         return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
@@ -257,6 +258,12 @@ def authorize():
             app='vortex' if request.path.startswith('/api/vortex/') else '' if request.path.startswith('/api/admin/') else 'vision')
         return
     raise APIError('Sign in or connect this device to your Vision processing server first.', 401)
+
+
+@app.teardown_request
+def release_account_request(_error=None):
+    if getattr(g, 'account_admin_tracked', False):
+        account_admin.end_request(g.uid)
 
 
 @app.after_request
