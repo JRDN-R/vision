@@ -84,6 +84,8 @@ def configure(config_path, migrate_gemini=False):
         raise ValueError('firebaseAuth must be a configuration object.')
     app.config['FIREBASE_IDENTITY'] = (FirebaseIdentity(firebase.get('projectId'))
                                        if firebase.get('enabled') is True else None)
+    # Optional private Firebase Admin key. Never transmitted to the dashboard.
+    app.config['FIREBASE_ADMIN_CREDENTIALS'] = str(firebase.get('adminServiceAccountPath') or '')
     diagnostic = config.get('diagnosticToken', '')
     app.config['DIAGNOSTIC_TOKEN'] = diagnostic if isinstance(diagnostic, str) and re.fullmatch(r'[A-Za-z0-9_-]{32,256}', diagnostic) else ''
     os.environ['PATH'] = str(Path(app.config['FFMPEG']).parent) + os.pathsep + str(Path(app.config['DENO']).parent) + os.pathsep + os.environ.get('PATH', '')
@@ -111,6 +113,7 @@ def configure(config_path, migrate_gemini=False):
     sessions.venture.documents = documents
     sessions.venture.transcription = transcriptions
     sessions.context.initialize(config)
+    app.config['SESSIONS_CONTEXT'] = sessions.context
     app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
     app.config['TRIALS'] = trials
     trials.initialize()
@@ -148,6 +151,9 @@ def initialize_db():
             expires_at REAL NOT NULL, result_path TEXT, attempts INTEGER NOT NULL DEFAULT 0)''')
         db.execute('''CREATE TABLE IF NOT EXISTS responses (
             id TEXT PRIMARY KEY, uid TEXT NOT NULL, status TEXT, updated_at REAL, expires_at REAL)''')
+        # Persisted before Firebase deletion: old ID tokens cannot recreate data.
+        db.execute('''CREATE TABLE IF NOT EXISTS account_removals (
+            uid TEXT PRIMARY KEY, created_at REAL NOT NULL)''')
         if 'uid' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
             db.execute("ALTER TABLE jobs ADD COLUMN uid TEXT NOT NULL DEFAULT 'installation-owner'")
         if 'include_sound_events' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
@@ -245,7 +251,12 @@ def authorize():
             raise APIError('Account sign-in verification is temporarily unavailable on FUPCJ Server. Try again.', 503)
         except InvalidIdentity:
             raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
-        g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
+        account_uid = 'firebase:' + claims['sub']
+        with connect_db() as db:
+            removed = db.execute('SELECT 1 FROM account_removals WHERE uid=?', (account_uid,)).fetchone()
+        if removed:
+            raise APIError('This Vision account has been removed.', 403)
+        g.uid, g.auth_kind = account_uid, 'firebase-google'
         g.identity_claims = claims
         app.config['AUDIT_LOGS'].identity(g.uid, claims,
             app='vortex' if request.path.startswith('/api/vortex/') else '' if request.path.startswith('/api/admin/') else 'vision')
