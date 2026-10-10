@@ -213,6 +213,8 @@ def authorize():
     # They are never accepted for inventory, mutations, or another application.
     if request.method in ('GET', 'HEAD') and re.fullmatch(r'/api/vortex/jobs/[0-9a-f]{24}/file', request.path) and request.args.get('ticket'):
         vortex.authorize_ticket()
+        if account_admin.blocked(g.uid):
+            raise APIError('This Vision account has been removed.', 403, 'account-removed')
         return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
