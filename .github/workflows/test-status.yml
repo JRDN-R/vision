@@ -5,6 +5,10 @@ on:
     paths:
       - 'activity.html'
       - 'vision-pc/activity_dashboard.py'
+      - 'vision-pc/account_administration.py'
+      - 'vision-pc/requirements.txt'
+      - 'vision-pc/Setup-Vision-PC.ps1'
+      - 'tests/test_account_administration.py'
       - 'vision-pc/audit_logs.py'
       - 'vision-pc/server.py'
       - 'vision-pc/vortex.py'
@@ -30,6 +34,7 @@ jobs:
       - name: Audit access, reporting and account isolation
         run: |
           python -m unittest discover -s tests -p test_activity_dashboard.py -v
+          python -m unittest discover -s tests -p test_account_administration.py -v
           python -m unittest discover -s vision-pc -p test_firebase_auth.py -v
           python -m unittest discover -s vision-pc -p test_gemini_server.py -v
           python -m unittest discover -s vision-pc -p test_vortex.py -v
