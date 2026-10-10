@@ -48,7 +48,8 @@ def _target(db, public_id):
     if not isinstance(public_id, str) or not PUBLIC_ID.fullmatch(public_id):
         raise RemovalError("Choose a valid account.", 400)
     for row in db.execute("SELECT uid,name,email FROM audit_users"):
-        if hashlib.sha256(row["uid"].encode()).hexdigest() == public_id:
+        if (row["uid"].startswith("firebase:") and
+                hashlib.sha256(row["uid"].encode()).hexdigest() == public_id):
             return dict(row)
     raise RemovalError("This account is no longer in the directory.", 404)
 
@@ -113,14 +114,15 @@ def _preview(app, db, actor, public_id):
     context = getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)
     is_busy = _busy(db, tables, uid, projects, context)
     configured = bool(app.config.get("FIREBASE_ADMIN_CREDENTIALS"))
+    schema_ready = "account_removals" in tables
     return target, projects, vortex, dict(
         id=public_id, name=target["name"], email=target["email"],
         counts=dict(projects=len(projects),
                     ventureConversations=_count(db, tables, "venture_conversations", "uid=?", (uid,)),
                     vortexJobs=len(vortex),
                     visionImports=_count(db, tables, "jobs", "uid=?", (uid,))),
-        hasActiveWork=is_busy, adminConfigured=configured,
-        canDelete=not is_busy and configured)
+        hasActiveWork=is_busy, adminConfigured=configured and schema_ready,
+        canDelete=not is_busy and configured and schema_ready)
 
 
 def _firebase_client(app):
@@ -149,24 +151,48 @@ def _firebase_client(app):
         raise RemovalError("Firebase account removal is not configured correctly on the Vision PC.", 503) from None
 
 
-def _remove_tree(path):
-    # Paths are built exclusively from server-controlled roots and validated IDs.
+def _remove_tree(path, root):
+    # Refuse to follow swapped parent directories or symlinks outside DATA_DIR.
+    safe_root = root.resolve()
+    if not path.parent.resolve().is_relative_to(safe_root):
+        raise RemovalError("An account storage directory points outside the Vision data folder.", 409)
     if path.is_symlink():
         path.unlink()
     elif path.exists():
         shutil.rmtree(path)
 
 
-def _remove_local_files(app, uid, projects, vortex, result_paths):
+def _media_directories(db, tables, projects):
+    media = []
+    for pid in projects:
+        for table, dirname in (("local_transcriptions", "transcriptions"),
+                               ("uploaded_media", "uploaded-media"),
+                               ("document_jobs", "documents")):
+            if table not in tables:
+                continue
+            for row in db.execute(f"SELECT id FROM {table} WHERE project_id=?", (pid,)):
+                if not LOCAL_ID.fullmatch(row[0]):
+                    raise RemovalError("An account media job has an invalid identifier.", 409)
+                media.append((dirname, row[0]))
+        if "uploaded_media_uploads" in tables:
+            for row in db.execute("SELECT request_id FROM uploaded_media_uploads WHERE project_id=?", (pid,)):
+                key = hashlib.sha256((pid + "\\0" + row[0]).encode()).hexdigest()
+                media.append(("uploaded-media/.uploads", key))
+    return media
+
+
+def _remove_local_files(app, uid, projects, vortex, media, result_paths):
     root = Path(app.config["DATA_DIR"])
     user_dir = root / "users" / hashlib.sha256(uid.encode()).hexdigest()
-    _remove_tree(user_dir)
+    _remove_tree(user_dir, root)
     for pid in projects:
-        _remove_tree(root / "projects" / pid)
+        _remove_tree(root / "projects" / pid, root)
         context_root = root / "context" / "sources" / hashlib.sha256((uid + "\0" + pid).encode()).hexdigest()
-        _remove_tree(context_root)
+        _remove_tree(context_root, root)
     for job in vortex:
-        _remove_tree(root / "vortex" / job)
+        _remove_tree(root / "vortex" / job, root)
+    for directory, ident in media:
+        _remove_tree(root / directory / ident, root)
     # Older import jobs can retain results outside the project directory.
     safe_root = root.resolve()
     for raw in result_paths:
@@ -214,7 +240,7 @@ def _purge_database(db, uid, projects, tables):
     for table in ("jobs", "responses", "vortex_jobs", "venture_conversations",
                   "venture_preferences", "venture_workspace_preferences", "venture_dictation_requests",
                   "venture_funding", "venture_calibrations", "venture_ledger",
-                  "venture_container_costs", "gemini_usage", "gemini_access",
+                  "venture_container_costs", "venture_memory", "gemini_usage", "gemini_access",
                   "gemini_access_decisions", "account_credentials", "audit_events",
                   "audit_signins", "audit_account_metadata", "audit_user_apps", "audit_users"):
         _delete(db, tables, table, "uid=?", (uid,))
@@ -253,6 +279,8 @@ def register(app, connect_db, owner_access, forbidden, respond):
                     raise RemovalError("The confirmation email does not match the selected account.", 400)
                 if preview["hasActiveWork"]:
                     raise RemovalError("This account still has processing work. Stop it and retry.", 409)
+                if not preview["canDelete"]:
+                    raise RemovalError("Update the Vision PC and configure Firebase administrator credentials.", 503)
                 auth, sdk_app = _firebase_client(app)  # Fail before any changes if unconfigured.
                 uid = target["uid"]
                 with connect_db() as db:
@@ -277,8 +305,9 @@ def register(app, connect_db, owner_access, forbidden, respond):
                              getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)):
                         raise RemovalError("A previous processing job is still finishing. Retry removal shortly.", 409)
                     result_paths = [r[0] for r in db.execute("SELECT result_path FROM jobs WHERE uid=?", (uid,))] if "jobs" in tables else []
+                    media = _media_directories(db, tables, projects)
                 _remove_context(getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None), uid)
-                _remove_local_files(app, uid, projects, vortex, result_paths)
+                _remove_local_files(app, uid, projects, vortex, media, result_paths)
                 with connect_db() as db:
                     db.execute("BEGIN IMMEDIATE")
                     tables, projects, _ = _scope(db, uid)
