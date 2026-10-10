@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 import shutil
 import threading
 import time
@@ -183,6 +184,15 @@ class AccountAdministration:
                 return uid, clean(account.email), ''
         raise LookupError('This account no longer exists.')
 
+    def context_db(self):
+        engine = self.sessions.context.engine
+        if engine:
+            return engine.db()
+        path = Path(self.app.config['DATA_DIR']) / 'context' / 'context.sqlite3'
+        if not path.is_file() or path.is_symlink():
+            return None
+        return sqlite3.connect(path, timeout=30)
+
     def active_work(self, uid, projects):
         with self.db() as db:
             for table, where, args in (
@@ -199,12 +209,14 @@ class AccountAdministration:
                     ('document_jobs', "project_id=? AND status IN ('queued','processing')")):
                     if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', (pid,)).fetchone():
                         return True
-        engine = self.sessions.context.engine
-        if engine:
-            with engine.db() as db:
-                if db.execute("SELECT 1 FROM context_jobs WHERE owner=? AND status IN ('queued','processing') LIMIT 1",
-                              (uid,)).fetchone():
+        context = self.context_db()
+        if context:
+            try:
+                if context.execute("SELECT 1 FROM context_jobs WHERE owner=? AND status IN ('queued','processing') LIMIT 1",
+                                   (uid,)).fetchone():
                     return True
+            finally:
+                context.close()
         return False
 
     def owned(self, uid):
@@ -258,23 +270,26 @@ class AccountAdministration:
             remove_owned(audit.directory / audit._filename(uid))
 
     def erase_context(self, uid):
-        engine = self.sessions.context.engine
-        if not engine:
-            # Do not claim a complete wipe if an existing context index is inaccessible.
-            path = Path(self.app.config['DATA_DIR']) / 'context' / 'context.sqlite3'
-            if path.is_file():
-                raise RuntimeError('Enable or repair the intelligent context index before finishing account removal.')
+        context = self.context_db()
+        if not context:
             return
-        with engine.db() as db:
-            db.execute('BEGIN IMMEDIATE')
-            db.execute('DELETE FROM context_fts WHERE rowid IN (SELECT id FROM context_chunks WHERE owner=?)', (uid,))
+        try:
+            context.execute('BEGIN IMMEDIATE')
+            context.execute('DELETE FROM context_fts WHERE rowid IN (SELECT id FROM context_chunks WHERE owner=?)', (uid,))
             for table in ('context_chunks','context_sources','context_cache','context_vectors',
                           'context_heads','context_generations','context_jobs'):
-                db.execute('DELETE FROM '+table+' WHERE owner=?', (uid,))
+                context.execute('DELETE FROM '+table+' WHERE owner=?', (uid,))
+            context.commit()
+        except Exception:
+            context.rollback()
+            raise
+        finally:
+            context.close()
 
     def erase_database(self, uid, projects):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            existing = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
             for pid in projects:
                 # No arbitrary, client-supplied IDs ever reach this method.
                 for table, col in (('run_events','run_id'),('run_artifacts','run_id'),
@@ -286,7 +301,8 @@ class AccountAdministration:
                                    ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),
                                    ('venture_search','cid'),('context_sync_jobs','project_id'),
                                    ('project_runs','project_id')):
-                    db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (pid,))
+                    if table in existing:
+                        db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (pid,))
                 db.execute('DELETE FROM venture_memory WHERE cid=?', (pid,))
                 db.execute('DELETE FROM venture_conversations WHERE id=? AND uid=?', (pid,uid))
                 db.execute('DELETE FROM projects WHERE id=? AND owner_uid=?', (pid,uid))
@@ -302,9 +318,11 @@ class AccountAdministration:
                                ('jobs','uid'),('audit_events','uid'),('audit_signins','uid'),
                                ('audit_account_metadata','uid'),('audit_user_apps','uid'),
                                ('audit_users','uid')):
-                db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (uid,))
+                if table in existing:
+                    db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (uid,))
             # Decisions performed by this former admin must not retain their identity.
-            db.execute('DELETE FROM gemini_access_decisions WHERE actor_uid=?', (uid,))
+            if 'gemini_access_decisions' in existing:
+                db.execute('DELETE FROM gemini_access_decisions WHERE actor_uid=?', (uid,))
             db.execute("""UPDATE account_deletions SET uid=NULL,email=NULL,state='complete',completed_at=?
                           WHERE id=?""", (time.time(),public_id(uid)))
 
@@ -362,7 +380,8 @@ class AccountAdministration:
             try:
                 accounts = self.directory(self.firebase_users())
                 return respond({'available':True,'users':accounts})
-            except (ImportError,RuntimeError,OSError,ValueError) as error:
+            except Exception as error:
+                self.app.logger.warning('Firebase account directory unavailable (%s)',type(error).__name__)
                 return respond({'available':False,'users':[],
                                 'error':str(error) if isinstance(error,RuntimeError) else
                                         'Firebase account directory is temporarily unavailable.'},503)
@@ -384,7 +403,7 @@ class AccountAdministration:
                 return respond({'error':str(error)},403)
             except BlockingIOError as error:
                 return respond({'error':str(error)},409)
-            except (OSError,RuntimeError,Exception) as error:
+            except Exception as error:
                 # Never return raw SDK exceptions, file paths or credentials.
                 self.app.logger.error('Account deletion needs retry (%s)',type(error).__name__)
                 return respond({'error':'Account deletion could not finish. No success was reported. '
