@@ -30,6 +30,7 @@ from trials import Trials
 from gemini_access import GeminiAccess, GeminiUsage
 from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 from vortex import VortexJobs
+from account_administration import AccountAdministration
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -114,6 +115,7 @@ def configure(config_path, migrate_gemini=False):
     app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
     app.config['TRIALS'] = trials
     trials.initialize()
+    account_admin.initialize(config)
     return config
 
 
@@ -246,6 +248,8 @@ def authorize():
         except InvalidIdentity:
             raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
         g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
+        if account_admin.blocked(g.uid):
+            raise APIError('This Vision account has been removed.', 403, 'account-removed')
         g.identity_claims = claims
         app.config['AUDIT_LOGS'].identity(g.uid, claims,
             app='vortex' if request.path.startswith('/api/vortex/') else '' if request.path.startswith('/api/admin/') else 'vision')
@@ -691,6 +695,7 @@ uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
+account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')
