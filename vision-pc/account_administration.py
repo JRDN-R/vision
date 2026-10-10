@@ -176,7 +176,7 @@ def _media_directories(db, tables, projects):
                 media.append((dirname, row[0]))
         if "uploaded_media_uploads" in tables:
             for row in db.execute("SELECT request_id FROM uploaded_media_uploads WHERE project_id=?", (pid,)):
-                key = hashlib.sha256((pid + "\\0" + row[0]).encode()).hexdigest()
+                key = hashlib.sha256((pid + "\0" + row[0]).encode()).hexdigest()
                 media.append(("uploaded-media/.uploads", key))
     return media
 
