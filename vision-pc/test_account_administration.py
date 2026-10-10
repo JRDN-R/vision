@@ -141,7 +141,7 @@ class AccountAdministrationTests(unittest.TestCase):
         self.assertTrue(response.json['deleted'])
         fake_delete.assert_called_once_with('alice',app=self.fake_app)
         with server.connect_db() as db:
-            self.assertIsNone(db.execute('SELECT id FROM audit_users WHERE uid=?',(self.uid,)).fetchone())
+            self.assertIsNone(db.execute('SELECT uid FROM audit_users WHERE uid=?',(self.uid,)).fetchone())
             self.assertIsNone(db.execute('SELECT id FROM projects WHERE owner_uid=?',(self.uid,)).fetchone())
             self.assertIsNone(db.execute('SELECT id FROM vortex_jobs WHERE uid=?',(self.uid,)).fetchone())
             self.assertIsNone(db.execute('SELECT uid FROM venture_preferences WHERE uid=?',(self.uid,)).fetchone())
