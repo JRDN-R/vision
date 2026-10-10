@@ -29,6 +29,39 @@ def sound_response(present=True, label='Warm piano music plays softly.'):
 
 
 class GeminiPureTests(unittest.TestCase):
+    @staticmethod
+    def speech_response(words):
+        return {'steps': [{'content': [{'type': 'text', 'annotations': [
+            {'type': 'word_info', 'text': text, 'start_offset': start, 'end_offset': end}
+            for text, start, end in words]}]}]}
+
+    def test_rounded_words_are_preserved_with_their_neighboring_speech(self):
+        payload = self.speech_response([
+            ('Hello', '1.250s', '1.250s'), ('there.', '1.600s', '2.750s')])
+        self.assertEqual(gemini.speech_segments(payload, 600, 30),
+                         [{'start': 601.25, 'end': 602.75, 'text': 'Hello there.'}])
+
+    def test_point_words_and_padding_produce_bounded_nonempty_subtitles(self):
+        from transcription import combined_srt
+        cases = [(0, 0), (1.25, 1.25), (30, 30), (29.9, 30.4),
+                 (30.1, 30.2), (30.5, 30.5), (1.2501, 1.2502)]
+        for base in (0, 600, 600.0004):
+            for start, end in cases:
+                with self.subTest(base=base, start=start, end=end):
+                    cues = gemini.speech_segments(self.speech_response([('Keep me.', start, end)]), base, 30)
+                    self.assertEqual(len(cues), 1)
+                    self.assertGreaterEqual(cues[0]['start'], base)
+                    self.assertLessEqual(cues[0]['end'], base + 30)
+                    self.assertGreater(round(cues[0]['end'] * 1000), round(cues[0]['start'] * 1000))
+                    self.assertIn('Keep me.', combined_srt(cues))
+
+    def test_invalid_word_timing_is_still_rejected(self):
+        for start, end in [(-.1, .2), (2, 1), (30, 30.501), (600, 601),
+                           (float('nan'), 1), (0, float('inf')), (True, 1), ('bad', '1s')]:
+            with self.subTest(start=start, end=end):
+                with self.assertRaises(gemini.GeminiProcessingError):
+                    gemini.speech_segments(self.speech_response([('Private words', start, end)]), 600, 30)
+
     def test_transcribe_word_annotations_keep_offsets_and_reject_invented_timestamps(self):
         payload = {'steps': [{'content': [{'type': 'text', 'text': 'Hello there.', 'annotations': [
             {'type': 'word_info', 'text': 'Hello', 'start_offset': '1.250s', 'end_offset': '1.500s'},
@@ -192,6 +225,52 @@ class GeminiQueueTests(unittest.TestCase):
         self.assertEqual(result['speechSegments'], [{'start': 601.25, 'end': 602.75, 'text': 'Hello.'}])
         self.assertIn('00:10:01,250 --> 00:10:02,750', result['combinedSrt'])
         self.assertNotIn('usage', result)
+
+    def test_queue_completes_rounded_speech_with_sound_effects_enabled(self):
+        job = self.approved_job(include_sounds=True)
+        section = {**self.processor(job).manifest['sections'][0], 'duration': 30}
+        spoken = GeminiPureTests.speech_response([
+            ('Hello', '1.250s', '1.250s'), ('there.', '1.600s', '2.750s'),
+            ('Last.', '30.1s', '30.2s')])
+        with patch.object(gemini.GeminiProcessor, 'probe_sections', return_value=[section]), \
+                patch.object(gemini.GeminiProcessor, 'extract', return_value=b'audio'), \
+                patch.object(self.service, 'run_sound_events', return_value={'status': 'completed', 'soundEvents': []}), \
+                patch.object(gemini.requests, 'post', return_value=response(spoken)) as network:
+            self.assertTrue(self.service.work_once())
+        result = self.status(job).json
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['result']['soundEventStatus'], 'completed')
+        self.assertIn('Hello there.', result['result']['combinedSrt'])
+        self.assertIn('Last.', result['result']['combinedSrt'])
+        self.assertEqual(network.call_count, 1)
+        for cue in result['result']['speechSegments']:
+            self.assertTrue(600 <= cue['start'] < cue['end'] <= 630)
+
+    def test_timing_failure_logs_only_numbers_and_does_not_replay_the_request(self):
+        job = self.approved_job()
+        processor = self.processor(job)
+        section = {**processor.manifest['sections'][0], 'duration': 30}
+        spoken = GeminiPureTests.speech_response([('private-transcript-text', '31s', '32s')])
+        spoken['usage'] = {'total_input_tokens': 120, 'total_output_tokens': 10, 'total_tokens': 130}
+        with patch.object(processor, 'extract', return_value=b'audio'), \
+                patch.object(gemini.requests, 'post', return_value=response(spoken)) as network:
+            with self.assertLogs(server.app.logger, level='WARNING') as logs:
+                with self.assertRaisesRegex(gemini.GeminiProcessingError, 'outside the audio section'):
+                    processor.transcribe([section])
+            with self.assertRaisesRegex(gemini.GeminiProcessingError, 'earlier or unavailable usage receipt'):
+                processor.transcribe([section])
+        self.assertEqual(network.call_count, 1)
+        logged = '\n'.join(logs.output)
+        self.assertIn('past_section_end', logged)
+        self.assertIn('"wordStart": 31.0', logged)
+        self.assertIn('"sectionDuration": 30', logged)
+        for private in ('private-transcript-text', 'private-server-key', 'alice@example.com'):
+            self.assertNotIn(private, logged)
+            self.assertNotIn(private, json.dumps(self.status(job).json))
+        with server.connect_db() as db:
+            receipt = dict(db.execute('SELECT * FROM gemini_usage WHERE job_id=?', (job,)).fetchone())
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertEqual(json.loads(receipt['raw_usage'])['total_tokens'], 130)
 
     def test_receipt_without_checkpoint_never_replays_billable_request(self):
         job = self.approved_job()

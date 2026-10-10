@@ -28,10 +28,22 @@ SPEECH_CHUNK_SECONDS = 600
 MAX_INLINE_BYTES = 12 * 1024 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 PROMPT_VERSION = 'sound-events-v1'
+SPEECH_END_PADDING_SECONDS = .5
 
 
 class GeminiProcessingError(RuntimeError):
     """Fixed public diagnostics; never include an upstream response or key."""
+
+
+class GeminiSpeechTimingError(GeminiProcessingError):
+    """Only fixed reason codes and numeric timing may enter the private log."""
+
+    def __init__(self, message, reason, base, duration, word_index, start=None, end=None):
+        super().__init__(message)
+        self.diagnostics = {'reason': reason, 'wordIndex': word_index,
+                            'sectionStart': base, 'sectionDuration': duration,
+                            'wordStart': start if finite_number(start) else None,
+                            'wordEnd': end if finite_number(end) else None}
 
 
 class GeminiInterrupted(RuntimeError):
@@ -69,6 +81,8 @@ def response_content(response):
 
 def speech_segments(response, base, duration):
     """Group authoritative word timestamps into short readable SRT cues."""
+    if not finite_number(base) or base < 0 or not finite_number(duration) or duration <= 0:
+        raise GeminiProcessingError('The Gemini audio section has an invalid duration.')
     words = []
     for content in response_content(response):
         for word in content.get('annotations', []):
@@ -77,10 +91,21 @@ def speech_segments(response, base, duration):
             text = ' '.join(str(word.get('text', '')).split())
             if not text:
                 continue
-            start, end = offset_seconds(word.get('start_offset')), offset_seconds(word.get('end_offset'))
-            if not 0 <= start < end <= duration + .5:
-                raise GeminiProcessingError('Gemini returned speech timestamps outside the audio section.')
-            words.append({'start': base + start, 'end': base + min(end, duration), 'text': text,
+            try:
+                start, end = offset_seconds(word.get('start_offset')), offset_seconds(word.get('end_offset'))
+            except GeminiProcessingError:
+                raise GeminiSpeechTimingError('Gemini returned invalid speech timestamps.',
+                    'invalid_offset', base, duration, len(words)) from None
+            reason = ('non_finite_offset' if not finite_number(start) or not finite_number(end) else
+                      'negative_start' if start < 0 else 'reversed_word' if end < start else
+                      'past_section_end' if end > duration + SPEECH_END_PADDING_SECONDS else None)
+            if reason:
+                raise GeminiSpeechTimingError('Gemini returned speech timestamps outside the audio section.',
+                    reason, base, duration, len(words), start, end)
+            # Rounded word annotations can be points, including within the small
+            # encoder-padding allowance. Clip BOTH ends before grouping; clipping
+            # only the end can create a reversed cue and fail browser validation.
+            words.append({'start': base + min(start, duration), 'end': base + min(end, duration), 'text': text,
                           'speaker': str(word.get('speaker', ''))[:80]})
     words.sort(key=lambda word: (word['start'], word['end']))
     if not words:
@@ -92,6 +117,16 @@ def speech_segments(response, base, duration):
     segments, active, parts, speaker = [], None, [], None
     def finish():
         if active:
+            # Keep point words with their neighboring speech where possible.
+            # An isolated point needs one display tick to survive millisecond SRT
+            # serialization. Never extend that tick beyond the actual section.
+            if round(active['end'] * 1000) <= round(active['start'] * 1000):
+                active['end'] = min(base + duration, (round(active['start'] * 1000) + 1) / 1000)
+                if round(active['end'] * 1000) <= round(active['start'] * 1000):
+                    active['start'] = max(base, (round(active['end'] * 1000) - 1) / 1000)
+                if round(active['end'] * 1000) <= round(active['start'] * 1000):
+                    raise GeminiSpeechTimingError('The Gemini audio section is too short for subtitle timing.',
+                        'below_subtitle_precision', base, duration, None)
             text = ' '.join(parts)
             text = re.sub(r'\s+([,.;:!?])', r'\1', text)
             segments.append({**active, 'text': text})
@@ -315,6 +350,10 @@ class GeminiProcessor:
                 result = parser(data)
                 status = 'rejected' if isinstance(result, dict) and result.get('present') is False else 'succeeded'
                 return result
+        except GeminiSpeechTimingError as error:
+            self.service.app.logger.warning('Gemini speech timing rejected for job %s: %s',
+                self.value['id'], json.dumps(error.diagnostics, sort_keys=True, allow_nan=False))
+            raise
         except requests.RequestException:
             raise GeminiProcessingError('The Gemini request could not finish. Check the owner activity monitor.') from None
         except GeminiInterrupted:
