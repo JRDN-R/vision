@@ -25,7 +25,7 @@ projectRequest=async(path,options={})=>{
 window.ragFixture={
  setup:async()=>{
   await accountReady;
-  accountUpdateGate=()=>{};accountShowWelcome=()=>{};accountCanUseApp=()=>true;
+  accountUpdateGate=()=>{};accountCanUseApp=()=>true;
   for(const d of document.querySelectorAll('dialog[open]'))d.close();
   document.documentElement.classList.remove('account-locked','account-restoring','account-restore-failed');$('accountGate').hidden=true;
   document.querySelectorAll('[inert]').forEach(el=>el.inert=false);
