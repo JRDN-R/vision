@@ -1,9 +1,9 @@
 {
-  "title": "Vortex thumbnails and media formats",
+  "title": "Choose RAG or ZIP when exporting",
   "items": [
-    "YouTube search results show thumbnails and load more videos and songs as you scroll.",
-    "Open a selected or recent item's thumbnail to visit its original source.",
-    "Choose MP4 or MOV video, or extract audio as M4A, MP3 or WAV. New media exports no longer use MKV or WebM.",
-    "Run the Windows processor Update action on FUPCJ Server to activate search pagination and media conversion."
+    "Export now offers Download RAG (recommended) or Download ZIP.",
+    "RAG downloads a compact text snapshot for AI using the context engine already on FUPCJ. It includes source references and any retrieval limitations.",
+    "Choose ZIP when your task needs original images or files. Save project still downloads your editable board.",
+    "If some evidence is unavailable, review the notice before downloading the available RAG text."
   ]
 }
