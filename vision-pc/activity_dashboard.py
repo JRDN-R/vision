@@ -113,9 +113,11 @@ def snapshot_payload(connect_db, person='', limit=100, version='', module='all')
                 selected_uid = row['uid']
             full_name = clean(row['name'])
             parts = full_name.rsplit(' ', 1)
+            first_name = clean(row['first_name'], 100) if 'first_name' in row.keys() else ''
+            last_name = clean(row['last_name'], 100) if 'last_name' in row.keys() else ''
             users.append({'id': key, 'name': full_name,
-                'firstName': parts[0] if parts else '',
-                'lastName': parts[1] if len(parts) > 1 else '',
+                'firstName': first_name or (parts[0] if parts else ''),
+                'lastName': last_name or (parts[1] if len(parts) > 1 else ''),
                 'email': clean(row['email']),
                 'provider': providers.get(row['uid'], 'unknown'), 'apps': apps.get(row['uid'], []),
                 'firstSeen': row['first_seen'], 'lastSeen': row['last_seen'],
