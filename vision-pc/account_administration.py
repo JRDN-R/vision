@@ -269,7 +269,6 @@ def register(app, connect_db, owner_access, forbidden, respond):
     if "vision_account_remove" in app.view_functions:
         return
 
-    @app.get("/api/admin/accounts/<account_id>")
     def vision_account_preview(account_id):
         if not owner_access():
             return forbidden()
@@ -282,7 +281,6 @@ def register(app, connect_db, owner_access, forbidden, respond):
         except (OSError, sqlite3.Error, ValueError):
             return respond({"error": "Account removal preview is unavailable on the PC."}, 503)
 
-    @app.post("/api/admin/accounts/<account_id>/delete")
     def vision_account_remove(account_id):
         if not owner_access():
             return forbidden()
@@ -345,3 +343,8 @@ def register(app, connect_db, owner_access, forbidden, respond):
             return respond({"error": str(error)}, error.status)
         except (OSError, sqlite3.Error, ValueError):
             return respond({"error": "Account cleanup is incomplete. The account is blocked from this PC. Retry removal.", "retryable": True}, 503)
+
+    app.add_url_rule("/api/admin/accounts/<account_id>", "vision_account_preview",
+                     vision_account_preview, methods=["GET"])
+    app.add_url_rule("/api/admin/accounts/<account_id>/delete", "vision_account_remove",
+                     vision_account_remove, methods=["POST"])
