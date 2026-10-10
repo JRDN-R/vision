@@ -596,13 +596,13 @@ def run():
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
             # The menu reports the web release, not an assumed Windows version.
-            assert page.locator('#vortexVersion').text_content() == 'v1.0.2'
+            assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
             assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
             if width == 390:
-                api.server_version = '1.0.2'
+                api.server_version = '1.0.3'
                 refresh(page)
-                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.2'
-                assert page.locator('#vortexVersion').text_content() == 'v1.0.2'
+                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.3'
+                assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
                 # Missing versions on older servers and malformed data
                 # are neutral; they neither block history nor inject markup.
                 for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.1'}):
@@ -963,8 +963,8 @@ def run():
             assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             version = page.locator('#navigation #vortexVersion')
-            assert version.inner_text() == 'v1.0.2'
-            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.2'
+            assert version.inner_text() == 'v1.0.3'
+            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.3'
             name_box = page.locator('#navigation .nav-brand-name').bounding_box()
             version_box = version.bounding_box()
             links_box = page.locator('#navigation nav').bounding_box()
@@ -1026,7 +1026,7 @@ def run():
                 page.wait_for_timeout(20)
             assert api.held_avatar is not None
             page.locator('#accountDialog .close-dialog').click()
-            api.server_version = '1.0.2'
+            api.server_version = '1.0.3'
             api.hold_list = True
             # A scheduled refresh may consume the held request and disable the
             # button first. Dispatch without waiting for actionability: either

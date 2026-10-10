@@ -162,7 +162,8 @@ to the Spotify child; no Firebase tokens or unrelated credentials are forwarded.
 
 All browser messages are neutral (Finding media, Preparing download, Downloading
 media, Converting to the selected format). All-engine failure yields one concise
-retrieval error. Progress is indeterminate unless a foreground candidate has real
+retrieval error, except a confirmed duration rejection reports the server's
+duration limit after alternatives have finished. Progress is indeterminate unless a foreground candidate has real
 byte/fragment/encode measurements. Internal diagnostic events contain only an
 allowlisted engine, failure category and elapsed milliseconds, and are sent to
 the server logger. Raw exceptions, URLs, cookies and signed streams are not logged.
@@ -394,7 +395,7 @@ database remain included in the existing backup process.
 | Active jobs per account / server queue | 3 / 20 |
 | Downloaded artifact | 2 GiB |
 | Account / total Vortex storage | 10 / 40 GiB, including reserved jobs |
-| Media duration | 2 hours |
+| Media duration | 4 hours |
 | Gallery contents | 50 files |
 | Search page size / maximum pages | 8 videos + 8 songs / 50 pages |
 | Lookup / download timeout | 3 / 45 minutes |
@@ -403,6 +404,15 @@ database remain included in the existing backup process.
 | Aggregate temporary disk | Existing 3 × 2 GiB allowance, shared across attempts |
 | Per-attempt lookup / download timeout | 2 / 40 minutes |
 | File delivery URL lifetime | At most 5 minutes and never beyond file expiry |
+
+The four-hour media limit includes completed livestream recordings (`was_live`).
+Active and upcoming livestreams remain unsupported. Version 1.0.3 raises the
+previous two-hour limit and preserves an explicit duration-limit error instead
+of describing an over-limit recording as unavailable or requiring sign-in.
+Run the normal Windows `-Action Update` to activate this backend change; no
+Docker or extractor reinstallation is required. File-size, storage, memory and
+processing deadlines still apply, so accepting a recording does not guarantee
+its full download and conversion will fit those separate limits.
 
 Paths live under the configured `dataDir/vortex/`, using generated job IDs and
 server-chosen filenames. Job IDs alone grant no access: every history, update,

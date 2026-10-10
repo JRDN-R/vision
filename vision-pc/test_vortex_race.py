@@ -142,7 +142,9 @@ if spec.get('child') and kind=='inspect':
  child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
  (d.parent.parent/(a.adapter+'.pid')).write_text(str(child.pid))
 time.sleep(spec.get(kind+'Delay',0.05))
-if spec.get(kind+'Fail'):raise SystemExit(1)
+if spec.get(kind+'Fail'):
+ print(json.dumps({'error':spec.get('error','fixture failure'),'category':spec.get('category','unavailable')}),flush=True)
+ raise SystemExit(1)
 media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter}
 result={'complete':True,'media':media,'results':[media]}
 if kind=='download':
@@ -201,6 +203,25 @@ class RaceTests(unittest.TestCase):
             self.run_race({'one': {'inspectFail': True}, 'two': {'downloadFail': True}})
         self.assertFalse((self.root / 'race').exists())
         self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_duration_rejection_survives_race_without_forwarding_adapter_text(self):
+        for limit, hours in ((7200, 2), (14400, 4)):
+            with self.subTest(limit=limit), self.assertRaisesRegex(worker.DurationLimitError, f'{hours}-hour') as caught:
+                self.run_race({'long': {'inspectFail': True, 'category': 'duration_limit',
+                                       'error': 'https://example.com/?token=private'},
+                               'unavailable': {'inspectFail': True}}, kind='inspect', maxDuration=limit)
+            self.assertNotIn('private', str(caught.exception))
+            self.assertFalse((self.root / 'race').exists())
+
+    def test_duration_rejection_does_not_preempt_successful_alternative(self):
+        result = self.run_race({'rejected': {'inspectFail': True, 'category': 'duration_limit'},
+                                'valid': {'inspectDelay': .2}}, kind='inspect')
+        self.assertEqual(result['media']['title'], 'valid')
+
+    def test_download_duration_rejection_retains_specific_terminal_error(self):
+        with self.assertRaisesRegex(worker.DurationLimitError, '4-hour'):
+            self.run_race({'long': {'downloadFail': True, 'category': 'duration_limit'}})
+        self.assertFalse((self.root / 'race').exists())
 
     def test_inspection_cancels_losing_worker_and_descendant(self):
         self.run_race({'slow': {'inspectDelay': 30, 'child': True}, 'fast': {'inspectDelay': .3}}, kind='inspect')

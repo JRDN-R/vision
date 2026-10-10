@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -227,8 +228,69 @@ class VortexAdapterTests(unittest.TestCase):
     def test_selected_long_media_still_obeys_duration_limit(self):
         with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info',
                 return_value=dict(id='long', title='Long video', duration=28800)):
-            with self.assertRaisesRegex(worker.WorkerError, 'two-hour'):
+            with self.assertRaisesRegex(worker.DurationLimitError, '2-hour'):
                 worker.run_ytdlp(self.request(kind='inspect'))
+
+    def test_completed_three_hour_recording_and_duration_boundary(self):
+        info = dict(self.video(1080), id='YWwf-Og5gSQ',
+                    title='Royalwood Homecoming Weekend | Friday Night',
+                    webpage_url='https://www.youtube.com/watch?v=YWwf-Og5gSQ',
+                    duration=10151, live_status='was_live', is_live=False)
+
+        def extract(ydl, value, download=False):
+            # Exercise real yt-dlp format selection and its match_filter, not
+            # only the worker's second metadata check. No provider is contacted.
+            return ydl.process_ie_result(copy.deepcopy(info), download=False)
+
+        with patch.object(worker, 'configure_ytdlp_safety'), \
+                patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            request = self.request(input=info['webpage_url'], kind='inspect')
+            with self.assertRaisesRegex(worker.DurationLimitError, '2-hour'):
+                worker.run_ytdlp(request)
+            request.pop('maxDuration')
+            result = worker.run_ytdlp(request)
+            self.assertEqual(result['media']['duration'], 10151)
+            self.assertTrue(worker.verify_result(result, request)['complete'])
+            info['duration'] = 14400
+            self.assertTrue(worker.run_ytdlp(request)['complete'])
+            info['duration'] = 14401
+            with self.assertRaisesRegex(worker.DurationLimitError, '4-hour'):
+                worker.run_ytdlp(request)
+            for status in ('is_live', 'is_upcoming'):
+                info.update(duration=60, live_status=status)
+                with self.assertRaisesRegex(worker.WorkerError, 'live broadcast'):
+                    worker.run_ytdlp(request)
+
+    def test_final_probe_enforces_long_recording_duration(self):
+        artifact = self.root / 'media.mp4'
+        artifact.write_bytes(b'fixture')
+        result = dict(complete=True, filename=artifact.name,
+                      media={'mediaType': 'video', 'duration': 10151})
+        data = {'streams': [{'codec_type': 'video', 'codec_name': 'h264', 'height': 1080}],
+                'format': {'duration': '10151'}}
+        request = self.request()
+        request.pop('maxDuration')
+        with patch.object(worker, 'probe_file', return_value=data), \
+                patch.object(worker.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
+            self.assertTrue(worker.verify_result(copy.deepcopy(result), request)['complete'])
+            data['format']['duration'] = '14401'
+            with self.assertRaisesRegex(worker.DurationLimitError, '4-hour'):
+                worker.verify_result(copy.deepcopy(result), request)
+
+    def test_duration_error_survives_worker_envelope_without_provider_details(self):
+        request_file = self.root / 'request.json'
+        request_file.write_text(json.dumps(self.request()), encoding='utf-8')
+        from vortex_race import PUBLIC_ERROR
+        for failure, message, category in (
+                (worker.DurationLimitError(14400), "This media exceeds Vortex's 4-hour duration limit.", 'duration_limit'),
+                (worker.SourceError('private signed URL https://example.com/?token=secret'), PUBLIC_ERROR, 'unavailable')):
+            self.events.seek(0)
+            self.events.truncate()
+            with patch.object(sys, 'argv', ['vortex_worker.py', '--request', str(request_file)]), \
+                    patch('vortex_network.install_network_guard'), patch.object(worker.logging, 'disable'), \
+                    patch.object(worker, 'run', side_effect=failure):
+                self.assertEqual(worker.main(), 1)
+            self.assertEqual(json.loads(self.events.getvalue()), {'error': message, 'category': category})
 
     def test_youtube_music_selection_preserves_music_url_and_best_audio(self):
         info = dict(self.audio(256), id='abcdefghij1', title='Song', duration=180,
