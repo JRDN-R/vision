@@ -202,7 +202,9 @@ async function pumpYouTubeImports(){
   markDirty();
  }finally{
   decoder?.stop();if(ownsIO)ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
-  if(completed&&job.remoteId&&job.backendUrl===cloudConfig?.backendUrl)void youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{method:'DELETE'}).catch(()=>{});
+  // Keep Vortex receipts until normal expiry so a closed tab can recover a result
+  // even if its final project autosave had not reached the server yet.
+  if(completed&&job.sourceKind!=='vortex'&&job.remoteId&&job.backendUrl===cloudConfig?.backendUrl)void youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{method:'DELETE'}).catch(()=>{});
   if(youtubeImportRuntime===runtime)youtubeImportRuntime=null;youtubeImportRunning=false;if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();else $('youtubeImport').disabled=false;renderActivity();scheduleTranscriptionQueue();scheduleYouTubeImports(completed?100:20000);
  }
 }

@@ -21,7 +21,8 @@ availability, DRM, sign-in requirements and the two-hour limit are unchanged.
 
 After Apply is accepted, download, snapshots and transcription run durably on
 FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
-the saved Vision project to receive the result. Original media is not embedded
+the saved Vision project to receive the result. Completed import receipts remain
+available for 24 hours to cover delayed project saves. Original media is not embedded
 in Vision or its ZIP/RAG exports; the small processing copy is deleted once
 snapshots and the durable transcription receipt are saved.
 
