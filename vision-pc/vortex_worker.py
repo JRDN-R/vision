@@ -643,10 +643,17 @@ def run_gallery(request):
         expected = identity(value)[1]
         files = [item for item in files if str(item['metadata'].get('tweet_id')) == expected]
         videos = [item for item in files if item['extension'] not in IMAGE_EXTENSIONS]
-        # A video request must never race a thumbnail or a quoted post.
-        if not videos or '/photo/' in urlparse(value).path or '/video/' in urlparse(value).path:
+        # Preserve the numbered video selection after verifying the tweet ID.
+        selected = re.search(r'/(video|photo)/(\d+)/?$', urlparse(value).path)
+        if not videos or (selected and selected.group(1) == 'photo'):
             raise SourceError('No unambiguous public video was returned.')
-        files = videos
+        if selected:
+            position = int(selected.group(2))
+            if not 1 <= position <= len(videos):
+                raise SourceError('The requested video is unavailable in this post.')
+            files = [videos[position - 1]]
+        else:
+            files = videos
         first = files[0]
     metadata = first["metadata"]
     if is_instagram_reel(value) and any(item['extension'] in IMAGE_EXTENSIONS for item in files):
