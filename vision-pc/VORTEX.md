@@ -39,15 +39,13 @@ not need its engines or Docker services reinstalled. The updater includes
 
 ## Version
 
-Current release: **v1.0.1**. This patch fixes successful normalized URL lookups
-being silently discarded by the webpage and adds visible feedback when an
-inspection receipt is no longer available. The active job retains its original
-submitted text so shared/short URLs can match the server's canonical response
-without allowing late results to overwrite a genuinely edited input.
-The fix is in the webpage and works with the existing backend; no engine or
-Docker reinstall is required. Updating the Windows processor is only needed
-to advance its separately reported version. This does not make unavailable
-provider media accessible or bypass authentication requirements.
+Current proposed release: **v1.0.3**. This update builds on v1.0.2
+and adds a guarded fallback for direct, time-limited Instagram CDN MP4s and
+explicitly supplied VideoDropper download links. It does not send regular
+Instagram post or Reel links to VideoDropper, does not require source-account
+cookies, and does not guarantee that every Instagram original URL can be
+resolved. The backend must be updated on FUPCJ for the new adapter to work.
+No new download packages or Docker service are required.
 
 Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
 version. Open the side menu to see the web version directly beneath the Vortex
