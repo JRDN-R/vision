@@ -83,7 +83,7 @@ def main():
         if args.allow_public_fxembed and provider == 'twitter':
             services['fxembed'] = {'enabled': True, 'url': 'https://api.fxtwitter.com/', 'allowExternal': True}
         specification = dict(input=value, kind='download', quality='balanced', directory=str(directory),
-            maxBytes=2 * 1024**3, maxDuration=7200, maxItems=50, ffmpeg=ffmpeg,
+            maxBytes=2 * 1024**3, maxDuration=14400, maxItems=50, ffmpeg=ffmpeg,
             services=services, downloadMode='video', videoFormat='mp4', audioFormat='m4a')
         path = root / 'request.json'
         path.write_text(json.dumps(specification), encoding='utf-8')
