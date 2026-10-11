@@ -36,12 +36,14 @@ export async function signOut() { if (auth) await sdk.signOut(auth); }
 export function authError(error) {
   return ({'auth/popup-blocked':'Allow the sign-in popup, then try again.','auth/popup-closed-by-user':'Sign-in was closed. Try again when ready.','auth/cancelled-popup-request':'A sign-in window is already open.','auth/invalid-credential':'Email or password is incorrect.','auth/wrong-password':'Email or password is incorrect.','auth/user-not-found':'Email or password is incorrect.','auth/email-already-in-use':'This email already has a Vision account. Sign in instead.','auth/invalid-email':'Enter a valid email address.','auth/weak-password':'Use a password with at least 6 characters.','auth/network-request-failed':'Check your connection and try again.','auth/too-many-requests':'Too many attempts. Wait a little and try again.'})[error?.code] || error?.message || 'Sign-in could not finish.';
 }
-export async function request(path, {method = 'GET', body, timeout = 25000, binary = false} = {}) {
+export async function request(path, {method = 'GET', body, timeout = 25000, binary = false, signal} = {}) {
   const sharedProfile = method === 'GET' && ['/venture/profile', '/venture/profile/avatar'].includes(path);
   if ((!/^\/vortex(?:\/|$)/.test(path) && !sharedProfile) || path.includes('..')) throw new Error('Invalid media request.');
   const identity = currentUser, startEpoch = epoch;
   if (!identity?.uid) throw new Error('Sign in to use Vortex.');
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, {once:true});
   requests.add(controller);
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
@@ -70,5 +72,6 @@ export async function request(path, {method = 'GET', body, timeout = 25000, bina
     if (error.name === 'AbortError') throw new Error('FUPCJ Server did not reply in time. Accepted jobs may still be running; refresh to reconnect.');
     if (error instanceof TypeError) throw new Error('Cannot reach FUPCJ Server. Check your connection and make sure the server is online.');
     throw error;
-  } finally { clearTimeout(timer); requests.delete(controller); }
+  } finally { clearTimeout(timer); requests.delete(controller); signal?.removeEventListener('abort', abort); }
 }
+
