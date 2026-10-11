@@ -51,6 +51,13 @@ class LimitsTests(unittest.TestCase):
             self.select([self.video(360, filesize=3 * 1024**3), audio])
         self.assertEqual(failure.exception.category, 'file_size_limit')
 
+    def test_drm_remains_blocked_and_has_a_distinct_redacted_category(self):
+        from vortex_race import CATEGORIES
+        for error in (worker.WorkerError('DRM-protected media cannot be downloaded.'),
+                      yt_dlp.utils.DownloadError('This format is DRM protected; https://secret.example/?token=hidden')):
+            self.assertEqual(worker.error_category(error), 'drm')
+        self.assertIn('drm', CATEGORIES)
+
     def test_duration_and_bytes_are_distinct_from_memory_and_disk(self):
         for error, category in ((worker.WorkerError('This file exceeds the server download size limit.'), 'file_size_limit'),
                                 (worker.WorkerError('This media exceeds the configured duration limit.'), 'duration_limit'),

@@ -64,6 +64,7 @@ def error_category(error):
         return 'disk_limit'
     detail = str(error).lower()
     if 'different media' in detail or detail == 'identity_mismatch': return 'identity_mismatch'
+    if 'drm-protected' in detail or 'drm protected' in detail: return 'drm'
     if 'duration limit' in detail: return 'duration_limit'
     if 'size limit' in detail or 'max-filesize' in detail or 'max_filesize' in detail: return 'file_size_limit'
     if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401', 'http error 403', '403 forbidden')): return 'authentication'

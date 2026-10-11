@@ -26,7 +26,7 @@ MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
               'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit',
-              'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit'}
+              'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit', 'drm'}
 SUPERVISOR_FAILURES = {'timeout', 'resource_limit', 'memory_limit', 'disk_limit', 'event_limit'}
 
 

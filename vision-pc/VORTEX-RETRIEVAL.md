@@ -15,6 +15,15 @@ fully decoded its 8,700.715-second, 864x360 MP4 through gallery-dl in 134 second
 The original public Instagram Reel `Chunk8-jurw` also downloaded and passed
 full-file decoding. Latest per-platform outcomes and CI links are kept in PR #45.
 
+Two other original-URL probes remain limited by the source: YouTube
+`YE7VzlLtp-4` requires sign-in from the test runner even with Deno and EJS
+installed. Vimeo `76979871` resolves through the same-ID player fallback, but
+yt-dlp's native HLS downloader detects DRM in its selected manifest and refuses
+the transfer. The latter was reproduced inside the guarded worker and traced to
+the upstream HLS DRM check, not a file-size, memory or packaging failure. DRM
+rejection now has its own redacted category. Neither probe is counted as a
+successful download; the live workflow continues to show these failures.
+
 The remaining implementation defects corrected in this investigation are:
 
 * **Whole-file selection:** yt-dlp and gallery-dl could select a high-bitrate
