@@ -1,0 +1,23 @@
+name: Vortex retrieval audit
+on:
+  push:
+    branches: [fix/vortex-instagram-signed-cdn-20261010]
+    paths: [.github/workflows/vortex-reliability-audit.yml]
+permissions:
+  contents: read
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked retrieval source and tests only
+        run: git archive --format=zip --output=vortex-audit-source.zip HEAD vision-pc tests web/vortex vortex .github/workflows web/build.py web/version.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vortex-audit-source
+          path: vortex-audit-source.zip
+          retention-days: 1
+          if-no-files-found: error
