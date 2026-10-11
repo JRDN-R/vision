@@ -902,9 +902,6 @@ def run_gallery(request):
                 # ZIP integrity alone cannot establish that every contained
                 # video is complete/playable. Verify each before packaging,
                 # using that item's own expected duration, not the first one.
-            if len(files) > 1:
-                # ZIP members each need decoding here; a single-file result is
-                # fully decoded by main() before it can win the race.
                 verify_result(dict(complete=True, media=properties, filename=artifact.name),
                               dict(request, kind='download', expectedDuration=number(item['metadata'].get('duration'))))
             if len(files) == 1:
@@ -964,7 +961,8 @@ def verify_result(result, request):
         duration = number((data.get('format') or {}).get('duration'))
         if not duration or duration > int(request.get('maxDuration', 14400)):
             raise WorkerError('The media duration could not be verified.')
-        expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
+        expected_duration = (number(request.get('expectedDuration')) or number(media.get('sourceDuration'))
+                             or number(media.get('duration')))
         if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
             raise WorkerError('The source returned an incomplete media file.')
         cap = {'small': 480, 'balanced': 1080}.get(request.get('quality'))

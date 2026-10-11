@@ -308,6 +308,9 @@ def download_stream(url, request, client=None, *, stem='source'):
 
 def finish_artifact(artifact, media, request):
     import vortex_worker as worker
+    source_duration = worker.number(media.get('duration'))
+    if source_duration:
+        media['sourceDuration'] = source_duration
     probe = worker.probe_file(artifact, request.get('ffmpeg'), Path(request['directory']))
     streams = probe.get('streams') or []
     video = any(s.get('codec_type') == 'video' and not (s.get('disposition') or {}).get('attached_pic') for s in streams)

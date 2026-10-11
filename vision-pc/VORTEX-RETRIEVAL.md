@@ -3,6 +3,83 @@
 This extends the signed-Instagram-MP4 work in PR #45. It does not require a user
 to visit a different downloader first. It is not a promise of universal access.
 
+## PR #45 completion audit (October 11, 2026)
+
+The original X URL is `https://x.com/iam_scholar/status/2109036692065649078/video/1`.
+The source reports a 8,700.672-second video. Its post ID and attached media ID
+are different identifiers; comparing them alone was not evidence of wrong media.
+
+The remaining implementation defects corrected in this investigation are:
+
+* **Whole-file selection:** yt-dlp and gallery-dl could select a high-bitrate
+  stream that exceeded 2 GiB, even when smaller complete variants were available.
+  yt-dlp now budgets the combined audio/video streams using exact sizes or
+  duration/bitrate estimates, with headroom for estimates and muxing. Unknown
+  sizes remain eligible under the existing actual-byte checks. It never silently
+  replaces an oversized video with audio. The returned dimensions describe the
+  selected stream, and yt-dlp adds a note when size constrained its selection.
+* **X transport:** prefer a progressive MP4 over HLS at the same resolution/fps.
+  gallery-dl and FxEmbed also select a fitting progressive variant. This avoids
+  thousands of fragment requests when the same attachment has a suitable MP4.
+* **Fallback deadlines:** direct/page, Instaloader, Cobalt and FxEmbed adapters
+  that must download to inspect now receive a transfer slot for download jobs.
+  They no longer have to finish a large file under the metadata deadline first.
+  Pending candidates receive shares of the remaining overall transfer deadline.
+* **Temporary storage:** near-limit transfers are serialized when simultaneous
+  input/output files would exceed the unchanged shared budget. Smaller transfers
+  can still race two at once. The first verified success cancels all other work.
+* **Identity and completeness:** X attachment numbering includes photos. Native
+  yt-dlp status data must match the requested post before quoted media is removed;
+  syndication retains only that post's original ordered attachments. Direct
+  adapters preserve a provider-supplied duration through probing/conversion, so a
+  shorter file cannot redefine its own expected length and pass verification.
+* **Registry routing:** gallery-dl's installed registry now receives public hosts
+  beyond the old allowlist, including recognized platform labels, without the
+  collector rejecting them again. YouTube and Spotify remain dedicated video/
+  music routes rather than potential thumbnail galleries.
+* **Vimeo:** a failed anonymous API lookup can try the same numeric ID through
+  Vimeo's public player. The returned ID must match; this does not add login,
+  account cookies, private-video access, or a new remote service.
+* **Diagnostics:** file size, duration, memory, temporary disk, event-log size and
+  timeout now have separate redacted categories. Terminal policy failures retain
+  an actionable message. Stream progress is throttled independently of transfer
+  speed. No signed media URLs, cookie values or raw provider errors are logged.
+* **Installation/probes:** specialist checks import Instaloader and yt-dlp EJS,
+  confirm all native engines after activation, and require FFmpeg, ffprobe and
+  Deno >=2.3. The live runner installs Deno and allows the production 45-minute
+  transfer deadline instead of the previous four-minute timeout. Its old removed
+  YouTube fixture was replaced with the upstream Big Buck Bunny fixture.
+
+### Engine and installation audit
+
+| Engine | Runtime / activation | Boundaries and remaining constraints |
+| --- | --- | --- |
+| yt-dlp | Isolated `yt-dlp[default]`, EJS, FFmpeg/ffprobe; Deno for YouTube | Native HTTP/HLS/DASH only; no external network downloader or source cookies; whole-file byte selection and local FFmpeg processing |
+| X syndication / legacy | Same isolated yt-dlp; separate extraction recipes | Original post/attachment identity; provider APIs can still reject requests |
+| gallery-dl | Isolated package, no machine/user configuration loaded | Registry routing, bounded queues/items/bytes; X progressive variant selection; each video in a ZIP is verified |
+| Instaloader | Isolated package, no saved login session | Original Instagram shortcode and explicit/unambiguous video; provider throttling/authentication can still prevent access |
+| page-media / instagram-direct | Built in; requests and FFmpeg/ffprobe | Guarded public redirects, MIME/body bounds, explicit page declarations; expiring CDN signatures cannot be renewed from a CDN URL alone |
+| Cobalt | Separately configured service; pinned Docker stack for local installation | Fixed-origin tunnels/public egress; picker and progressive merges supported; local HLS/subtitle/cover processing remains unsupported |
+| FxEmbed | Explicitly configured local or authorized external service | Exact post ID, one selected progressive video; hosted service availability/authentication is outside this repository |
+| spotDL | Isolated package; optional administrator Spotify API credentials | Official metadata API and matched YouTube audio; not the original Spotify stream; no source-account cookies or curl-based free-provider bypass |
+
+### Unchanged limits and protections
+
+* 2 GiB maximum output / media transfer budget; four-hour source duration ceiling.
+* 3x the file cap for job temporary storage; 2 GiB resident memory per adapter
+  process tree; 1 MiB adapter event log and 4 MiB supervisor event log.
+* At most three parallel metadata inspections and two parallel transfers,
+  further restricted by space reservations; 180-second top-level inspection and
+  45-minute top-level download deadline, with earlier adapter deadlines.
+* Full local FFmpeg decoding, local-only demuxer/protocol allowlists, DNS/socket
+  SSRF checks, source-cookie prohibition, account ownership, cancellation,
+  storage quotas and five-day download retention remain enabled.
+
+The supplied history contains signed Instagram/competitor download endpoints,
+but no original Instagram post URL for those exact two videos. They cannot be
+honestly listed as verified original-post reproductions. The Instagram live
+fixture is explicitly a different, public original Reel used by upstream tests.
+
 ## Corrections
 
 * Preserve X `/video/1` and every other explicit attachment selection, including

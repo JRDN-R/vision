@@ -6,11 +6,13 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 import tempfile
+from pathlib import Path
 
 import yt_dlp
 import vortex_worker as worker
 import vortex_network as network
 from yt_dlp.extractor.twitter import TwitterIE
+import vortex_adapters as adapters
 
 
 class LimitsTests(unittest.TestCase):
@@ -100,6 +102,18 @@ class LimitsTests(unittest.TestCase):
             result = worker.run_ytdlp(dict(input='https://vimeo.com/76979871', directory=directory, kind='inspect'))
         self.assertEqual(calls, ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871'])
         self.assertEqual(result['media']['url'], calls[0])
+
+    def test_direct_adapter_cannot_replace_expected_duration_with_truncated_probe(self):
+        probe = dict(streams=[{'codec_type':'video','codec_name':'h264','height':360},
+                              {'codec_type':'audio','codec_name':'aac'}], format={'duration':'1'})
+        with tempfile.TemporaryDirectory() as directory, patch.object(worker, 'probe_file', return_value=probe), \
+                patch.object(worker, 'export_media', side_effect=lambda path, media, request: path):
+            artifact = Path(directory)/'source.mp4'
+            artifact.write_bytes(b'invalid truncated fixture')
+            request = dict(kind='download', directory=directory, maxBytes=1024)
+            result = adapters.finish_artifact(artifact, {'mediaType':'video','duration':60}, request)
+            with self.assertRaisesRegex(worker.WorkerError, 'incomplete'):
+                worker.verify_result(result, request)
 
 
 if __name__ == '__main__':
