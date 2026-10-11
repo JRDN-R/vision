@@ -14,7 +14,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Archive tracked retrieval source and tests only
-        run: git archive --format=zip --output=vortex-audit-source.zip HEAD vision-pc tests web/vortex vortex .github/workflows web/build.py web/version.json
+        run: git archive --format=zip --output=vortex-audit-source.zip HEAD vision-pc tests web/vortex vortex .github/workflows web/build.py
       - uses: actions/upload-artifact@v4
         with:
           name: vortex-audit-source
