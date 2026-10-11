@@ -8,6 +8,7 @@ the acquired source is on another volume. No age-based garbage collection exists
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import hashlib
 import io
 import json
@@ -67,7 +68,15 @@ def exclusive_file(path):
         try:
             if os.name == 'nt':
                 import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as error:
+                    # The Windows CRT reports a busy byte-range lock as EACCES,
+                    # unlike flock's BlockingIOError. Keep contention distinct
+                    # from genuine filesystem/disk failures in the caller.
+                    if error.errno in (errno.EACCES, errno.EAGAIN):
+                        raise BlockingIOError(errno.EAGAIN, 'Another worker owns the asset lock.') from None
+                    raise
             else:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
