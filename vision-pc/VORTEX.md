@@ -17,7 +17,7 @@ small available stream, and converts processing audio to 16 kHz mono at 32 kbps.
 Video produces timestamped snapshots and a transcript. Audio-only links,
 including YouTube Music and individual Spotify tracks, produce a transcript.
 Spotify uses the existing metadata/matched-public-audio workflow. Source
-availability, DRM, sign-in requirements and the two-hour limit are unchanged.
+availability, DRM, sign-in requirements and the four-hour media duration limit applies (a reviewed increase from two hours).
 
 After Apply is accepted, download, snapshots and transcription run durably on
 FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
