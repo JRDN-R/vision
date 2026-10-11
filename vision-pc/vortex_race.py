@@ -24,7 +24,9 @@ MAX_MEMORY = 2 * 1024**3
 MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
-              'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit'}
+              'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit',
+              'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit'}
+SUPERVISOR_FAILURES = {'timeout', 'resource_limit', 'memory_limit', 'disk_limit', 'event_limit'}
 
 
 def diagnostic(engine, category, started):
@@ -87,7 +89,7 @@ class Attempt:
         if self.finished:
             return True
         if self.events.stat().st_size > MAX_EVENTS:
-            self.category = 'resource_limit'
+            self.category = 'event_limit'
             self.cancel()
         try:
             parent = psutil.Process(self.process.pid)
@@ -95,7 +97,7 @@ class Attempt:
                 self.children[child.pid] = child
             rss = sum(p.memory_info().rss for p in [parent, *self.children.values()] if p.is_running())
             if rss > MAX_MEMORY:
-                self.category = 'resource_limit'
+                self.category = 'memory_limit'
                 self.cancel()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
@@ -118,12 +120,12 @@ class Attempt:
                 continue
             if event.get('phase') in ('Downloading media', 'Converting to MP4', 'Converting to MOV', 'Converting to M4A', 'Converting to MP3', 'Converting to WAV'):
                 self.progress_event = {'phase': event['phase'], 'progress': event.get('progress')}
-            if event.get('category') in CATEGORIES and self.category not in ('timeout', 'resource_limit'):
+            if event.get('category') in CATEGORIES and self.category not in SUPERVISOR_FAILURES:
                 self.category = event['category']
         if self.process.poll() is None:
             return False
         self.finished = True
-        if self.process.returncode == 0 and self.category not in ('timeout', 'resource_limit'):
+        if self.process.returncode == 0 and self.category not in SUPERVISOR_FAILURES:
             for line in self.events.read_text(encoding='utf-8', errors='replace').splitlines():
                 try:
                     event = json.loads(line)
@@ -211,8 +213,10 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                     total += path.stat().st_size
             except FileNotFoundError:
                 pass  # A competing worker may have just cleaned a partial file.
-        if total > 3 * int(request['maxBytes']) or time.monotonic() - started > (165 if request['kind'] == 'inspect' else 44 * 60):
-            raise WorkerError(PUBLIC_ERROR)
+        if total > 3 * int(request['maxBytes']):
+            raise WorkerError('This operation reached the server temporary storage limit.', category='disk_limit')
+        if time.monotonic() - started > (165 if request['kind'] == 'inspect' else 44 * 60):
+            raise WorkerError('This operation took too long. Try a shorter item or another source.', category='timeout')
 
     def promote(attempt):
         result = public_result(attempt.result)
@@ -284,6 +288,16 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                         emit(**progress)
                         pending[0].progress_event = None
                     time.sleep(.05)
+        failed_downloads = [a for a in attempts if a.kind == 'download']
+        failures = failed_downloads or attempts
+        for category, message in (
+                ('file_size_limit', 'The available streams exceed the server download size limit. Try Small quality or audio.'),
+                ('duration_limit', 'This media exceeds the configured duration limit.'),
+                ('memory_limit', 'This operation reached the server memory limit. Try Small quality.'),
+                ('disk_limit', 'This operation reached the server temporary storage limit.'),
+                ('timeout', 'This operation took too long. Try a shorter item or another source.')):
+            if any(a.category == category for a in failures):
+                raise WorkerError(message, category=category)
         raise WorkerError(PUBLIC_ERROR)
     finally:
         for attempt in attempts:

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from vortex_services import ServiceClient, service_config
@@ -91,6 +92,11 @@ class Adapter:
             # Only authored categories cross the process boundary, never URLs,
             # service error bodies, headers, or upstream exception strings.
             code = str(error)
+            if code in ('size_limit', 'duration_limit'):
+                raise worker.WorkerError(
+                    'This media exceeds the server download size limit.' if code == 'size_limit' else
+                    'This media exceeds the configured duration limit.',
+                    category='file_size_limit' if code == 'size_limit' else 'duration_limit') from None
             safe = ('The provider is limiting requests.' if code == 'service_rate_limited' else
                     'The provider rejected the request; a signed-in session may be needed.' if code == 'service_authentication' else
                     'The provider connection failed.' if code == 'service_network' else
@@ -251,7 +257,7 @@ def copy_stream(response, artifact, limit, *, tunnel=False):
     if expected and expected > limit:
         raise ValueError('size_limit')
     chunks = iter(lambda: response.read(256 * 1024), b'') if tunnel else response.iter_content(256 * 1024)
-    total = 0
+    total, last_event = 0, 0.0
     try:
         with artifact.open('xb') as output:
             for chunk in chunks:
@@ -259,9 +265,13 @@ def copy_stream(response, artifact, limit, *, tunnel=False):
                 if total > limit:
                     raise ValueError('size_limit')
                 output.write(chunk)
-                worker.emit(phase='Downloading media', progress=min(100, total / expected * 100) if expected else None)
+                now = time.monotonic()
+                if now - last_event >= .5:
+                    last_event = now
+                    worker.emit(phase='Downloading media', progress=min(100, total / expected * 100) if expected else None)
         if not total or (expected and total != expected):
             raise ValueError('incomplete_download')
+        worker.emit(phase='Downloading media', progress=100)
         return artifact
     except Exception:
         artifact.unlink(missing_ok=True)

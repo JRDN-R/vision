@@ -140,6 +140,8 @@ class VortexAdapterTests(unittest.TestCase):
         class FakeYoutubeDL:
             def __init__(self, options):
                 captured.update(options)
+            def build_format_selector(self, specification):
+                return lambda context: iter(context['formats'][-1:])
             def __enter__(self): return self
             def __exit__(self, *_unused): return False
             def extract_info(self, value, download=False):

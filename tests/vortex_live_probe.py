@@ -1,7 +1,7 @@
 """Opt-in real public-source probe; never print media URLs, cookies or content.
 
 Unit tests are not evidence of working providers. This separate probe uses the
-production worker and normal 2 GiB/2 hour limits, then deletes all media.
+production worker and normal 2 GiB/four-hour limits, then deletes all media.
 """
 import argparse
 import hashlib
@@ -23,7 +23,7 @@ from vortex_urls import identity, platform
 # A separate bounded metadata-only check distinguishes a provider failure from
 # a policy rejection. It does not weaken or replace the actual worker test.
 METADATA_CHECK = r'''
-import contextlib, json, os, sys
+import contextlib, importlib.metadata, json, os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from vortex_network import install_network_guard
@@ -42,11 +42,14 @@ try:
              'proxy':'','cookiefile':None,'usenetrc':False}) as ydl:
             info = ydl.extract_info(os.environ['VORTEX_PROBE_URL'],download=False)
     if isinstance(info,dict):
-        report = {'status':'metadata_returned','id':str(info.get('id',''))[:32],
+        report = {'status':'metadata_returned','mediaId':str(info.get('id',''))[:32],
+                  'postId':str(info.get('display_id',''))[:32],
                   'duration':info.get('duration'),'isLive':bool(info.get('is_live')),
                   'hasDRM':bool(info.get('has_drm')),'formats':len(info.get('formats') or []),
                   'filesize':info.get('filesize'),'filesizeApprox':info.get('filesize_approx'),
-                  'type':info.get('_type','video')}
+                  'type':info.get('_type','video'),
+                  'streamSummary': [{k:f.get(k) for k in ('format_id','height','tbr','filesize','filesize_approx','protocol')}
+                                    for f in (info.get('formats') or [])[:40]]}
 except Exception as error:
     text = str(error).lower()
     report['category'] = ('rate_limited' if any(x in text for x in ('429','rate limit','rate-limit')) else
@@ -67,6 +70,8 @@ def main():
     provider = platform(value)
     report = {'provider': provider, 'status': 'not_run', 'verified': False,
               'environment': 'test runner, not FUPCJ', 'attempts': []}
+    import importlib.metadata
+    report['versions'] = {name: importlib.metadata.version(name) for name in ('yt-dlp', 'gallery-dl', 'instaloader', 'spotdl')}
     if provider == 'twitter':
         report['requestedId'] = identity(value)[1]
     elif provider == 'instagram':
@@ -92,7 +97,9 @@ def main():
                                    env=environment, text=True)
         final = None
         try:
-            output, _ = process.communicate(timeout=240)
+            # Include full-file decoding of long media. The former four-minute
+            # probe timeout contradicted the production 45-minute job deadline.
+            output, _ = process.communicate(timeout=45 * 60)
         except subprocess.TimeoutExpired:
             report['status'] = 'timeout'
             try:
@@ -126,7 +133,7 @@ def main():
                 report['media'] = {k: final.get('media', {}).get(k) for k in ('duration', 'width', 'height', 'mediaType', 'ext')}
         if report['status'] == 'not_run':
             report['status'] = 'no_verified_download'
-        if not report['verified']:
+        if provider in ('twitter', 'instagram', 'youtube', 'generic'):
             try:
                 diagnostic = subprocess.run([sys.executable, '-c', METADATA_CHECK, str(ROOT / 'vision-pc')],
                     cwd=root, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

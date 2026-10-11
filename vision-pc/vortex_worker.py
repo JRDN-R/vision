@@ -41,9 +41,36 @@ SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == 
 class WorkerError(Exception):
     """A safe, deliberately authored message that may be shown to the user."""
 
+    def __init__(self, message, *, category=None):
+        super().__init__(message)
+        self.category = category
+
 
 class SourceError(WorkerError):
     """The provider failed before any file download; another adapter may try."""
+
+
+def error_category(error):
+    """Only authored categories cross the worker boundary, never raw errors."""
+    if isinstance(error, WorkerError) and error.category:
+        return error.category
+    if isinstance(error, MemoryError):
+        return 'memory_limit'
+    if isinstance(error, subprocess.TimeoutExpired):
+        return 'timeout'
+    if isinstance(error, OSError) and error.errno == 28:
+        return 'disk_limit'
+    detail = str(error).lower()
+    if 'different media' in detail or detail == 'identity_mismatch': return 'identity_mismatch'
+    if 'duration limit' in detail: return 'duration_limit'
+    if 'size limit' in detail or 'max-filesize' in detail or 'max_filesize' in detail: return 'file_size_limit'
+    if 'signed-in' in detail or 'login' in detail: return 'authentication'
+    if 'limiting requests' in detail: return 'rate_limited'
+    if 'timed out' in detail or 'timeout' in detail: return 'timeout'
+    if 'connection' in detail or 'reached' in detail: return 'network'
+    if 'limit' in detail: return 'resource_limit'
+    if 'verif' in detail or 'incomplete' in detail: return 'invalid_media'
+    return 'unavailable'
 
 
 def source_error_message(value, error):
@@ -115,6 +142,51 @@ def format_selector(quality="balanced", audio=False, processing=False):
         # export_media then downscales it to the selected output size.
         return f"bv*[height<={cap}]+ba/b[height<={cap}]/wv*+ba/w[vcodec!=none]/ba"
     return "bv*+ba/b/ba"
+
+
+def estimated_bytes(stream, duration):
+    """Count a complete stream, not one HLS fragment. Bitrates are in kbps."""
+    exact = number(stream.get('filesize'))
+    if exact:
+        return exact
+    estimate = number(stream.get('filesize_approx'))
+    if not estimate:
+        bitrate = number(stream.get('tbr')) or ((number(stream.get('vbr')) or 0) + (number(stream.get('abr')) or 0))
+        estimate = bitrate * duration * 1000 / 8 if bitrate and duration else None
+    # Estimates omit muxing overhead and can understate VBR media. Actual byte
+    # limits remain enforced during transfer, merging and conversion.
+    return estimate * 1.1 if estimate else None
+
+
+def bounded_selector(ydl, specification, duration, limit, *, audio=False):
+    """Keep yt-dlp's quality/codec rules, selecting the best whole file that fits.
+
+    A long 1080p stream may exceed the cap even when a 720p/360p stream fits.
+    Separate audio and video count together. Unknown sizes are still attempted
+    under the runtime byte guard; they are not falsely declared over-limit.
+    """
+    select = ydl.build_format_selector(specification)
+
+    def bounded(context):
+        remaining = list(context['formats'])
+        has_video = any(f.get('vcodec') != 'none' for f in remaining)
+        while remaining:
+            candidate = next(iter(select(dict(context, formats=remaining))), None)
+            if candidate is None:
+                break
+            parts = candidate.get('requested_formats') or [candidate]
+            if not audio and has_video and all(p.get('vcodec') == 'none' for p in parts):
+                break  # Never replace an oversized video with an audio-only file.
+            sizes = [estimated_bytes(p, duration[0]) for p in parts]
+            if sum(s or 0 for s in sizes) <= limit * .98:
+                yield candidate
+                return
+            # Remove the largest selected stream and let yt-dlp choose the next
+            # compatible combination; audio is retained while video steps down.
+            largest = max(zip(parts, sizes), key=lambda pair: pair[1] or 0)[0]
+            remaining = [f for f in remaining if f['format_id'] != largest['format_id']]
+        raise WorkerError('No complete stream fits the server download size limit.', category='file_size_limit')
+    return bounded
 
 
 def thumbnail_from_info(info):
@@ -361,6 +433,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         raise WorkerError("Select a search result before downloading.")
     cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
     duration_limit = int(request.get("maxDuration", 14400))
+    source_duration = [0]
     options = {
         "quiet": True, "no_warnings": True, "logger": QuietLogger(),
         "noplaylist": True, "playlistend": 5 if search else 1,
@@ -383,6 +456,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         options["js_runtimes"] = {"deno": {"path": request["deno"]}}
 
     def check_media(info, *, incomplete=False):
+        source_duration[0] = number(info.get('duration')) or source_duration[0]
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise WorkerError("Wait until this live broadcast has finished before downloading.")
         if (number(info.get("duration")) or 0) > duration_limit:
@@ -417,6 +491,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         return search_youtube(value, options, engine, page=request.get('searchPage', 0))
     emit(phase="Reading media details", progress=None)
     with yt_dlp.YoutubeDL(options) as ydl:
+        ydl.format_selector = bounded_selector(ydl, options['format'], source_duration, cap_bytes, audio=audio)
         try:
             info = ydl.extract_info(value, download=False)
         except yt_dlp.utils.DownloadError as exc:
@@ -597,7 +672,7 @@ def collect_gallery(value, max_items):
         if current in visited:
             continue
         visited.add(current)
-        if not is_gallery(current) or not safe_url(current):
+        if not safe_url(current):
             continue
         instance = extractor.find(current)
         if instance is None:
@@ -605,7 +680,7 @@ def collect_gallery(value, max_items):
         for message in instance:
             kind = message[0]
             if kind == Message.Queue:
-                if len(pending) + len(visited) < max_items + 1 and is_gallery(message[1]):
+                if len(pending) + len(visited) < max_items + 1 and safe_url(message[1]):
                     pending.append(message[1])
             elif kind == Message.Url:
                 url, metadata = message[1], message[2]
@@ -649,9 +724,13 @@ def run_gallery(request):
             raise SourceError('No unambiguous public video was returned.')
         if selected:
             position = int(selected.group(2))
-            if not 1 <= position <= len(videos):
+            # X numbers ALL attachments, including photos, not just videos.
+            chosen = next((item for item in files if item['metadata'].get('num') == position), None)
+            if chosen is None and all('num' not in item['metadata'] for item in files):
+                chosen = files[position - 1] if 1 <= position <= len(files) else None
+            if chosen is None or chosen['extension'] in IMAGE_EXTENSIONS:
                 raise SourceError('The requested video is unavailable in this post.')
-            files = [videos[position - 1]]
+            files = [chosen]
         else:
             files = videos
         first = files[0]
@@ -845,15 +924,14 @@ def main():
         return 0
     except WorkerError as exc:
         from vortex_race import PUBLIC_ERROR
-        detail = str(exc).lower()
-        category = ('identity_mismatch' if 'different media' in detail else 'authentication' if 'signed-in' in detail or 'login' in detail
-                    else 'rate_limited' if 'limiting requests' in detail else 'network' if 'connection' in detail or 'reached' in detail
-                    else 'duration_limit' if 'duration limit' in detail else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
+        category = error_category(exc)
         # Surface bounded, actionable help for Instagram without exposing
         # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
         from vortex_urls import instagram_signed_source, platform
         input_value = (locals().get('request') or {}).get('input', '')
-        if args.adapter is None and instagram_signed_source(input_value):
+        if args.adapter is None and category in ('file_size_limit', 'duration_limit', 'memory_limit', 'disk_limit', 'timeout'):
+            message = str(exc)
+        elif args.adapter is None and instagram_signed_source(input_value):
             message = 'This direct Instagram video could not be retrieved. Its download link may have expired; use a fresh link.'
         elif args.adapter is None and platform(input_value) == 'instagram':
             message = 'Instagram did not return a downloadable stream to FUPCJ Server. Try a fresh direct MP4 download link.'
@@ -862,7 +940,7 @@ def main():
         emit(error=message, category=category)
     except Exception as exc:
         from vortex_race import PUBLIC_ERROR
-        emit(error=PUBLIC_ERROR, category='identity_mismatch' if str(exc) == 'identity_mismatch' else 'unavailable')
+        emit(error=PUBLIC_ERROR, category=error_category(exc))
     return 1
 
 

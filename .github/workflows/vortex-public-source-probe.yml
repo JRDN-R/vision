@@ -3,6 +3,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'vision-pc/vortex_worker.py'
+      - 'vision-pc/vortex.py'
+      - 'vision-pc/requirements-vortex.txt'
       - 'vision-pc/vortex_adapters.py'
       - 'vision-pc/vortex_urls.py'
       - 'vision-pc/vortex_race.py'
@@ -35,8 +38,12 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'vision-pc/Update-Vortex-Retrieval.ps1'), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
           if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
   public-source:
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [reported-x, youtube, vimeo, instagram]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,7 +51,7 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install -r vision-pc/requirements.txt -r vision-pc/requirements-vortex.txt
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Probe original X post using native methods and explicitly authorized public FxEmbed
+      - name: Probe original public posts with real transfer and full-file verification
         env:
-          VORTEX_PROBE_URL: ${{ inputs.url || 'https://x.com/iam_scholar/status/2109036692065649078/video/1' }}
+          VORTEX_PROBE_URL: ${{ inputs.url || (matrix.source == 'reported-x' && 'https://x.com/iam_scholar/status/2109036692065649078/video/1') || (matrix.source == 'youtube' && 'https://www.youtube.com/watch?v=BaW_jenozKc') || (matrix.source == 'vimeo' && 'https://vimeo.com/76979871') || 'https://www.instagram.com/reel/Chunk8-jurw/' }}
         run: python tests/vortex_live_probe.py --allow-public-fxembed
