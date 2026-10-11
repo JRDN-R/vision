@@ -835,7 +835,17 @@ def main():
         category = ('identity_mismatch' if 'different media' in detail else 'authentication' if 'signed-in' in detail or 'login' in detail
                     else 'rate_limited' if 'limiting requests' in detail else 'network' if 'connection' in detail or 'reached' in detail
                     else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
-        emit(error=PUBLIC_ERROR, category=category)
+        # Surface bounded, actionable help for Instagram without exposing
+        # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
+        from vortex_urls import instagram_signed_source, platform
+        input_value = (locals().get('request') or {}).get('input', '')
+        if args.adapter is None and instagram_signed_source(input_value):
+            message = 'This direct Instagram video could not be retrieved. Its download link may have expired; use a fresh link.'
+        elif args.adapter is None and platform(input_value) == 'instagram':
+            message = 'Instagram did not return a downloadable stream to FUPCJ Server. Try a fresh direct MP4 download link.'
+        else:
+            message = PUBLIC_ERROR
+        emit(error=message, category=category)
     except Exception as exc:
         from vortex_race import PUBLIC_ERROR
         emit(error=PUBLIC_ERROR, category='identity_mismatch' if str(exc) == 'identity_mismatch' else 'unavailable')
