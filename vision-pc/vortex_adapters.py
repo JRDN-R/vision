@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlsplit
 
 from vortex_services import ServiceClient, service_config
-from vortex_urls import identity, platform
+from vortex_urls import identity, platform, instagram_signed_source
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,8 @@ class Adapter:
 
     def compatible(self, value):
         name = platform(value)
+        if self.name == 'instagram-direct':
+            return instagram_signed_source(value) is not None
         if self.name == 'yt-dlp':
             return name != 'spotify'
         if self.name == 'gallery-dl':
@@ -31,6 +33,8 @@ class Adapter:
         return name in self.platforms
 
     def configured(self, request):
+        if self.name == 'instagram-direct':
+            return True  # Uses the existing guarded requests/FFmpeg stack.
         if self.module:
             try:
                 return importlib.util.find_spec(self.module) is not None
@@ -44,6 +48,8 @@ class Adapter:
 
     def run(self, request):
         import vortex_worker as worker
+        if self.name == 'instagram-direct':
+            return run_instagram_direct(request)
         if self.name == 'yt-dlp':
             return worker.run_ytdlp(request)
         if self.name == 'gallery-dl':
@@ -60,6 +66,7 @@ class Adapter:
 ADAPTERS = (
     Adapter('yt-dlp', 'yt_dlp'),
     Adapter('gallery-dl', 'gallery_dl', ('twitter', 'instagram', 'reddit')),
+    Adapter('instagram-direct'),
     Adapter('spotdl', 'spotdl', ('spotify',)),
     Adapter('cobalt', platforms=('youtube', 'twitter', 'instagram', 'reddit', 'facebook', 'tiktok'), service=True),
     Adapter('fxembed', platforms=('twitter',), service=True),
@@ -216,3 +223,39 @@ def run_cobalt(request):
     # Cobalt has no inspection metadata API. A real bounded download + probe is
     # required for inspection too; its file is reusable by the download race.
     return finish_stream(result['url'], media, request, client if result['status'] == 'tunnel' else None)
+
+
+
+def run_instagram_direct(request):
+    """Download an explicitly supplied signed Instagram MP4, with verified output.
+
+    Direct CDN retrieval is attempted first. A VideoDropper download URL is an
+    optional second route only if the user specifically pasted one. No Instagram
+    post is ever submitted to a third-party service automatically.
+    """
+    import vortex_worker as worker
+    import requests
+    direct = instagram_signed_source(request['input'])
+    if not direct:
+        raise ValueError('unsupported_instagram_media')
+    media = dict(title='Instagram video', url=request['input'], source='Instagram',
+                 mediaType='video', quality=request.get('quality', 'balanced'),
+                 engine='instagram-direct', ext='mp4')
+    targets = [direct]
+    if request['input'] != direct:
+        targets.append(request['input'])
+    worker.emit(phase='Reading media details', progress=None)
+    for index, target in enumerate(targets):
+        try:
+            # finish_stream bounds bytes, probes codecs/duration and exports
+            # locally. verify_result will also full-decode the final artifact.
+            return finish_stream(target, dict(media), request)
+        except (requests.RequestException, ValueError, worker.WorkerError) as error:
+            # Do not retry a size/quota restriction through another host.
+            if str(error) == 'size_limit' or (
+                    isinstance(error, worker.WorkerError) and 'limit' in str(error).lower()):
+                raise
+            (Path(request['directory']) / 'source.mp4').unlink(missing_ok=True)
+            if index == len(targets) - 1:
+                raise
+
