@@ -24,8 +24,9 @@ from vortex_urls import identity, platform
 # A separate bounded metadata-only check distinguishes a provider failure from
 # a policy rejection. It does not weaken or replace the actual worker test.
 METADATA_CHECK = r'''
-import contextlib, importlib.metadata, json, os, sys
+import contextlib, importlib.metadata, json, os, re, sys
 from pathlib import Path
+from urllib.parse import urlparse
 sys.path.insert(0, sys.argv[1])
 from vortex_worker import error_category
 from vortex_network import install_network_guard
@@ -43,7 +44,17 @@ try:
              'retries':0,'skip_download':True,'noplaylist':True,'playlistend':1,'cachedir':False,
             'proxy':'','cookiefile':None,'usenetrc':False,
              'js_runtimes': {'deno': {'path': os.environ['VORTEX_PROBE_DENO']}} if os.environ.get('VORTEX_PROBE_DENO') else {}}) as ydl:
-            info = ydl.extract_info(os.environ['VORTEX_PROBE_URL'],download=False)
+            value = os.environ['VORTEX_PROBE_URL']
+            try:
+                info = ydl.extract_info(value,download=False)
+            except yt_dlp.utils.DownloadError:
+                parsed = urlparse(value)
+                if parsed.hostname not in ('vimeo.com', 'www.vimeo.com') or not re.fullmatch(r'/\d+/?', parsed.path):
+                    raise
+                video_id = parsed.path.strip('/')
+                info = ydl.extract_info('https://player.vimeo.com/video/' + video_id, download=False)
+                if str(info.get('id')) != video_id:
+                    raise ValueError('identity_mismatch')
     if isinstance(info,dict):
         report = {'status':'metadata_returned','mediaId':str(info.get('id',''))[:32],
                   'postId':str(info.get('display_id',''))[:32],
@@ -73,7 +84,8 @@ def categorize(error):
         names = {'WorkerError', 'SourceError', 'DownloadError', 'ExtractorError',
                  'KeyError', 'TypeError', 'AttributeError', 'ValueError',
                  'AssertionError', 'NameError', 'OSError', 'HTTPError'}
-        files = {'vortex_worker.py', 'vortex_network.py', 'YoutubeDL.py', 'common.py', 'vimeo.py'}
+        files = {'vortex_worker.py', 'vortex_network.py', 'YoutubeDL.py', 'common.py', 'vimeo.py',
+                 'hls.py', 'dash.py', 'http.py', 'fragment.py', 'external.py'}
         frames, trace = [], error.__traceback__
         while trace:
             filename = Path(trace.tb_frame.f_code.co_filename).name
@@ -81,7 +93,15 @@ def categorize(error):
                 frames.append(filename + ':' + str(trace.tb_lineno))
             trace = trace.tb_next
         name = type(error).__name__
-        worker.emit(probeFailure={'exception': name if name in names else 'Exception', 'frames': frames[-6:]})
+        detail = str(error).lower()
+        reason = next((code for pattern, code in (
+            ('initialization fragment found after media fragments', 'hls_initialization_layout'),
+            ('drm protected', 'drm'), ('downloaded file is empty', 'empty_transfer'),
+            ('did not get any data blocks', 'empty_transfer'),
+            ('fragment', 'fragment_failure'), ('requested format', 'format_unavailable'))
+            if pattern in detail), 'unclassified')
+        worker.emit(probeFailure={'exception': name if name in names else 'Exception',
+                                  'frames': frames[-6:], 'reason': reason})
     return category
 worker.error_category = categorize
 raise SystemExit(worker.main())
