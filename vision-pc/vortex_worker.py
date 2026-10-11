@@ -544,14 +544,14 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
             info = ydl.extract_info(value, download=False)
         except yt_dlp.utils.DownloadError as exc:
             if not vimeo_id:
-                raise SourceError(source_error_message(value, exc)) from exc
+                raise SourceError(source_error_message(value, exc), category=error_category(exc)) from exc
             # Public embeddable videos can expose the same ID through Vimeo's
             # player even when its anonymous OAuth client cannot authenticate.
             # yt-dlp still owns parsing and all transport/identity limits apply.
             try:
                 info = ydl.extract_info('https://player.vimeo.com/video/' + vimeo_id[1], download=False)
             except yt_dlp.utils.DownloadError as player_error:
-                raise SourceError(source_error_message(value, player_error)) from None
+                raise SourceError(source_error_message(value, player_error), category=error_category(player_error)) from None
         if not info:
             raise SourceError("No downloadable public media was found.")
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
@@ -833,7 +833,7 @@ def run_gallery(request):
     except Exception as exc:
         # Extraction has not started writing files. Return a safe provider
         # explanation without exposing signed URLs or engine internals.
-        raise SourceError(source_error_message(value, exc)) from exc
+        raise SourceError(source_error_message(value, exc), category=error_category(exc)) from exc
     first = files[0]
     from vortex_urls import identity, platform
     if platform(value) == 'twitter':

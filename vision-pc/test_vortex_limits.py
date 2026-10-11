@@ -125,6 +125,18 @@ class LimitsTests(unittest.TestCase):
             with self.assertRaisesRegex(worker.WorkerError, 'incomplete'):
                 worker.verify_result(result, request)
 
+    def test_native_http_failure_keeps_category_without_signed_url(self):
+        secret_error = yt_dlp.utils.DownloadError('HTTP Error 403: https://cdn.example.com/media?token=secret')
+        for value in ('https://vimeo.com/76979871', 'https://www.youtube.com/watch?v=YE7VzlLtp-4'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(worker, 'configure_ytdlp_safety'), patch.object(worker, 'EVENT_STREAM', io.StringIO()), \
+                    patch.object(yt_dlp.YoutubeDL, 'extract_info', side_effect=secret_error):
+                with self.assertRaises(worker.SourceError) as failure:
+                    worker.run_ytdlp(dict(input=value, directory=directory, kind='inspect'))
+            self.assertEqual(worker.error_category(failure.exception), 'authentication')
+            self.assertNotIn('token', str(failure.exception))
+            self.assertNotIn('cdn.example.com', str(failure.exception))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -8,6 +8,12 @@ to visit a different downloader first. It is not a promise of universal access.
 The original X URL is `https://x.com/iam_scholar/status/2109036692065649078/video/1`.
 The source reports a 8,700.672-second video. Its post ID and attached media ID
 are different identifiers; comparing them alone was not evidence of wrong media.
+The live test at `c8a9d1520e31940c66923a025cdc1c56cd2ce9a7` downloaded and
+fully decoded its 8,700.715-second, 864x360 MP4 through gallery-dl in 134 seconds
+(437,697,911 bytes). Its SHA-256 was
+`537a388db278bce717a09d9f8fb30342148c677d48d02965e7b9d835cd71d814`.
+The original public Instagram Reel `Chunk8-jurw` also downloaded and passed
+full-file decoding. Latest per-platform outcomes and CI links are kept in PR #45.
 
 The remaining implementation defects corrected in this investigation are:
 
@@ -46,7 +52,9 @@ The remaining implementation defects corrected in this investigation are:
   account cookies, private-video access, or a new remote service.
 * **Diagnostics:** file size, duration, memory, temporary disk, event-log size and
   timeout now have separate redacted categories. Terminal policy failures retain
-  an actionable message. Stream progress is throttled independently of transfer
+  an actionable message. Native failures retain their category when converted
+  to a safe message, including a rejected Vimeo player lookup. Stream progress
+  is throttled independently of transfer
   speed. No signed media URLs, cookie values or raw provider errors are logged.
 * **Installation/probes:** specialist checks import Instaloader and yt-dlp EJS,
   confirm all native engines after activation, and require FFmpeg, ffprobe and

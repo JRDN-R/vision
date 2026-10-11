@@ -27,6 +27,7 @@ METADATA_CHECK = r'''
 import contextlib, importlib.metadata, json, os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+from vortex_worker import error_category
 from vortex_network import install_network_guard
 install_network_guard()
 import yt_dlp
@@ -53,12 +54,82 @@ try:
                   'streamSummary': [{k:f.get(k) for k in ('format_id','height','tbr','filesize','filesize_approx','protocol')}
                                     for f in (info.get('formats') or [])[:40]]}
 except Exception as error:
-    text = str(error).lower()
-    report['category'] = ('rate_limited' if any(x in text for x in ('429','rate limit','rate-limit')) else
-                          'authentication' if any(x in text for x in ('login','sign in','private')) else
-                          'unavailable')
+    report['category'] = error_category(error)
 print(json.dumps(report))
 '''
+
+# A failed native transfer can be a programming defect rather than a provider
+# restriction. Reproduce only unclassified failures with the actual guarded
+# adapter, recording code locations and fixed exception names, never messages.
+NATIVE_DIAGNOSTIC = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv.pop(1))
+import vortex_worker as worker
+original_category = worker.error_category
+def categorize(error):
+    category = original_category(error)
+    if category == 'unavailable':
+        names = {'WorkerError', 'SourceError', 'DownloadError', 'ExtractorError',
+                 'KeyError', 'TypeError', 'AttributeError', 'ValueError',
+                 'AssertionError', 'NameError', 'OSError', 'HTTPError'}
+        files = {'vortex_worker.py', 'vortex_network.py', 'YoutubeDL.py', 'common.py', 'vimeo.py'}
+        frames, trace = [], error.__traceback__
+        while trace:
+            filename = Path(trace.tb_frame.f_code.co_filename).name
+            if filename in files:
+                frames.append(filename + ':' + str(trace.tb_lineno))
+            trace = trace.tb_next
+        name = type(error).__name__
+        worker.emit(probeFailure={'exception': name if name in names else 'Exception', 'frames': frames[-6:]})
+    return category
+worker.error_category = categorize
+raise SystemExit(worker.main())
+'''
+
+
+def native_diagnostic(specification, root):
+    import contextlib
+    import vortex_race
+    from vortex_adapters import ADAPTERS
+    wrapper = root / 'native-check.py'
+    # Attempt normally invokes WORKER directly; this test-only wrapper inserts
+    # the repository path and then runs the exact worker entry point.
+    wrapper.write_text(NATIVE_DIAGNOSTIC.replace('sys.argv.pop(1)', repr(str(ROOT / 'vision-pc'))), encoding='utf-8')
+    original_worker = vortex_race.WORKER
+    attempt = None
+    try:
+        vortex_race.WORKER = wrapper
+        adapter = next(a for a in ADAPTERS if a.name == 'yt-dlp')
+        attempt = vortex_race.Attempt(adapter, dict(specification, downloadTimeout=180),
+                                      root / 'native-diagnostic', 'download')
+    finally:
+        vortex_race.WORKER = original_worker
+    try:
+        with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink):
+            while not attempt.poll():
+                size = 0
+                for path in attempt.directory.rglob('*'):
+                    try:
+                        if path.is_file() and not path.is_symlink():
+                            size += path.stat().st_size
+                    except FileNotFoundError:
+                        pass
+                if size > 3 * specification['maxBytes']:
+                    attempt.category = 'disk_limit'
+                    attempt.cancel()
+                time.sleep(.1)
+        errors = []
+        for line in attempt.events.read_text(encoding='utf-8').splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and isinstance(event.get('probeFailure'), dict):
+                errors.append(event['probeFailure'])
+        return {'category': attempt.category, 'errors': errors[:5]}
+    finally:
+        attempt.cancel()
 
 
 def main():
@@ -146,6 +217,9 @@ def main():
                 report['media'] = {k: final.get('media', {}).get(k) for k in ('duration', 'width', 'height', 'mediaType', 'ext')}
         if report['status'] == 'not_run':
             report['status'] = 'no_verified_download'
+        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') == 'unavailable'
+                                          for a in report['attempts']):
+            report['nativeDiagnostic'] = native_diagnostic(specification, root)
         if provider in ('twitter', 'instagram', 'youtube', 'generic'):
             try:
                 diagnostic = subprocess.run([sys.executable, '-c', METADATA_CHECK, str(ROOT / 'vision-pc')],
