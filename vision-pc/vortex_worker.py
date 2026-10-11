@@ -806,7 +806,14 @@ def run(request):
         # Search behavior/pagination is unchanged; there is no media identity
         # to race until the user selects one result.
         return run_spotify(request) if value.lower().startswith('spotify:') else run_ytdlp(request)
-    value = resolve_shared_url(value)
+    # A temporary HTTP failure during short-link expansion should not
+    # prevent the still-validated public URL reaching other extractors.
+    # Invalid/private redirects are not caught here.
+    from requests.exceptions import RequestException
+    try:
+        value = resolve_shared_url(value)
+    except RequestException:
+        pass
     from vortex_race import race
     return race(dict(request, input=value))
 
