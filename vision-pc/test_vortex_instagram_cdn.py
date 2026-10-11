@@ -90,13 +90,14 @@ class InstagramSignedMediaTests(unittest.TestCase):
                            check=True, timeout=60)
             data = fixture.read_bytes()
             class Response:
+                status_code = 200
                 headers = {'Content-Type': 'video/mp4', 'Content-Length': str(len(data))}
                 def raise_for_status(self): pass
                 def close(self): pass
                 def iter_content(self, size):
                     for offset in range(0, len(data), size):
                         yield data[offset:offset + size]
-            session = SimpleNamespace(get=lambda *args, **kwargs: Response(), trust_env=True)
+            session = SimpleNamespace(get=lambda *args, **kwargs: Response(), trust_env=True, close=lambda: None)
             request = dict(input=CDN, kind='download', quality='balanced',
                            directory=str(root), maxBytes=1000000, maxDuration=7200,
                            downloadMode='video', videoFormat='mp4', ffmpeg=ffmpeg)

@@ -1,8 +1,4 @@
-"""Conservative, idempotent URL canonicalization. No network I/O here.
-
-Unknown hosts and signed URLs are left intact. Redirect expansion belongs in
-the guarded worker, not the HTTP request or the idempotency key calculation.
-"""
+"""Conservative URL canonicalization; signed query strings remain intact."""
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -19,9 +15,7 @@ SHORT_HOSTS = {'t.co', 'youtu.be', 'www.youtu.be', 'vm.tiktok.com', 'vt.tiktok.c
 TRACKING = {'fbclid', 'gclid', 'igsh', 'igshid', 'cplk', 'si', 'feature', 'ref_src', 'ref_url', 's', 'share_id', 'share_app_id', 'is_from_webapp', 'sender_device', 'rdt'}
 
 
-
 def is_instagram_cdn_video(value):
-    """Accept only direct HTTPS MP4s on Instagram's known scontent CDN hosts."""
     if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 or c == '\\' for c in value):
         return False
     try:
@@ -37,12 +31,7 @@ def is_instagram_cdn_video(value):
 
 
 def instagram_signed_source(value):
-    """Resolve a user-pasted Instagram CDN MP4 or a narrowly validated download link.
-
-    VideoDropper is never contacted for an ordinary Instagram post. Its download
-    link is used only when explicitly supplied; it must encapsulate exactly one
-    HTTPS Instagram CDN MP4, never an arbitrary URL or private-network target.
-    """
+    """Decode only an explicitly supplied, tightly validated download wrapper."""
     if is_instagram_cdn_video(value):
         return value
     if not isinstance(value, str):
@@ -75,7 +64,6 @@ def normalize_url(value):
     value = value.strip()
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or '\\' in value:
         raise ValueError('This link contains unsupported characters.')
-    # Only repair a recognisable scheme delimiter, never guess an identifier.
     value = re.sub(r'^(https?):/{1,}', r'\1://', value, flags=re.I)
     if value.startswith('//'):
         value = 'https:' + value
@@ -89,12 +77,10 @@ def normalize_url(value):
     if (parsed.hostname or '').lower().rstrip('.') == 'dl.videodropper.app':
         if not instagram_signed_source(value):
             raise ValueError('Use a VideoDropper download link for a direct Instagram MP4.')
-        # Keep the signed outer URL: it may serve media when the CDN blocks this host.
         return value
     provider = platform(value)
     if provider == 'generic':
         return value
-    # Preserve port syntax so validate_input can reject a nonstandard port.
     if parsed.port not in (None, 80 if parsed.scheme.lower() == 'http' else 443):
         return value
     host = (parsed.hostname or '').lower().rstrip('.')
@@ -111,14 +97,14 @@ def normalize_url(value):
         if parsed.fragment.startswith('t=') and not any(k == 't' for k, _ in query):
             query.append(('t', parsed.fragment[2:]))
     elif provider == 'twitter':
-        match = re.fullmatch(r'/([A-Za-z0-9_]+|i/web)/status/(\d+)(?:/(?:video|photo)/(\d+))?/?', path)
+        match = re.fullmatch(r'/([A-Za-z0-9_]+|i/web)/status/(\d+)(?:/(video|photo)/(\d+))?/?', path)
         host = 'x.com'
         if match:
             path = f'/{match[1]}/status/{match[2]}'
-            # First media is implicit; preserve a non-first selection rather
-            # than silently changing a user's requested media identity.
-            if match[3] and match[3] != '1':
-                path += '/video/' + match[3]
+            # /video/1 is meaningful to extractors. Retain both the selected
+            # index and its kind; never turn /photo/2 into /video/2.
+            if match[3]:
+                path += '/' + match[3] + '/' + match[4]
             query = []
     elif provider == 'instagram':
         host = 'www.instagram.com'
@@ -136,7 +122,6 @@ def normalize_url(value):
 
 
 def identity(value):
-    """Provider-qualified identity, never a reply/quote's media ID."""
     parsed = urlsplit(normalize_url(value))
     name = platform(value)
     if name == 'youtube':
@@ -148,11 +133,7 @@ def identity(value):
 
 
 def resolve_shared_url(value, session=None):
-    """Expand only known share routes, checking *each* redirect before fetching.
-
-    Called only inside a worker with the socket guard installed. No cookies,
-    Authorization or service API headers are attached to these requests.
-    """
+    """Resolve known share routes, validating each redirect before fetching."""
     from vortex_network import validate_input
     from urllib.parse import urljoin
     value = validate_input(normalize_url(value), 'download')

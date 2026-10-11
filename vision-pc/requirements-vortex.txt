@@ -1,9 +1,8 @@
-# Vortex specialist engines. yt-dlp and requests are also in requirements.txt.
-# Install into a private dependency target via Setup-Vision-PC -Action InstallVortexTools.
-# These packages are loaded only by the Vortex subprocess, never the shared server.
+# Isolated Vortex dependencies; never load source-account browser cookies.
+# Install/refresh with Setup-Vision-PC.ps1 -Action InstallVortexTools.
 yt-dlp[default]>=2026.8.19
 gallery-dl>=1.32.15,<2
+instaloader>=4.14,<5
 spotdl>=4.5.2,<5
-# Cobalt/FxEmbed are services, not PyPI downloaders. See Vortex-Services.ps1.
-# twitter-video-dl is intentionally not installed: see the upstream audit.
 psutil>=7.2,<8
+# Cobalt and FxEmbed remain separately configured services, not pip packages.

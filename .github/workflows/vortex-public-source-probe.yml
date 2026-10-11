@@ -1,0 +1,50 @@
+name: Vortex public-source probe
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'vision-pc/vortex_adapters.py'
+      - 'vision-pc/vortex_urls.py'
+      - 'vision-pc/vortex_race.py'
+      - 'vision-pc/vortex_services.py'
+      - 'vision-pc/Update-Vortex-Retrieval.ps1'
+      - 'tests/vortex_live_probe.py'
+      - '.github/workflows/vortex-public-source-probe.yml'
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Public post to test. Never paste private links or credentials.'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: vortex-public-probe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-helper:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse update helper with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $Tokens = $null
+          $ParseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'vision-pc/Update-Vortex-Retrieval.ps1'), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
+          if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
+  public-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r vision-pc/requirements.txt -r vision-pc/requirements-vortex.txt
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Probe original X post using native methods and explicitly authorized public FxEmbed
+        env:
+          VORTEX_PROBE_URL: ${{ inputs.url || 'https://x.com/iam_scholar/status/2109036692065649078/video/1' }}
+        run: python tests/vortex_live_probe.py --allow-public-fxembed
