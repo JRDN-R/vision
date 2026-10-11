@@ -235,7 +235,7 @@ def export_media(artifact, media, request, *, stem='export'):
         raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
     duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
     if duration and duration > int(request.get('maxDuration', 14400)):
-        raise WorkerError("This media exceeds the server's four-hour duration limit.")
+        raise WorkerError("This media exceeds the configured duration limit.")
     output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
@@ -386,7 +386,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise WorkerError("Wait until this live broadcast has finished before downloading.")
         if (number(info.get("duration")) or 0) > duration_limit:
-            raise WorkerError("This media exceeds the server's four-hour duration limit.")
+            raise WorkerError("This media exceeds the configured duration limit.")
         if info.get("has_drm"):
             raise WorkerError("DRM-protected media cannot be downloaded.")
 
@@ -458,7 +458,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if music:
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
-        raise WorkerError("This media exceeds the server's four-hour duration limit.")
+        raise WorkerError("This media exceeds the configured duration limit.")
     artifact = export_media(artifact, media, dict(request, downloadMode='audio' if audio else request.get('downloadMode', 'video')))
     media.update(quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
@@ -709,7 +709,7 @@ def run_gallery(request):
             probe = probe_file(artifact, request.get("ffmpeg"), directory)
             measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
             if measured_duration > int(request.get("maxDuration", 14400)):
-                raise WorkerError("This media exceeds the server's four-hour duration limit.")
+                raise WorkerError("This media exceeds the configured duration limit.")
             properties = apply_probe(dict(media), probe)
             artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
             if len(files) > 1:

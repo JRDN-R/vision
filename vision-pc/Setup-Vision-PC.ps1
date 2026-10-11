@@ -668,7 +668,7 @@ function Install-VortexTools {
     # The supervisor uses psutil too. Keep this small core dependency available
     # when InstallVortexTools is run directly without a preceding Update.
     Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-input','--only-binary=:all:','psutil>=7.2,<8')
-    Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, spotdl', $PackagesPath)
+    Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, instaloader, spotdl', $PackagesPath)
     $Configuration = Read-Configuration
     if (-not $Configuration.vortex) { $Configuration | Add-Member -NotePropertyName vortex -NotePropertyValue ([pscustomobject]@{}) }
     $Configuration.vortex | Add-Member -NotePropertyName packagesPath -NotePropertyValue $PackagesPath -Force
