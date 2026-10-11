@@ -13,11 +13,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Archive tracked retrieval source and tests only
-        run: git archive --format=zip --output=vortex-audit-source.zip HEAD vision-pc tests web/vortex vortex .github/workflows web/build.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download isolated public test dependencies
+        run: python -m pip download --only-binary=:all: --no-deps --dest wheelhouse flask werkzeug blinker yt-dlp gallery-dl instaloader
       - uses: actions/upload-artifact@v4
         with:
-          name: vortex-audit-source
-          path: vortex-audit-source.zip
+          name: vortex-test-wheels
+          path: wheelhouse
           retention-days: 1
           if-no-files-found: error
