@@ -1,11 +1,16 @@
 """Real yt-dlp selection under production limits; no live-source claims."""
 import copy
 import io
+import importlib.util
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+import tempfile
 
 import yt_dlp
 import vortex_worker as worker
+import vortex_network as network
+from yt_dlp.extractor.twitter import TwitterIE
 
 
 class LimitsTests(unittest.TestCase):
@@ -49,6 +54,52 @@ class LimitsTests(unittest.TestCase):
                                 (worker.WorkerError('This media exceeds the configured duration limit.'), 'duration_limit'),
                                 (MemoryError(), 'memory_limit'), (OSError(28, 'secret path'), 'disk_limit')):
             self.assertEqual(worker.error_category(error), category)
+
+    def test_x_status_identity_and_syndication_quotes_are_checked_before_extraction(self):
+        own, quoted = {'id_str': 'own', 'type': 'video'}, {'id_str': 'quoted', 'type': 'video'}
+        payload = dict(id_str='123', mediaDetails=[own], extended_entities={'media': [own, quoted]},
+                       quoted_tweet={'id_str': '999'}, quoted_status={'id_str': '999'})
+        def status(_self, _id): return payload
+        with patch.object(TwitterIE, '_extract_status', status):
+            worker.configure_twitter_identity()
+            result = TwitterIE._extract_status(None, '123')
+            self.assertEqual(result['extended_entities']['media'], [own])
+            self.assertNotIn('quoted_status', result)
+            self.assertNotIn('quoted_tweet', result)
+            with self.assertRaisesRegex(worker.SourceError, 'different media'):
+                TwitterIE._extract_status(None, '456')
+
+    @unittest.skipUnless(importlib.util.find_spec('gallery_dl'), 'Specialist CI installs gallery-dl')
+    def test_gallery_real_twitter_parser_uses_fitting_variant_and_actual_dimensions(self):
+        from gallery_dl import extractor
+        instance = extractor.find('https://x.com/u/status/123')
+        instance.initialize()
+        variants = [dict(content_type='video/mp4', url=f'https://video.twimg.com/vid/{w}x{h}/a.mp4', bitrate=b)
+                    for w,h,b in ((640,360,600000),(1920,1080,6000000))]
+        item = dict(type='video', original_info={'width':1920,'height':1080},
+                    video_info={'duration_millis':8700672,'variants':variants})
+        worker.configure_gallery_twitter(instance, {'quality':'balanced','maxBytes':2*1024**3})
+        result = []
+        instance._extract_media({'id_str':'123'}, [item], result)
+        self.assertEqual((result[0]['width'],result[0]['height']), (640,360))
+        self.assertEqual(result[0]['url'], variants[0]['url'])
+        self.assertEqual(len(item['video_info']['variants']), 2)
+        instance.session.close()
+
+    def test_original_vimeo_uses_public_player_with_exact_same_id(self):
+        calls = []
+        def extract(ydl, value, download=False):
+            calls.append(value)
+            if value == 'https://vimeo.com/76979871':
+                raise yt_dlp.utils.DownloadError('HTTP Error 401')
+            return ydl.process_ie_result(dict(id='76979871', title='Fixture', duration=10,
+                webpage_url=value, formats=[self.video(360)]), download=False)
+        with tempfile.TemporaryDirectory() as directory, patch.object(network, 'resolve_public'), \
+                patch.object(worker, 'configure_ytdlp_safety'), patch.object(worker, 'EVENT_STREAM', io.StringIO()), \
+                patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
+            result = worker.run_ytdlp(dict(input='https://vimeo.com/76979871', directory=directory, kind='inspect'))
+        self.assertEqual(calls, ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871'])
+        self.assertEqual(result['media']['url'], calls[0])
 
 
 if __name__ == '__main__':

@@ -49,9 +49,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - run: python -m pip install -r vision-pc/requirements.txt -r vision-pc/requirements-vortex.txt
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Probe original public posts with real transfer and full-file verification
         env:
-          VORTEX_PROBE_URL: ${{ inputs.url || (matrix.source == 'reported-x' && 'https://x.com/iam_scholar/status/2109036692065649078/video/1') || (matrix.source == 'youtube' && 'https://www.youtube.com/watch?v=BaW_jenozKc') || (matrix.source == 'vimeo' && 'https://vimeo.com/76979871') || 'https://www.instagram.com/reel/Chunk8-jurw/' }}
+          VORTEX_PROBE_URL: ${{ inputs.url || (matrix.source == 'reported-x' && 'https://x.com/iam_scholar/status/2109036692065649078/video/1') || (matrix.source == 'youtube' && 'https://www.youtube.com/watch?v=YE7VzlLtp-4') || (matrix.source == 'vimeo' && 'https://vimeo.com/76979871') || 'https://www.instagram.com/reel/Chunk8-jurw/' }}
         run: python tests/vortex_live_probe.py --allow-public-fxembed

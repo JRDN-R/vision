@@ -350,7 +350,7 @@ function Set-ProcessorUpdate($Configuration, [string]$StageDirectory, [bool]$Che
         }
         if ($CheckVortex) {
             $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/health' -Headers (Get-LocalDiagnosticHeaders $Configuration) -TimeoutSec 10
-            if ($Health.vortex.ready -ne $true -or $Health.vortex.engines.'gallery-dl' -ne $true -or $Health.vortex.engines.spotdl -ne $true) {
+            if ($Health.vortex.ready -ne $true -or $Health.vortex.engines.'yt-dlp' -ne $true -or $Health.vortex.engines.'gallery-dl' -ne $true -or $Health.vortex.engines.instaloader -ne $true -or $Health.vortex.engines.spotdl -ne $true) {
                 throw 'The processor did not confirm all Vortex engines.'
             }
         }
@@ -650,6 +650,16 @@ This report can be shared for help. It cannot authorize connections by itself.
 
 function Install-VortexTools {
     Assert-InstalledProcessor
+    foreach ($Tool in @('ffmpeg.exe','ffprobe.exe','deno.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $ToolsDir $Tool))) {
+            throw "Required media runtime $Tool is missing from $ToolsDir. Restore it before updating Vortex tools."
+        }
+    }
+    $DenoVersion = & (Join-Path $ToolsDir 'deno.exe') --version
+    $DenoMatch = [regex]::Match(($DenoVersion -join ' '), 'deno (\d+\.\d+\.\d+)')
+    if ($LASTEXITCODE -ne 0 -or -not $DenoMatch.Success -or [version]$DenoMatch.Groups[1].Value -lt [version]'2.3.0') {
+        throw 'Vortex YouTube extraction requires Deno 2.3.0 or newer. Update the Deno runtime before refreshing Vortex tools.'
+    }
     $Configuration = Read-Configuration
     if ($Configuration.firebaseAuth.enabled -ne $true) { throw 'EnableGoogleSignIn must be configured before installing Vortex tools.' }
     $InstallId = [Guid]::NewGuid().ToString('N')
@@ -668,7 +678,7 @@ function Install-VortexTools {
     # The supervisor uses psutil too. Keep this small core dependency available
     # when InstallVortexTools is run directly without a preceding Update.
     Invoke-Checked $PythonExe @('-m','pip','--isolated','install','--index-url','https://pypi.org/simple','--disable-pip-version-check','--no-input','--only-binary=:all:','psutil>=7.2,<8')
-    Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, instaloader, spotdl', $PackagesPath)
+    Invoke-Checked $PythonExe @('-c','import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, instaloader, spotdl, yt_dlp_ejs', $PackagesPath)
     $Configuration = Read-Configuration
     if (-not $Configuration.vortex) { $Configuration | Add-Member -NotePropertyName vortex -NotePropertyValue ([pscustomobject]@{}) }
     $Configuration.vortex | Add-Member -NotePropertyName packagesPath -NotePropertyValue $PackagesPath -Force

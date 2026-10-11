@@ -24,6 +24,7 @@ class Adapter:
     module: str = ''
     platforms: tuple = ()
     service: bool = False
+    inspection_download: bool = False
 
     def compatible(self, value):
         name = platform(value)
@@ -32,10 +33,10 @@ class Adapter:
         if self.name in ('yt-dlp', 'cobalt', 'page-media'):
             return name != 'spotify' and (self.name == 'yt-dlp' or value.startswith(('https://', 'http://')))
         if self.name == 'gallery-dl':
-            from vortex_worker import is_gallery
-            # Gallery-dl recognizes more public hosts than this local shortlist.
-            return name in self.platforms or is_gallery(value) or (
-                name == 'generic' and value.startswith(('https://', 'http://')))
+            # Let the isolated installed registry decide, including providers
+            # such as Facebook/TikTok that have their own platform labels.
+            # Music/video search providers must not turn into thumbnail jobs.
+            return name not in ('spotify', 'youtube') and value.startswith(('https://', 'http://'))
         if self.name == 'instaloader':
             return instagram_shortcode(value) is not None
         return name in self.platforms
@@ -112,13 +113,13 @@ class Adapter:
 ADAPTERS = (
     Adapter('yt-dlp', 'yt_dlp'),
     Adapter('gallery-dl', 'gallery_dl', ('twitter', 'instagram', 'reddit')),
-    Adapter('instagram-direct'),
-    Adapter('cobalt', service=True),
+    Adapter('instagram-direct', inspection_download=True),
+    Adapter('cobalt', service=True, inspection_download=True),
     Adapter('yt-dlp-twitter-syndication', 'yt_dlp', ('twitter',)),
     Adapter('yt-dlp-twitter-legacy', 'yt_dlp', ('twitter',)),
-    Adapter('instaloader', 'instaloader', ('instagram',)),
-    Adapter('page-media'),
-    Adapter('fxembed', platforms=('twitter',), service=True),
+    Adapter('instaloader', 'instaloader', ('instagram',), inspection_download=True),
+    Adapter('page-media', inspection_download=True),
+    Adapter('fxembed', platforms=('twitter',), service=True, inspection_download=True),
     Adapter('spotdl', 'spotdl', ('spotify',)),
 )
 
@@ -170,11 +171,15 @@ def run_twitter_api(request, api):
         yt_dlp.YoutubeDL = original
 
 
-def select_stream(streams, quality):
-    from vortex_worker import number
+def select_stream(streams, quality, *, duration=None, max_bytes=None):
+    from vortex_worker import estimated_bytes, number
     streams = [s for s in streams if isinstance(s, dict) and isinstance(s.get('url'), str)]
     if not streams:
         raise ValueError('no_stream')
+    if max_bytes:
+        streams = [s for s in streams if (estimated_bytes(dict(s, tbr=(number(s.get('bitrate')) or 0) / 1000), duration) or 0) <= max_bytes * .98]
+        if not streams:
+            raise ValueError('size_limit')
     key = lambda s: (number(s.get('height')) or 0, number(s.get('bitrate')) or 0)
     cap = {'small': 480, 'balanced': 1080}.get(quality)
     below = [s for s in streams if number(s.get('height')) and number(s.get('height')) <= cap] if cap else []
@@ -332,7 +337,8 @@ def run_fxembed(request):
         raise ValueError('ambiguous_media')
     # Do not require the OpenAPI endpoint to work before trying the media API.
     status, video, streams = fx_streams(client.json('/2/status/' + post_id), request['input'])
-    stream = select_stream(streams, request.get('quality', 'balanced'))
+    stream = select_stream(streams, request.get('quality', 'balanced'),
+                           duration=worker.number(video.get('duration')), max_bytes=request.get('maxBytes'))
     media = dict(title=worker.text(status.get('text') or 'X video'), url=request['input'], source='X',
                  thumbnail=worker.safe_url(video.get('thumbnail_url')), duration=worker.number(video.get('duration')),
                  mediaType='video', width=stream.get('width'), height=stream.get('height'), quality=request.get('quality'),

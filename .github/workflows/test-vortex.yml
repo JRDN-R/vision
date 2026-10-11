@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m pip install -r vision-pc/requirements.txt
+      - run: python -m pip install -r vision-pc/requirements.txt -r vision-pc/requirements-vortex.txt
       - name: Install FFmpeg for real export checks (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -74,7 +74,7 @@ jobs:
           $VortexPackages = Join-Path $env:RUNNER_TEMP 'vortex-packages'
           python -m pip install --only-binary=:all: --target $VortexPackages -r vision-pc/requirements-vortex.txt
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -c "import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, spotdl" $VortexPackages
+          python -c "import sys; sys.path.insert(0,sys.argv[1]); import yt_dlp, gallery_dl, instaloader, spotdl, yt_dlp_ejs" $VortexPackages
       - name: Vortex persistence, account isolation, network and delivery checks
         run: python -m unittest discover -s vision-pc -p 'test_vortex*.py' -v
       - name: Shared authentication and processor regression checks

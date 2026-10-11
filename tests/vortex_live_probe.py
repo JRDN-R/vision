@@ -39,7 +39,8 @@ try:
     with open(os.devnull,'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         with yt_dlp.YoutubeDL({'quiet':True,'no_warnings':True,'logger':Quiet(),'socket_timeout':15,
              'retries':0,'skip_download':True,'noplaylist':True,'playlistend':1,'cachedir':False,
-             'proxy':'','cookiefile':None,'usenetrc':False}) as ydl:
+            'proxy':'','cookiefile':None,'usenetrc':False,
+             'js_runtimes': {'deno': {'path': os.environ['VORTEX_PROBE_DENO']}} if os.environ.get('VORTEX_PROBE_DENO') else {}}) as ydl:
             info = ydl.extract_info(os.environ['VORTEX_PROBE_URL'],download=False)
     if isinstance(info,dict):
         report = {'status':'metadata_returned','mediaId':str(info.get('id',''))[:32],
@@ -81,6 +82,10 @@ def main():
         raise SystemExit('FFmpeg is required for the live probe.')
     environment = {k: v for k, v in os.environ.items()
                    if not any(s in k.upper() for s in ('TOKEN', 'SECRET', 'PASSWORD', 'API_KEY', 'CREDENTIAL'))}
+    deno = shutil.which('deno')
+    if deno:
+        environment['VORTEX_PROBE_DENO'] = deno
+    report['javascriptRuntime'] = 'deno' if deno else 'missing'
     with tempfile.TemporaryDirectory(prefix='vortex-public-probe-') as temporary:
         root = Path(temporary)
         directory = root / 'job'
@@ -88,7 +93,7 @@ def main():
         if args.allow_public_fxembed and provider == 'twitter':
             services['fxembed'] = {'enabled': True, 'url': 'https://api.fxtwitter.com/', 'allowExternal': True}
         specification = dict(input=value, kind='download', quality='balanced', directory=str(directory),
-            maxBytes=2 * 1024**3, maxDuration=14400, maxItems=50, ffmpeg=ffmpeg,
+            maxBytes=2 * 1024**3, maxDuration=14400, maxItems=50, ffmpeg=ffmpeg, deno=deno,
             services=services, downloadMode='video', videoFormat='mp4', audioFormat='m4a')
         path = root / 'request.json'
         path.write_text(json.dumps(specification), encoding='utf-8')

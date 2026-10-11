@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import psutil
 
@@ -53,6 +54,7 @@ class Attempt:
         self.adapter, self.directory, self.kind = adapter, directory, kind
         self.started = time.monotonic()
         self.inspection_timeout = max(20, min(120, request.get('inspectionTimeout', 120)))
+        self.download_timeout = max(1, min(40 * 60, request.get('downloadTimeout', 40 * 60)))
         self.result = None
         self.category = None
         self.finished = False
@@ -101,7 +103,7 @@ class Attempt:
                 self.cancel()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-        if time.monotonic() - self.started > (self.inspection_timeout if self.kind == 'inspect' else 40 * 60):
+        if time.monotonic() - self.started > (self.inspection_timeout if self.kind == 'inspect' else self.download_timeout):
             self.category = 'timeout'
             self.cancel()
         with self.events.open('r', encoding='utf-8', errors='replace') as source:
@@ -193,9 +195,11 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
     # chance for the last fallback to start.
     inspection_timeout = min(120, 150 / math.ceil(len(selected) / MAX_INSPECTIONS))
 
+    download_timeout = 40 * 60
+
     def start(adapter, kind, suffix, candidate=None):
         try:
-            specification = dict(request, inspectionTimeout=inspection_timeout)
+            specification = dict(request, inspectionTimeout=inspection_timeout, downloadTimeout=download_timeout)
             if candidate:
                 specification['expectedDuration'] = (candidate.result.get('media') or {}).get('duration')
             attempt = attempt_factory(adapter, specification, race_dir / (adapter.name + suffix), kind)
@@ -237,6 +241,12 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
     try:
         emit(phase='Finding media…', progress=None)
         waiting, pending = list(selected), []
+        if request['kind'] == 'download':
+            # These adapters can only inspect by downloading the complete file.
+            # Give them a transfer slot/deadline, not a 50-second metadata slot.
+            candidates = [SimpleNamespace(adapter=a, result={'media': {}}) for a in waiting
+                          if getattr(a, 'inspection_download', False)]
+            waiting = [a for a in waiting if not getattr(a, 'inspection_download', False)]
         while waiting or pending:
             budget()
             while waiting and len(pending) < MAX_INSPECTIONS:
@@ -260,6 +270,7 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
         if request['kind'] == 'inspect' and candidates:
             return promote(candidates[0])
         emit(phase='Preparing download…', progress=None)
+        remaining_downloads = len(candidates)
         while candidates:
             rank = quality_rank(candidates[0].result, request)
             cohort = [a for a in candidates if quality_rank(a.result, request) == rank]
@@ -268,12 +279,23 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
             while cohort or pending:
                 budget()
                 while cohort and len(pending) < MAX_DOWNLOADS:
+                    # Input + remux/export can coexist. Two nearly-cap-sized
+                    # candidates cannot both fit the unchanged 3x disk budget.
+                    estimated = (cohort[0].result.get('media') or {}).get('transferBytes')
+                    reservation = 2 * min(request['maxBytes'], estimated or request['maxBytes'])
+                    if pending and sum(a.storage_reservation for a in pending) + reservation > 3 * request['maxBytes']:
+                        break
                     candidate = cohort.pop(0)
                     if candidate.result.get('filename'):
                         return promote(candidate)
+                    # Reserve a fair portion of the remaining overall deadline
+                    # for each queued candidate, even across quality cohorts.
+                    download_timeout = max(1, (44 * 60 - (time.monotonic() - started) - 15) / max(1, remaining_downloads))
+                    remaining_downloads -= 1
                     attempt = start(candidate.adapter, 'download', '-download', candidate)
                     if attempt:
                         attempt.expected_rank = rank
+                        attempt.storage_reservation = reservation
                         pending.append(attempt)
                 for attempt in list(pending):
                     if attempt.poll():

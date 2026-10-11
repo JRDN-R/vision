@@ -168,6 +168,7 @@ def bounded_selector(ydl, specification, duration, limit, *, audio=False):
     select = ydl.build_format_selector(specification)
 
     def bounded(context):
+        bounded.size_limited = False
         remaining = list(context['formats'])
         has_video = any(f.get('vcodec') != 'none' for f in remaining)
         while remaining:
@@ -184,8 +185,10 @@ def bounded_selector(ydl, specification, duration, limit, *, audio=False):
             # Remove the largest selected stream and let yt-dlp choose the next
             # compatible combination; audio is retained while video steps down.
             largest = max(zip(parts, sizes), key=lambda pair: pair[1] or 0)[0]
+            bounded.size_limited = True
             remaining = [f for f in remaining if f['format_id'] != largest['format_id']]
         raise WorkerError('No complete stream fits the server download size limit.', category='file_size_limit')
+    bounded.size_limited = False
     return bounded
 
 
@@ -417,12 +420,43 @@ def configure_ytdlp_safety(directory, ffmpeg):
     FFmpegPostProcessor.get_audio_codec = lambda self, path: next((s.get("codec_name") for s in probe_file(path, ffmpeg, directory).get("streams", []) if s.get("codec_type") == "audio"), None)
 
 
+def configure_twitter_identity():
+    """Do not let a quoted/reposted video's ID masquerade as this post's ID.
+
+    yt-dlp intentionally includes quote media and stamps display_id with the
+    requested post. Check the returned status before that transformation.
+    """
+    from yt_dlp.extractor.twitter import TwitterIE
+    original = TwitterIE._extract_status
+    if getattr(original, '_vortex_identity', False):
+        return
+
+    def own_status(self, post_id):
+        status = original(self, post_id)
+        if str(status.get('id_str') or status.get('id') or '') != post_id:
+            raise SourceError('The source returned a different media item.')
+        status = dict(status)
+        status.pop('quoted_status', None)
+        status.pop('quoted_tweet', None)
+        # Syndication normalizes own and quoted media into one list. Its
+        # original mediaDetails retains the exact requested attachment order.
+        if 'mediaDetails' in status:
+            status['extended_entities'] = {'media': status['mediaDetails']}
+        return status
+
+    own_status._vortex_identity = True
+    TwitterIE._extract_status = own_status
+
+
 def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     try:
         import yt_dlp
     except ImportError as exc:
         raise WorkerError("The yt-dlp media engine is not installed. Update Vision PC setup.") from exc
     value = input_value or request["input"]
+    from vortex_urls import platform
+    if platform(value) == 'twitter':
+        configure_twitter_identity()
     music = (urlparse(value).hostname or '').lower() == 'music.youtube.com'
     audio = audio or music or request.get('downloadMode') == 'audio'
     directory = Path(request["directory"]).resolve()
@@ -450,6 +484,10 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         "merge_output_format": "mp4", "restrictfilenames": True,
         "allow_unplayable_formats": False,
     }
+    if platform(value) == 'twitter':
+        # For equal resolution/fps prefer the native progressive MP4, avoiding
+        # thousands of HLS requests for a multi-hour X upload.
+        options['format_sort'] = ['res', 'fps', 'proto']
     if request.get("ffmpeg"):
         options["ffmpeg_location"] = request["ffmpeg"]
     if request.get("deno"):
@@ -468,6 +506,9 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     def progress(event):
         status = event.get("status")
         now = time.monotonic()
+        downloaded = number(event.get('downloaded_bytes')) or 0
+        if downloaded > cap_bytes:
+            raise WorkerError('This file exceeds the server download size limit.', category='file_size_limit')
         if status == "downloading" and now - last_event[0] < 0.25:
             return
         last_event[0] = now
@@ -490,17 +531,30 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if search:
         return search_youtube(value, options, engine, page=request.get('searchPage', 0))
     emit(phase="Reading media details", progress=None)
+    parsed_value = urlparse(value)
+    vimeo_id = (re.fullmatch(r'/(\d+)/?', parsed_value.path)
+                if parsed_value.hostname in ('vimeo.com', 'www.vimeo.com') else None)
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.format_selector = bounded_selector(ydl, options['format'], source_duration, cap_bytes, audio=audio)
         try:
             info = ydl.extract_info(value, download=False)
         except yt_dlp.utils.DownloadError as exc:
-            raise SourceError(source_error_message(value, exc)) from exc
+            if not vimeo_id:
+                raise SourceError(source_error_message(value, exc)) from exc
+            # Public embeddable videos can expose the same ID through Vimeo's
+            # player even when its anonymous OAuth client cannot authenticate.
+            # yt-dlp still owns parsing and all transport/identity limits apply.
+            try:
+                info = ydl.extract_info('https://player.vimeo.com/video/' + vimeo_id[1], download=False)
+            except yt_dlp.utils.DownloadError as player_error:
+                raise SourceError(source_error_message(value, player_error)) from None
         if not info:
             raise SourceError("No downloadable public media was found.")
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise WorkerError("Paste a single media link. Video playlists are not downloaded as a batch.")
         check_media(info)
+        if vimeo_id and str(info.get('id')) != vimeo_id[1]:
+            raise SourceError('The source returned a different media item.')
         from vortex_urls import identity
         expected = identity(value)
         if expected[0] == 'youtube' and expected[1] and str(info.get('id')) != expected[1]:
@@ -513,6 +567,14 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
                    for item in (info.get('formats') or [info])):
             raise SourceError('No playable media stream was returned.')
         media = media_from_info(info, fallback_url=value, engine=engine)
+        if vimeo_id:
+            media['url'] = safe_url(value)
+        selected_streams = info.get('requested_formats') or [info]
+        estimates = [estimated_bytes(f, number(info.get('duration'))) for f in selected_streams]
+        if all(estimates):
+            media['transferBytes'] = sum(estimates)
+        if ydl.format_selector.size_limited:
+            media['note'] = 'Selected a smaller complete stream to fit the server file size limit.'
         if music:
             media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
         media["quality"] = request.get("quality", "balanced")
@@ -522,6 +584,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         # Reuse the fresh extracted metadata so a signed media URL is selected
         # once and the requested quality remains consistent throughout the job.
         info = ydl.process_ie_result(info, download=True)
+        size_limited = ydl.format_selector.size_limited
     candidates = [p for p in directory.glob("media.*") if p.is_file() and p.suffix.lower().lstrip(".") in MEDIA_EXTENSIONS and re.fullmatch(r"media\.[A-Za-z0-9]+", p.name)]
     if len(candidates) != 1:
         raise WorkerError("The media engine could not finish packaging this file.")
@@ -530,6 +593,10 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         raise WorkerError("This file exceeds the server download size limit.")
     emit(phase="Verifying media properties", progress=None)
     media = apply_probe(media_from_info(info, fallback_url=value, engine=engine), probe_file(artifact, request.get("ffmpeg"), directory))
+    if vimeo_id:
+        media['url'] = safe_url(value)
+    if size_limited:
+        media['note'] = 'Selected a smaller complete stream to fit the server file size limit.'
     if music:
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
@@ -654,7 +721,45 @@ def run_spotify(request):
     return result
 
 
-def collect_gallery(value, max_items):
+def configure_gallery_twitter(instance, request):
+    """Let gallery-dl parse X, but select a bounded progressive video variant."""
+    import types
+    from vortex_adapters import select_stream
+    original = instance._extract_media
+
+    def bounded_media(self, tweet, entities, files):
+        selected = []
+        for item in entities:
+            info = item.get('video_info')
+            if not info:
+                selected.append(item)
+                continue
+            duration = (number(info.get('duration_millis')) or 0) / 1000
+            if duration > int(request.get('maxDuration', 14400)):
+                raise WorkerError('This media exceeds the configured duration limit.', category='duration_limit')
+            variants = []
+            for variant in info.get('variants') or []:
+                if variant.get('content_type') != 'video/mp4':
+                    continue
+                dims = re.search(r'/(\d+)x(\d+)/', urlparse(variant.get('url', '')).path)
+                variant = dict(variant, width=int(dims[1]) if dims else None, height=int(dims[2]) if dims else None)
+                variants.append(variant)
+            try:
+                stream = select_stream(variants, request.get('quality', 'balanced'),
+                                       duration=duration, max_bytes=int(request['maxBytes']))
+            except ValueError as error:
+                if str(error) == 'size_limit':
+                    raise WorkerError('No complete stream fits the server download size limit.', category='file_size_limit') from None
+                raise
+            selected.append(dict(item, video_info=dict(info, variants=[stream]),
+                                 original_info=dict(item.get('original_info') or {},
+                                                    width=stream.get('width'), height=stream.get('height'))))
+        return original(tweet, selected, files)
+
+    instance._extract_media = types.MethodType(bounded_media, instance)
+
+
+def collect_gallery(value, max_items, request=None):
     try:
         from gallery_dl import config, extractor
         from gallery_dl.extractor.message import Message
@@ -677,6 +782,8 @@ def collect_gallery(value, max_items):
         instance = extractor.find(current)
         if instance is None:
             continue
+        if request and getattr(instance, 'category', None) == 'twitter':
+            configure_gallery_twitter(instance, request)
         for message in instance:
             kind = message[0]
             if kind == Message.Queue:
@@ -705,7 +812,7 @@ def run_gallery(request):
     value = request["input"]
     emit(phase="Reading gallery media", progress=None)
     try:
-        files = collect_gallery(value, int(request.get("maxItems", 50)))
+        files = collect_gallery(value, int(request.get("maxItems", 50)), request)
     except WorkerError:
         raise
     except Exception as exc:
@@ -795,6 +902,9 @@ def run_gallery(request):
                 # ZIP integrity alone cannot establish that every contained
                 # video is complete/playable. Verify each before packaging,
                 # using that item's own expected duration, not the first one.
+            if len(files) > 1:
+                # ZIP members each need decoding here; a single-file result is
+                # fully decoded by main() before it can win the race.
                 verify_result(dict(complete=True, media=properties, filename=artifact.name),
                               dict(request, kind='download', expectedDuration=number(item['metadata'].get('duration'))))
             if len(files) == 1:

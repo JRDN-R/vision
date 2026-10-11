@@ -82,6 +82,25 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(adapter.compatible('https://pixiv.net/en/artworks/12345'))
         self.assertFalse(adapter.compatible('https://open.spotify.com/track/12345'))
 
+    def test_x_video_number_counts_photos_as_attachments(self):
+        files = [dict(extension='jpg', url='https://pbs.twimg.com/a.jpg', metadata={'tweet_id':'123','num':1}),
+                 dict(extension='mp4', url='https://video.twimg.com/b.mp4', metadata={'tweet_id':'123','num':2})]
+        with patch.object(worker, 'collect_gallery', return_value=files), \
+                patch.object(worker, 'safe_url', side_effect=lambda value: value), patch.object(worker, 'EVENT_STREAM', io.StringIO()):
+            result = worker.run_gallery({'input':'https://x.com/u/status/123/video/2','kind':'inspect'})
+            self.assertEqual(result['media']['mediaType'], 'video')
+            with self.assertRaises(worker.SourceError):
+                worker.run_gallery({'input':'https://x.com/u/status/123/video/1','kind':'inspect'})
+
+    def test_large_progressive_transfer_cannot_exhaust_event_budget(self):
+        response = Response(mime='video/mp4', headers={'Content-Length':''})
+        response.iter_content = lambda _: iter([b'x' * 512] * 4096)
+        with tempfile.TemporaryDirectory() as directory, patch.object(adapters.time, 'monotonic', return_value=10), \
+                patch.object(worker, 'EVENT_STREAM', io.StringIO()) as events:
+            artifact = adapters.copy_stream(response, Path(directory)/'media.mp4', 3 * 1024**2)
+            self.assertEqual(artifact.stat().st_size, 2 * 1024**2)
+            self.assertEqual(len(events.getvalue().splitlines()), 2)
+
     def test_x_first_media_selector_reaches_real_extractor(self):
         normalized = network.validate_input(X, resolve=False)
         self.assertTrue(normalized.endswith('/video/1'))

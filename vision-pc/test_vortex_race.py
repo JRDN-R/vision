@@ -143,7 +143,7 @@ if spec.get('child') and kind=='inspect':
  (d.parent.parent/(a.adapter+'.pid')).write_text(str(child.pid))
 time.sleep(spec.get(kind+'Delay',0.05))
 if spec.get(kind+'Fail'):raise SystemExit(1)
-media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter}
+media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter,'transferBytes':spec.get('bytes',1000)}
 result={'complete':True,'media':media,'results':[media]}
 if kind=='download':
  (d/'export.mp4').write_bytes(b'orchestration-only-fixture');result['filename']='export.mp4'
@@ -232,6 +232,37 @@ class RaceTests(unittest.TestCase):
         with self.assertRaises(worker.WorkerError):
             self.run_race({'one': {'inspectDelay': 30}}, maxBytes=1)
         self.assertFalse((self.root / 'race').exists())
+
+    def test_large_transfers_are_serialized_inside_unchanged_disk_budget(self):
+        active, peak = [], [0]
+        class CountingAttempt(race.Attempt):
+            def __init__(self, *args):
+                super().__init__(*args)
+                if self.kind == 'download':
+                    active[:] = [a for a in active if a.process.poll() is None]
+                    active.append(self)
+                    peak[0] = max(peak[0], len(active))
+        registry = [SimpleNamespace(name=str(i), compatible=lambda value: True, configured=lambda request: True) for i in range(3)]
+        fixtures = {a.name: {'bytes': 99000, 'downloadFail': True, 'downloadDelay': .1} for a in registry}
+        with self.assertRaises(worker.WorkerError):
+            race.race(dict(input='https://x.com/u/status/123', kind='download', quality='max', directory=str(self.root),
+                           maxBytes=100000, fixtures=fixtures), adapters=registry, attempt_factory=CountingAttempt)
+        self.assertEqual(peak[0], 1)
+
+    def test_adapter_that_downloads_for_inspection_gets_transfer_deadline(self):
+        started = []
+        class CountingAttempt(race.Attempt):
+            def __init__(self, adapter, request, directory, kind):
+                started.append((kind, request['downloadTimeout']))
+                super().__init__(adapter, request, directory, kind)
+        adapter = SimpleNamespace(name='direct', inspection_download=True, compatible=lambda value: True,
+                                  configured=lambda request: True)
+        result = race.race(dict(input='https://x.com/u/status/123', kind='download', quality='balanced',
+                          directory=str(self.root), maxBytes=100000, fixtures={'direct':{}}),
+                          adapters=[adapter], attempt_factory=CountingAttempt)
+        self.assertEqual([kind for kind, _ in started], ['download'])
+        self.assertGreater(started[0][1], 120)
+        self.assertEqual(result['filename'], 'download.mp4')
 
     def test_more_than_five_methods_can_reach_a_late_success(self):
         fixtures = {str(i): {'inspectFail': True} for i in range(7)}
