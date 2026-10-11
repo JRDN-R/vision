@@ -1,0 +1,100 @@
+name: Stage reviewed retention implementation
+on:
+  push:
+    branches: [feature/durable-import-ownership-20261011]
+    paths: ['.github/workflows/stage-retention.yml']
+permissions:
+  contents: write
+concurrency:
+  group: stage-durable-import-ownership-20261011
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: github.repository == 'JRDN-R/vision' && github.ref == 'refs/heads/feature/durable-import-ownership-20261011'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify and apply the reviewed source patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, subprocess
+          assert os.environ['GITHUB_REF'] == 'refs/heads/feature/durable-import-ownership-20261011'
+          parent = subprocess.check_output(['git','rev-parse','HEAD^'], text=True).strip()
+          assert parent == 'd190c6bbff80440d733538989d0fe09c43deefdd', parent
+          objects = ['9fb3dbadbdec4833ec9b6c0388bb96128adb115b','d61da45474eaaebc80caf8a7189fdaaed87dcc7b','087c81e09823cb3ddb979e2e9b2de3984c0ab6ec','4455f69988342a85e651b49f6d7ef7af6beb0669']
+          compressed = bytearray()
+          for sha in objects:
+              result = json.loads(subprocess.check_output(['gh','api',f'repos/JRDN-R/vision/git/blobs/{sha}']))
+              data = base64.b64decode(result['content'])
+              assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest() == sha
+              compressed.extend(data)
+          decoder = lzma.LZMADecompressor(memlimit=128*1024*1024)
+          patch = decoder.decompress(compressed, max_length=129334)
+          assert decoder.eof and not decoder.unused_data
+          assert len(patch) == 129333
+          assert hashlib.sha256(patch).hexdigest() == '2eb6eb4185533f12bb54dc6c154b81a8b07e2061bb50706ef78c96126d46c94b'
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'retention.patch'
+          path.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index',str(path)],check=True)
+          subprocess.run(['git','apply','--index',str(path)],check=True)
+          PY
+      - name: Check the core source before committing
+        run: |
+          python -m compileall -q vision-pc
+          python -m unittest discover -s vision-pc -p 'test_owned_assets.py' -v
+          python -m unittest discover -s vision-pc -p 'test_inspect_owned_assets.py' -v
+          python tests/test_context_setup.py -v
+          git diff --cached --check
+      - name: Commit source and regenerate only this draft branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Implement opt-in durable import ownership, recovery and retention tests'
+          SOURCE_SHA=$(git rev-parse HEAD)
+          export SOURCE_SHA
+          python web/build.py
+          python - <<'PY'
+          import datetime, hashlib, json, os, pathlib, re
+          data = pathlib.Path('Vision.html').read_bytes()
+          version = re.search(rb'<meta name="vision-version" content="([^"]+)"', data)[1].decode()
+          assert version == '1.0.4.0'
+          assert len(data) == 18319881
+          assert hashlib.sha256(data).hexdigest() == '6dbb86f634f60190fefb469fed994d4062329ccf5e561ea37d1ca652a85d71c8'
+          manifest = dict(version=version,sha256=hashlib.sha256(data).hexdigest(),size=len(data),file='Vision.html',sourceCommit=os.environ['SOURCE_SHA'],builtAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),runId=os.environ['GITHUB_RUN_ID'],buildKind='draft-branch')
+          pathlib.Path('portable-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          git add Vision.html index.html portable-manifest.json
+          git commit -m 'Build matching portable preview without publishing or deploying'
+          CURRENT=$(git ls-remote origin refs/heads/feature/durable-import-ownership-20261011 | cut -f1)
+          test "$CURRENT" = "$GITHUB_SHA"
+          git push origin HEAD:refs/heads/feature/durable-import-ownership-20261011
+      - name: Install the existing test runtime
+        run: python -m pip install -r vision-pc/requirements.txt
+      - name: Run real Flask retention integration
+        run: |
+          set -o pipefail
+          mkdir -p .qa/retention
+          python -m unittest discover -s vision-pc -p 'test_*owned_assets.py' -v 2>&1 | tee .qa/retention/integration.txt
+      - name: Package test dependencies for offline reproduction
+        if: always()
+        run: python -m pip download -r vision-pc/requirements.txt --dest /tmp/retention-wheelhouse
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Vision-retention-test-runtime
+          path: /tmp/retention-wheelhouse
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Vision-retention-staging-checks
+          path: .qa/retention
+          retention-days: 7
