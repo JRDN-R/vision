@@ -19,6 +19,49 @@ SHORT_HOSTS = {'t.co', 'youtu.be', 'www.youtu.be', 'vm.tiktok.com', 'vt.tiktok.c
 TRACKING = {'fbclid', 'gclid', 'igsh', 'igshid', 'cplk', 'si', 'feature', 'ref_src', 'ref_url', 's', 'share_id', 'share_app_id', 'is_from_webapp', 'sender_device', 'rdt'}
 
 
+
+def is_instagram_cdn_video(value):
+    """Accept only direct HTTPS MP4s on Instagram's known scontent CDN hosts."""
+    if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 or c == '\\' for c in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or '').lower().rstrip('.')
+        return (parsed.scheme.lower() == 'https' and parsed.port in (None, 443)
+                and parsed.username is None and parsed.password is None and not parsed.fragment
+                and (host == 'scontent.cdninstagram.com'
+                     or (host.startswith('scontent-') and host.endswith('.cdninstagram.com')))
+                and parsed.path.lower().endswith('.mp4'))
+    except ValueError:
+        return False
+
+
+def instagram_signed_source(value):
+    """Resolve a user-pasted Instagram CDN MP4 or a narrowly validated download link.
+
+    VideoDropper is never contacted for an ordinary Instagram post. Its download
+    link is used only when explicitly supplied; it must encapsulate exactly one
+    HTTPS Instagram CDN MP4, never an arbitrary URL or private-network target.
+    """
+    if is_instagram_cdn_video(value):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme.lower() != 'https' or parsed.hostname != 'dl.videodropper.app'
+                or parsed.port not in (None, 443) or parsed.path not in ('', '/')
+                or parsed.username is not None or parsed.password is not None or parsed.fragment):
+            return None
+        fields = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=1)
+        if len(fields) != 1 or fields[0][0] != 'url':
+            return None
+        direct = fields[0][1]
+        return direct if is_instagram_cdn_video(direct) else None
+    except ValueError:
+        return None
+
+
 def platform(value):
     if value.lower().startswith('spotify:'):
         return 'spotify'
@@ -43,6 +86,11 @@ def normalize_url(value):
         return value
     if parsed.username is not None or parsed.password is not None:
         raise ValueError('Links containing credentials are unsupported.')
+    if (parsed.hostname or '').lower().rstrip('.') == 'dl.videodropper.app':
+        if not instagram_signed_source(value):
+            raise ValueError('Use a VideoDropper download link for a direct Instagram MP4.')
+        # Keep the signed outer URL: it may serve media when the CDN blocks this host.
+        return value
     provider = platform(value)
     if provider == 'generic':
         return value
