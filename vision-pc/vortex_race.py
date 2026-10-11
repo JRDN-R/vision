@@ -24,7 +24,7 @@ MAX_MEMORY = 2 * 1024**3
 MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
-              'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured'}
+              'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit'}
 
 
 def diagnostic(engine, category, started):

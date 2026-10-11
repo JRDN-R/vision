@@ -38,7 +38,7 @@ ACCOUNT_BYTES = 10 * 1024**3
 GLOBAL_BYTES = 40 * 1024**3
 DISK_RESERVE = 2 * 1024**3
 MAX_ITEMS = 50
-MAX_DURATION = 7200
+MAX_DURATION = 4 * 3600
 MAX_ACTIVE = 3
 MAX_GLOBAL_ACTIVE = 20
 MAX_HISTORY = 500
@@ -91,9 +91,12 @@ class VortexJobs:
             return ((packages and importlib.machinery.PathFinder.find_spec(module, [packages]) is not None)
                     or importlib.util.find_spec(module) is not None)
         engines = {name: bool(available(module)) for name, module in
-                   (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'), ('spotdl', 'spotdl'))}
+                   (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'),
+                    ('instaloader', 'instaloader'), ('spotdl', 'spotdl'))}
+        # Guarded built-in adapters work without optional native packages.
+        engines.update({'page-media': True, 'instagram-direct': True})
         ffmpeg = Path(self.app.config.get('FFMPEG', ''))
-        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and any(engines.values()) and ffmpeg.is_file()
+        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and ffmpeg.is_file()
         return dict(ready=ready, vortexVersion=VORTEX_VERSION, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
                     maxItems=MAX_ITEMS, maxDuration=MAX_DURATION, persistentJobs=True,
                     firebaseRequired=True, videoFormats=['mp4', 'mov'], audioFormats=['m4a', 'mp3', 'wav'],
@@ -210,9 +213,10 @@ class VortexJobs:
                     service_ready = True
                 except (ValueError, TypeError):
                     pass
+        installed = capability['engines']
         if not service_ready and not any(
-                capability['engines'].get(a.name)
-                or (a.name == 'instagram-direct' and a.configured({}))
+                installed.get(a.name) or
+                (a.name.startswith('yt-dlp-twitter-') and installed.get('yt-dlp'))
                 for a in compatible):
             raise self.Error('This source is unavailable on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallVortexTools.', 503)
         now, job_id = time.time(), secrets.token_hex(12)

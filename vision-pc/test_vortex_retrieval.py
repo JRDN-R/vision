@@ -40,6 +40,48 @@ class Response:
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_unavailable_short_link_resolver_still_uses_extraction_engines(self):
+        short = 'https://t.co/public'
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(network, 'validate_input', side_effect=lambda value, *a, **k: value), \
+             patch.object(urls, 'resolve_shared_url', side_effect=requests.ConnectionError('temporary')), \
+             patch.object(race, 'race', return_value={'complete': True}) as engine:
+            self.assertTrue(worker.run({'input': short, 'kind': 'inspect', 'directory': directory})['complete'])
+        self.assertEqual(engine.call_args.args[0]['input'], short)
+
+    def test_unsafe_short_link_redirect_must_not_fallback(self):
+        short = 'https://t.co/public'
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(network, 'validate_input', side_effect=lambda value, *a, **k: value), \
+             patch.object(urls, 'resolve_shared_url', side_effect=network.UnsafeDestination('private')), \
+             patch.object(race, 'race') as engine:
+            with self.assertRaises(network.UnsafeDestination):
+                worker.run({'input': short, 'kind': 'inspect', 'directory': directory})
+        engine.assert_not_called()
+
+    def test_gallery_download_handles_x_video_number(self):
+        def media(tweet, name):
+            return {'extension': 'mp4', 'url': 'https://video.twimg.com/' + name + '.mp4',
+                    'metadata': {'tweet_id': tweet, 'title': name, 'duration': 15}}
+        data = [media('wrong', 'not-this-post'), media('2109036692065649078', 'first'),
+                media('2109036692065649078', 'second')]
+        with patch.object(worker, 'collect_gallery', return_value=data), \
+             patch.object(worker, 'safe_url', side_effect=lambda value: value), \
+             patch.object(worker, 'EVENT_STREAM', io.StringIO()):
+            for index, title in ((1, 'first'), (2, 'second')):
+                result = worker.run_gallery({'input': X.replace('/video/1', '/video/' + str(index)),
+                                            'kind': 'inspect', 'maxItems': 50})
+                self.assertEqual(result['media']['title'], title)
+                self.assertEqual(result['media']['itemCount'], 1)
+            with self.assertRaises(worker.SourceError):
+                worker.run_gallery({'input': X.replace('/video/1', '/photo/1'),
+                                    'kind': 'inspect', 'maxItems': 50})
+
+    def test_generic_gallery_host_reaches_native_extractor(self):
+        adapter = next(x for x in adapters.ADAPTERS if x.name == 'gallery-dl')
+        self.assertTrue(adapter.compatible('https://pixiv.net/en/artworks/12345'))
+        self.assertFalse(adapter.compatible('https://open.spotify.com/track/12345'))
+
     def test_x_first_media_selector_reaches_real_extractor(self):
         normalized = network.validate_input(X, resolve=False)
         self.assertTrue(normalized.endswith('/video/1'))

@@ -32,7 +32,9 @@ class Adapter:
             return name != 'spotify' and (self.name == 'yt-dlp' or value.startswith(('https://', 'http://')))
         if self.name == 'gallery-dl':
             from vortex_worker import is_gallery
-            return name in self.platforms or is_gallery(value)
+            # Gallery-dl recognizes more public hosts than this local shortlist.
+            return name in self.platforms or is_gallery(value) or (
+                name == 'generic' and value.startswith(('https://', 'http://')))
         if self.name == 'instaloader':
             return instagram_shortcode(value) is not None
         return name in self.platforms
