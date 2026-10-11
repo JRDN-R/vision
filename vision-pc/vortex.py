@@ -210,7 +210,10 @@ class VortexJobs:
                     service_ready = True
                 except (ValueError, TypeError):
                     pass
-        if not service_ready and not any(capability['engines'].get(a.name) for a in compatible):
+        if not service_ready and not any(
+                capability['engines'].get(a.name)
+                or (a.name == 'instagram-direct' and a.configured({}))
+                for a in compatible):
             raise self.Error('This source is unavailable on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallVortexTools.', 503)
         now, job_id = time.time(), secrets.token_hex(12)
         with self.db() as db:
