@@ -56,6 +56,8 @@ def error_category(error):
         return error.category
     if isinstance(error, MemoryError):
         return 'memory_limit'
+    if isinstance(error, ImportError):
+        return 'missing_dependency'
     if isinstance(error, subprocess.TimeoutExpired):
         return 'timeout'
     if isinstance(error, OSError) and error.errno == 28:
@@ -64,7 +66,9 @@ def error_category(error):
     if 'different media' in detail or detail == 'identity_mismatch': return 'identity_mismatch'
     if 'duration limit' in detail: return 'duration_limit'
     if 'size limit' in detail or 'max-filesize' in detail or 'max_filesize' in detail: return 'file_size_limit'
-    if 'signed-in' in detail or 'login' in detail: return 'authentication'
+    if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401', 'http error 403', '403 forbidden')): return 'authentication'
+    if 'not installed' in detail or 'ffmpeg is unavailable' in detail: return 'missing_dependency'
+    if 'external streaming protocol' in detail: return 'unsupported'
     if 'limiting requests' in detail: return 'rate_limited'
     if 'timed out' in detail or 'timeout' in detail: return 'timeout'
     if 'connection' in detail or 'reached' in detail: return 'network'
@@ -724,10 +728,16 @@ def run_spotify(request):
 def configure_gallery_twitter(instance, request):
     """Let gallery-dl parse X, but select a bounded progressive video variant."""
     import types
-    from vortex_adapters import select_stream
+    from vortex_adapters import select_stream, selection
     original = instance._extract_media
+    kind, position = selection(request.get('input', ''))
 
     def bounded_media(self, tweet, entities, files):
+        if position is not None:
+            entities = list(entities)
+            if kind != 'video' or not 1 <= position <= len(entities) or not entities[position - 1].get('video_info'):
+                raise SourceError('The requested video is unavailable in this post.')
+            entities = [entities[position - 1]]
         selected = []
         for item in entities:
             info = item.get('video_info')
@@ -754,7 +764,12 @@ def configure_gallery_twitter(instance, request):
             selected.append(dict(item, video_info=dict(info, variants=[stream]),
                                  original_info=dict(item.get('original_info') or {},
                                                     width=stream.get('width'), height=stream.get('height'))))
-        return original(tweet, selected, files)
+        start = len(files)
+        result = original(tweet, selected, files)
+        if position is not None:
+            for item in files[start:]:
+                item['_vortex_attachment'] = position
+        return result
 
     instance._extract_media = types.MethodType(bounded_media, instance)
 
@@ -832,7 +847,7 @@ def run_gallery(request):
         if selected:
             position = int(selected.group(2))
             # X numbers ALL attachments, including photos, not just videos.
-            chosen = next((item for item in files if item['metadata'].get('num') == position), None)
+            chosen = next((item for item in files if item['metadata'].get('_vortex_attachment', item['metadata'].get('num')) == position), None)
             if chosen is None and all('num' not in item['metadata'] for item in files):
                 chosen = files[position - 1] if 1 <= position <= len(files) else None
             if chosen is None or chosen['extension'] in IMAGE_EXTENSIONS:
@@ -970,6 +985,7 @@ def verify_result(result, request):
             raise WorkerError('The requested video quality could not be verified.')
         # Decode the complete local artifact, not just its MP4 header. This
         # catches truncated streams and corrupt frames that ffprobe can list.
+        emit(phase='Verifying complete media', progress=None)
         command = [request['ffmpeg'], '-v', 'error', '-xerror', '-nostdin', '-threads', '2',
                    '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
                    '-i', str(artifact), '-map', '0:V:0?', '-map', '0:a:0?', '-f', 'null', '-']

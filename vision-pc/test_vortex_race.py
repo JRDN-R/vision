@@ -196,6 +196,13 @@ class RaceTests(unittest.TestCase):
         result = self.run_race({'fast_low': {'height': 360}, 'slow_high': {'inspectDelay': .3, 'height': 2160}}, quality='max')
         self.assertEqual(result['media']['height'], 2160)
 
+    def test_balanced_does_not_block_fast_fitting_fallback_behind_slow_hls(self):
+        started = time.monotonic()
+        result = self.run_race({'slow_high': {'height':720, 'downloadDelay':5},
+                                'fast_fitting': {'height':360, 'downloadDelay':.1}})
+        self.assertEqual(result['media']['height'], 360)
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_all_fail_one_safe_error_and_cleanup(self):
         with self.assertRaisesRegex(worker.WorkerError, '^' + race.PUBLIC_ERROR.replace('.', r'\.') + '$'):
             self.run_race({'one': {'inspectFail': True}, 'two': {'downloadFail': True}})

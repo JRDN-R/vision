@@ -120,7 +120,7 @@ class Attempt:
                 continue
             if not isinstance(event, dict):
                 continue
-            if event.get('phase') in ('Downloading media', 'Converting to MP4', 'Converting to MOV', 'Converting to M4A', 'Converting to MP3', 'Converting to WAV'):
+            if event.get('phase') in ('Downloading media', 'Converting to MP4', 'Converting to MOV', 'Converting to M4A', 'Converting to MP3', 'Converting to WAV', 'Verifying complete media') or str(event.get('phase', '')).startswith('Downloading gallery file '):
                 self.progress_event = {'phase': event['phase'], 'progress': event.get('progress')}
             if event.get('category') in CATEGORIES and self.category not in SUPERVISOR_FAILURES:
                 self.category = event['category']
@@ -162,6 +162,11 @@ class Attempt:
 def quality_rank(result, request):
     from vortex_worker import number
     if request.get('downloadMode') == 'audio' or (result.get('media') or {}).get('mediaType') in ('audio', 'image', 'gallery'):
+        return 0
+    if request.get('quality') != 'max':
+        # Small/Balanced are upper bounds, verified on the completed file.
+        # A slower high-resolution HLS candidate must not block a fitting,
+        # complete progressive fallback at a lower resolution.
         return 0
     height = number((result.get('media') or {}).get('height')) or 0
     cap = {'small': 480, 'balanced': 1080}.get(request.get('quality'))
@@ -266,7 +271,8 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                         shutil.rmtree(attempt.directory, ignore_errors=True)
             if pending:
                 time.sleep(.05)
-        candidates.sort(key=lambda a: quality_rank(a.result, request), reverse=True)
+        candidates.sort(key=lambda a: (bool(a.result.get('media')), quality_rank(a.result, request),
+                                       not a.adapter.name.startswith('yt-dlp-twitter-')), reverse=True)
         if request['kind'] == 'inspect' and candidates:
             return promote(candidates[0])
         emit(phase='Preparing download…', progress=None)

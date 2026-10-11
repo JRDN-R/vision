@@ -86,6 +86,16 @@ class LimitsTests(unittest.TestCase):
         self.assertEqual((result[0]['width'],result[0]['height']), (640,360))
         self.assertEqual(result[0]['url'], variants[0]['url'])
         self.assertEqual(len(item['video_info']['variants']), 2)
+        # An unselected oversized attachment must not block the chosen video,
+        # nor may gallery-dl's output renumbering change the source position.
+        other = copy.deepcopy(item)
+        other['video_info']['duration_millis'] = 20_000_000
+        worker.configure_gallery_twitter(instance, {'input':'https://x.com/u/status/123/video/2',
+                                                     'quality':'balanced','maxBytes':2*1024**3})
+        result = []
+        instance._extract_media({'id_str':'123'}, [other, item], result)
+        self.assertEqual(result[0]['_vortex_attachment'], 2)
+        self.assertEqual(len(result), 1)
         instance.session.close()
 
     def test_original_vimeo_uses_public_player_with_exact_same_id(self):

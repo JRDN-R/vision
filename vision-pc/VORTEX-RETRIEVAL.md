@@ -25,6 +25,10 @@ The remaining implementation defects corrected in this investigation are:
   that must download to inspect now receive a transfer slot for download jobs.
   They no longer have to finish a large file under the metadata deadline first.
   Pending candidates receive shares of the remaining overall transfer deadline.
+  Small and Balanced race verified streams within their height caps; a slower
+  higher-resolution HLS stream no longer blocks a fitting progressive fallback.
+  Max retains resolution priority. Alternate recipes from the same native engine
+  follow independent primary candidates rather than monopolizing transfer slots.
 * **Temporary storage:** near-limit transfers are serialized when simultaneous
   input/output files would exceed the unchanged shared budget. Smaller transfers
   can still race two at once. The first verified success cancels all other work.

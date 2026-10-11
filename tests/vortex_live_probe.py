@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import psutil
 
@@ -97,6 +98,7 @@ def main():
             services=services, downloadMode='video', videoFormat='mp4', audioFormat='m4a')
         path = root / 'request.json'
         path.write_text(json.dumps(specification), encoding='utf-8')
+        started = time.monotonic()
         process = subprocess.Popen([sys.executable, str(ROOT / 'vision-pc/vortex_worker.py'), '--request', str(path)],
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                    env=environment, text=True)
@@ -120,11 +122,17 @@ def main():
             try: event = json.loads(line)
             except ValueError: continue
             if not isinstance(event, dict): continue
+            if event.get('phase') in ('Finding media…', 'Preparing download…', 'Downloading media',
+                                      'Converting to MP4', 'Verifying complete media'):
+                report['lastPhase'] = event['phase']
+            if 'error' in event:
+                report['terminalCategory'] = event.get('category')
             if isinstance(event.get('diagnostic'), dict):
                 data = event['diagnostic']
                 report['attempts'].append({k: data[k] for k in ('engine', 'category', 'elapsedMs') if k in data})
             if event.get('complete') is True:
                 final = event
+        report['elapsedSeconds'] = round(time.monotonic() - started, 2)
         if process.returncode == 0 and final:
             name = final.get('filename')
             artifact = directory / name if isinstance(name, str) and Path(name).name == name else None

@@ -91,6 +91,11 @@ class RetrievalTests(unittest.TestCase):
             self.assertEqual(result['media']['mediaType'], 'video')
             with self.assertRaises(worker.SourceError):
                 worker.run_gallery({'input':'https://x.com/u/status/123/video/1','kind':'inspect'})
+            # The extractor can return only the explicitly requested attachment.
+            files[:] = [dict(extension='mp4', url='https://video.twimg.com/b.mp4',
+                            metadata={'tweet_id':'123','num':1,'_vortex_attachment':2})]
+            result = worker.run_gallery({'input':'https://x.com/u/status/123/video/2','kind':'inspect'})
+            self.assertEqual(result['media']['mediaType'], 'video')
 
     def test_large_progressive_transfer_cannot_exhaust_event_budget(self):
         response = Response(mime='video/mp4', headers={'Content-Length':''})
