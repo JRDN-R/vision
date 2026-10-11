@@ -17,7 +17,8 @@ jobs:
         with:
           python-version: '3.13'
       - name: Download isolated public test dependencies
-        run: python -m pip download --only-binary=:all: --no-deps --dest wheelhouse flask werkzeug blinker yt-dlp gallery-dl instaloader
+        run: |
+          python -m pip download --only-binary=:all: --no-deps --dest wheelhouse flask werkzeug blinker yt-dlp gallery-dl instaloader
       - uses: actions/upload-artifact@v4
         with:
           name: vortex-test-wheels
