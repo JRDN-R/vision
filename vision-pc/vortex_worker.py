@@ -234,8 +234,8 @@ def export_media(artifact, media, request, *, stem='export'):
     if streams and ((audio and audio_stream is None) or (not audio and video is None)):
         raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
     duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
-    if duration and duration > int(request.get('maxDuration', 14400)):
-        raise WorkerError("This media exceeds the server's four-hour duration limit.")
+    if duration and duration > int(request.get('maxDuration', 7200)):
+        raise WorkerError("This media exceeds the server's two-hour duration limit.")
     output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
@@ -360,7 +360,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if search and not inspect:
         raise WorkerError("Select a search result before downloading.")
     cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
-    duration_limit = int(request.get("maxDuration", 14400))
+    duration_limit = int(request.get("maxDuration", 7200))
     options = {
         "quiet": True, "no_warnings": True, "logger": QuietLogger(),
         "noplaylist": True, "playlistend": 5 if search else 1,
@@ -386,7 +386,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise WorkerError("Wait until this live broadcast has finished before downloading.")
         if (number(info.get("duration")) or 0) > duration_limit:
-            raise WorkerError("This media exceeds the server's four-hour duration limit.")
+            raise WorkerError("This media exceeds the server's two-hour duration limit.")
         if info.get("has_drm"):
             raise WorkerError("DRM-protected media cannot be downloaded.")
 
@@ -458,7 +458,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if music:
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
-        raise WorkerError("This media exceeds the server's four-hour duration limit.")
+        raise WorkerError("This media exceeds the server's two-hour duration limit.")
     artifact = export_media(artifact, media, dict(request, downloadMode='audio' if audio else request.get('downloadMode', 'video')))
     media.update(quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
@@ -564,7 +564,7 @@ def run_spotify(request):
     if len(songs) != 1:
         raise WorkerError("Spotify could not identify one public track from that link.")
     song = songs[0]
-    if (number(song.duration) or 0) > int(request.get("maxDuration", 14400)):
+    if (number(song.duration) or 0) > int(request.get("maxDuration", 7200)):
         raise WorkerError("This track exceeds the server duration limit.")
     emit(phase="Matching track to a public audio source", progress=None)
     matched = client.get_download_urls([song])
@@ -643,233 +643,10 @@ def run_gallery(request):
         expected = identity(value)[1]
         files = [item for item in files if str(item['metadata'].get('tweet_id')) == expected]
         videos = [item for item in files if item['extension'] not in IMAGE_EXTENSIONS]
-        # Match the exact tweet, then respect /video/N without selecting
-        # a photo, quote, thumbnail or unrelated post.
-        match = re.search(r'/(video|photo)/(\d+)/?
-    metadata = first["metadata"]
-    if is_instagram_reel(value) and any(item['extension'] in IMAGE_EXTENSIONS for item in files):
-        raise SourceError('No playable video was returned.')
-    media = {
-        "title": text(metadata.get("title") or metadata.get("description") or metadata.get("filename") or "Media gallery"),
-        "url": safe_url(value), "source": urlparse(value).hostname,
-        "thumbnail": safe_url(first["url"]) if first["extension"] in IMAGE_EXTENSIONS else None,
-        "mediaType": "gallery" if len(files) > 1 else "image" if first["extension"] in IMAGE_EXTENSIONS else "video",
-        "width": number(metadata.get("width")), "height": number(metadata.get("height")),
-        "duration": number(metadata.get('duration')),
-        "engine": "gallery-dl", "itemCount": len(files), "ext": "zip" if len(files) > 1 else first["extension"],
-    }
-    if request["kind"] == "inspect":
-        return {"complete": True, "media": media, "results": [media]}
-    directory = Path(request["directory"]).resolve()
-    cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
-    total_bytes, artifacts = 0, []
-    if request.get('downloadMode') == 'audio' and (len(files) != 1 or first['extension'] in IMAGE_EXTENSIONS):
-        raise WorkerError('Audio extraction requires a single video or audio link.')
-    for index, item in enumerate(files):
-        emit(phase=f"Downloading gallery file {index + 1} of {len(files)}", progress=None, media=media)
-        artifact = directory / f"gallery-{index + 1:03d}.{item['extension']}"
-        headers = {"Accept": "*/*"}
-        for key, val in (item["metadata"].get("_http_headers") or {}).items():
-            if key.lower() in ("referer", "user-agent", "accept") and isinstance(val, str) and not any(c in val for c in ("\r", "\n")):
-                headers[key] = val
-        with item["session"].get(item["url"], headers=headers, stream=True, timeout=(15, 30)) as response:
-            response.raise_for_status()
-            mime = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-            if mime in ("text/html", "application/xhtml+xml", "application/json"):
-                raise WorkerError("The gallery source returned a page instead of a media file. It may require login.")
-            expected = number(response.headers.get("Content-Length")) if response.headers.get("Content-Encoding", "identity") == "identity" else None
-            if expected and total_bytes + expected > cap_bytes:
-                raise WorkerError("This gallery exceeds the server download size limit.")
-            received, last_update = 0, 0.0
-            with artifact.open("xb") as output:
-                for chunk in response.iter_content(256 * 1024):
-                    if not chunk:
-                        continue
-                    received += len(chunk)
-                    total_bytes += len(chunk)
-                    if total_bytes > cap_bytes:
-                        raise WorkerError("This gallery exceeds the server download size limit.")
-                    output.write(chunk)
-                    now = time.monotonic()
-                    if now - last_update >= .5:
-                        last_update = now
-                        emit(phase=f"Downloading gallery file {index + 1} of {len(files)}", progress=min(100, received / expected * 100) if expected else None)
-        if not artifact.stat().st_size:
-            raise WorkerError("The source returned an empty gallery file.")
-        if item["extension"] not in IMAGE_EXTENSIONS:
-            probe = probe_file(artifact, request.get("ffmpeg"), directory)
-            measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
-            if measured_duration > int(request.get("maxDuration", 14400)):
-                raise WorkerError("This media exceeds the server's four-hour duration limit.")
-            properties = apply_probe(dict(media), probe)
-            artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
-            if len(files) > 1:
-                # ZIP integrity alone cannot establish that every contained
-                # video is complete/playable. Verify each before packaging,
-                # using that item's own expected duration, not the first one.
-                verify_result(dict(complete=True, media=properties, filename=artifact.name),
-                              dict(request, kind='download', expectedDuration=number(item['metadata'].get('duration'))))
-            if len(files) == 1:
-                media = properties
-        artifacts.append(artifact)
-        if sum(path.stat().st_size for path in artifacts) > cap_bytes:
-            raise WorkerError('This converted gallery exceeds the server download size limit.')
-    if len(artifacts) == 1:
-        artifact = artifacts[0]
-    else:
-        emit(phase="Packaging gallery files", progress=None)
-        artifact = directory / "gallery.zip"
-        with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
-            for path in artifacts:
-                archive.write(local_path(path, directory), arcname=path.name)
-        for path in artifacts:
-            path.unlink()
-    if artifact.stat().st_size > cap_bytes:
-        raise WorkerError("This package exceeds the server download size limit.")
-    return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
-
-
-def verify_result(result, request):
-    """Fail closed before an attempt can win; inspect success is not a file."""
-    media = result.get('media') or {}
-    if result.get('complete') is not True or not media or media.get('mediaType') == 'unknown':
-        raise WorkerError('No playable media was returned.')
-    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 14400)):
-        raise WorkerError('This media exceeds the server duration limit.')
-    if request['kind'] == 'download' or result.get('filename'):
-        directory = Path(request['directory']).resolve()
-        name = result.get('filename')
-        if not isinstance(name, str) or Path(name).name != name:
-            raise WorkerError('The media file could not be verified.')
-        artifact = local_path(directory / name, directory)
-        if artifact.is_symlink() or not 0 < artifact.stat().st_size <= int(request['maxBytes']):
-            raise WorkerError('The media file could not be verified.')
-        if media.get('mediaType') in ('image', 'gallery'):
-            # Existing bounded gallery packaging remains supported.
-            if artifact.suffix == '.zip':
-                with zipfile.ZipFile(artifact) as archive:
-                    if archive.testzip() or len(archive.infolist()) > int(request.get('maxItems', 50)):
-                        raise WorkerError('The gallery could not be verified.')
-            else:
-                from PIL import Image
-                with Image.open(artifact) as image:
-                    image.verify()
-            return result
-        data = probe_file(artifact, request.get('ffmpeg'), directory)
-        streams = data.get('streams') or []
-        video = next((s for s in streams if s.get('codec_type') == 'video' and not (s.get('disposition') or {}).get('attached_pic')), None)
-        audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)
-        audio_only = request.get('downloadMode') == 'audio' or media.get('mediaType') == 'audio'
-        expected = request.get('audioFormat', 'm4a') if audio_only else request.get('videoFormat', 'mp4')
-        if artifact.suffix != '.' + expected or (audio_only and (not audio or video)) or (not audio_only and (not video or video.get('codec_name') != 'h264')):
-            raise WorkerError('The requested media format could not be verified.')
-        duration = number((data.get('format') or {}).get('duration'))
-        if not duration or duration > int(request.get('maxDuration', 14400)):
-            raise WorkerError('The media duration could not be verified.')
-        expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
-        if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
-            raise WorkerError('The source returned an incomplete media file.')
-        cap = {'small': 480, 'balanced': 1080}.get(request.get('quality'))
-        if cap and video and video.get('height', 0) > cap:
-            raise WorkerError('The requested video quality could not be verified.')
-        # Decode the complete local artifact, not just its MP4 header. This
-        # catches truncated streams and corrupt frames that ffprobe can list.
-        command = [request['ffmpeg'], '-v', 'error', '-xerror', '-nostdin', '-threads', '2',
-                   '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
-                   '-i', str(artifact), '-map', '0:V:0?', '-map', '0:a:0?', '-f', 'null', '-']
-        checked = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, timeout=600, **SUBPROCESS_FLAGS)
-        if checked.returncode:
-            raise WorkerError('The downloaded media could not be verified.')
-        apply_probe(media, data)
-    return result
-
-
-def run(request):
-    directory = Path(request["directory"]).resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    if request.get("kind") not in ("inspect", "download"):
-        raise WorkerError("Invalid media operation.")
-    from vortex_network import validate_input
-    from vortex_urls import resolve_shared_url
-    value = validate_input(request['input'], request['kind'])
-    if not value.startswith(('https://', 'http://')):
-        # Search behavior/pagination is unchanged; there is no media identity
-        # to race until the user selects one result.
-        return run_spotify(request) if value.lower().startswith('spotify:') else run_ytdlp(request)
-    # Retry the validated original URL after an ordinary HTTP error resolving
-    # a shared link. UnsafeDestination/private-network failures stay fatal.
-    from requests.exceptions import RequestException
-    try:
-        value = resolve_shared_url(value)
-    except RequestException:
-        pass
-    from vortex_race import race
-    return race(dict(request, input=value))
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--request", required=True)
-    parser.add_argument('--adapter', choices=[a.name for a in ADAPTERS])
-    args = parser.parse_args()
-    try:
-        # Suppress upstream console output and exceptions, including URLs with
-        # signed query strings. JSON events retain a dedicated original stream.
-        logging.disable(logging.CRITICAL)
-        from vortex_network import install_network_guard
-        install_network_guard()
-        request = json.loads(Path(args.request).read_text(encoding="utf-8"))
-        if request.get("packagesPath"):
-            # Only the supervisor supplies this configuration path. It points
-            # to optional engines isolated from Vision's core dependencies.
-            sys.path.insert(0, str(Path(request["packagesPath"]).resolve()))
-        with open(os.devnull, "w", encoding="utf-8") as null, contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
-            if args.adapter:
-                adapter = next(a for a in ADAPTERS if a.name == args.adapter)
-                if not adapter.compatible(request['input']) or not adapter.configured(request):
-                    raise WorkerError('This source is unavailable.')
-                emit(**verify_result(adapter.run(request), request))
-            else:
-                emit(**run(request))
-        return 0
-    except WorkerError as exc:
-        from vortex_race import PUBLIC_ERROR
-        detail = str(exc).lower()
-        category = ('identity_mismatch' if 'different media' in detail else 'authentication' if 'signed-in' in detail or 'login' in detail
-                    else 'rate_limited' if 'limiting requests' in detail else 'network' if 'connection' in detail or 'reached' in detail
-                    else 'duration_limit' if 'duration limit' in detail else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
-        # Surface bounded, actionable help for Instagram without exposing
-        # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
-        from vortex_urls import instagram_signed_source, platform
-        input_value = (locals().get('request') or {}).get('input', '')
-        if args.adapter is None and instagram_signed_source(input_value):
-            message = 'This direct Instagram video could not be retrieved. Its download link may have expired; use a fresh link.'
-        elif args.adapter is None and platform(input_value) == 'instagram':
-            message = 'Instagram did not return a downloadable stream to FUPCJ Server. Try a fresh direct MP4 download link.'
-        else:
-            message = PUBLIC_ERROR
-        emit(error=message, category=category)
-    except Exception as exc:
-        from vortex_race import PUBLIC_ERROR
-        emit(error=PUBLIC_ERROR, category='identity_mismatch' if str(exc) == 'identity_mismatch' else 'unavailable')
-    return 1
-
-
-if __name__ == "__main__":
-    # Adapter modules share this process's event stream and safety patches.
-    sys.modules['vortex_worker'] = sys.modules[__name__]
-    raise SystemExit(main())
-, urlparse(value).path)
-        if not videos or (match and match.group(1) == 'photo'):
+        # A video request must never race a thumbnail or a quoted post.
+        if not videos or '/photo/' in urlparse(value).path or '/video/' in urlparse(value).path:
             raise SourceError('No unambiguous public video was returned.')
-        if match:
-            index = int(match.group(2))
-            if not 1 <= index <= len(videos):
-                raise SourceError('The requested video is unavailable in this post.')
-            files = [videos[index - 1]]
-        else:
-            files = videos
+        files = videos
         first = files[0]
     metadata = first["metadata"]
     if is_instagram_reel(value) and any(item['extension'] in IMAGE_EXTENSIONS for item in files):
@@ -924,8 +701,8 @@ if __name__ == "__main__":
         if item["extension"] not in IMAGE_EXTENSIONS:
             probe = probe_file(artifact, request.get("ffmpeg"), directory)
             measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
-            if measured_duration > int(request.get("maxDuration", 14400)):
-                raise WorkerError("This media exceeds the server's four-hour duration limit.")
+            if measured_duration > int(request.get("maxDuration", 7200)):
+                raise WorkerError("This media exceeds the server's two-hour duration limit.")
             properties = apply_probe(dict(media), probe)
             artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
             if len(files) > 1:
@@ -959,7 +736,7 @@ def verify_result(result, request):
     media = result.get('media') or {}
     if result.get('complete') is not True or not media or media.get('mediaType') == 'unknown':
         raise WorkerError('No playable media was returned.')
-    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 14400)):
+    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 7200)):
         raise WorkerError('This media exceeds the server duration limit.')
     if request['kind'] == 'download' or result.get('filename'):
         directory = Path(request['directory']).resolve()
@@ -989,7 +766,7 @@ def verify_result(result, request):
         if artifact.suffix != '.' + expected or (audio_only and (not audio or video)) or (not audio_only and (not video or video.get('codec_name') != 'h264')):
             raise WorkerError('The requested media format could not be verified.')
         duration = number((data.get('format') or {}).get('duration'))
-        if not duration or duration > int(request.get('maxDuration', 14400)):
+        if not duration or duration > int(request.get('maxDuration', 7200)):
             raise WorkerError('The media duration could not be verified.')
         expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
         if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
@@ -1022,13 +799,7 @@ def run(request):
         # Search behavior/pagination is unchanged; there is no media identity
         # to race until the user selects one result.
         return run_spotify(request) if value.lower().startswith('spotify:') else run_ytdlp(request)
-    # Retry the validated original URL after an ordinary HTTP error resolving
-    # a shared link. UnsafeDestination/private-network failures stay fatal.
-    from requests.exceptions import RequestException
-    try:
-        value = resolve_shared_url(value)
-    except RequestException:
-        pass
+    value = resolve_shared_url(value)
     from vortex_race import race
     return race(dict(request, input=value))
 
