@@ -345,6 +345,19 @@ class VortexAccountTests(unittest.TestCase):
         self.service.recover()
         self.assertFalse(directory.exists())
 
+    def test_builtin_media_fallback_not_blocked_when_optional_tools_missing(self):
+        with patch('vortex.importlib.machinery.PathFinder.find_spec', return_value=None), \
+             patch('vortex.importlib.util.find_spec', return_value=None):
+            capability = self.service.capability()
+        self.assertTrue(capability['ready'])
+        self.assertEqual(capability['maxDuration'], 14400)
+        self.assertTrue(capability['engines']['page-media'])
+        self.assertFalse(capability['engines']['yt-dlp'])
+        with patch.object(self.service, 'capability', return_value=capability):
+            result = self.submit(input='https://cdn.example.com/download?id=123',
+                                 requestId='builtin-public')
+        self.assertEqual(result.status_code, 202, result.json)
+
     def test_unknown_progress_and_specialist_unavailability_are_truthful(self):
         job = self.accepted()
         self.assertIsNone(self.service.snapshot(self.service.row(job))['progress'])
@@ -382,7 +395,7 @@ class VortexAccountTests(unittest.TestCase):
         # Queue/HTTP contract only: the fixture mocks DNS and never runs a provider.
         cases = (
             ('https://x.com/moviehub222/status/2104675740168155503/video/1?s=46',
-             'https://x.com/moviehub222/status/2104675740168155503'),
+             'https://x.com/moviehub222/status/2104675740168155503/video/1'),
             ('https://youtu.be/abcdefghijk?t=30',
              'https://www.youtube.com/watch?v=abcdefghijk&t=30'),
         )
