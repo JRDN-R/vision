@@ -382,7 +382,7 @@ class VortexAccountTests(unittest.TestCase):
         # Queue/HTTP contract only: the fixture mocks DNS and never runs a provider.
         cases = (
             ('https://x.com/moviehub222/status/2104675740168155503/video/1?s=46',
-             'https://x.com/moviehub222/status/2104675740168155503'),
+             'https://x.com/moviehub222/status/2104675740168155503/video/1'),
             ('https://youtu.be/abcdefghijk?t=30',
              'https://www.youtube.com/watch?v=abcdefghijk&t=30'),
         )

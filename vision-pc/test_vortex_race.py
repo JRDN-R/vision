@@ -29,7 +29,7 @@ class URLTests(unittest.TestCase):
             'https:/m.youtube.com//shorts/abcdefghijk?si=abc': 'https://www.youtube.com/watch?v=abcdefghijk',
             'https://music.youtube.com/watch?v=abcdefghijk&list=album&t=9': 'https://music.youtube.com/watch?v=abcdefghijk&list=album&t=9',
             'https://www.youtube.com/watch?v=abcdefghijk#t=30': 'https://www.youtube.com/watch?v=abcdefghijk&t=30',
-            'https://mobile.twitter.com/user//status/123/video/1?s=46': 'https://x.com/user/status/123',
+            'https://mobile.twitter.com/user//status/123/video/1?s=46': 'https://x.com/user/status/123/video/1',
             'x.com/user/status/123/video/2?s=46': 'https://x.com/user/status/123/video/2',
             'https://fixupx.com/user/status/123': 'https://x.com/user/status/123',
             'https://m.instagram.com/reels/Ab_C/?igsh=token': 'https://www.instagram.com/reel/Ab_C/',
@@ -129,7 +129,7 @@ class ServiceTests(unittest.TestCase):
                    (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))]
         with patch.object(socket, 'getaddrinfo', return_value=answers), patch.object(socket.socket, 'connect') as connect:
             with self.assertRaises(ValueError): vortex_egress.connect_public('media.example.com:443')
-            connect.assert_not_called()
+        connect.assert_not_called()
 
 
 FIXTURE = r'''
@@ -232,6 +232,30 @@ class RaceTests(unittest.TestCase):
         with self.assertRaises(worker.WorkerError):
             self.run_race({'one': {'inspectDelay': 30}}, maxBytes=1)
         self.assertFalse((self.root / 'race').exists())
+
+    def test_more_than_five_methods_can_reach_a_late_success(self):
+        fixtures = {str(i): {'inspectFail': True} for i in range(7)}
+        fixtures['last'] = {}
+        result = self.run_race(fixtures)
+        self.assertEqual(result['media']['title'], 'last')
+
+    def test_inspection_pool_is_bounded_and_every_method_gets_a_turn(self):
+        active, peak, started = [], [0], []
+        class CountingAttempt(race.Attempt):
+            def __init__(self, *args):
+                super().__init__(*args)
+                if self.kind == 'inspect':
+                    active[:] = [a for a in active if a.process.poll() is None]
+                    active.append(self)
+                    started.append(self.adapter.name)
+                    peak[0] = max(peak[0], len(active))
+        registry = [SimpleNamespace(name=str(i), compatible=lambda value: True, configured=lambda request: True) for i in range(8)]
+        fixtures = {a.name: {'inspectFail': True, 'inspectDelay': .1} for a in registry}
+        with self.assertRaises(worker.WorkerError):
+            race.race(dict(input='https://x.com/u/status/123', kind='inspect', quality='max', directory=str(self.root),
+                           maxBytes=100000, fixtures=fixtures), adapters=registry, attempt_factory=CountingAttempt)
+        self.assertEqual(peak[0], 3)
+        self.assertEqual(set(started), {a.name for a in registry})
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')

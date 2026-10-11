@@ -1,10 +1,10 @@
-"""Bounded parallel extraction inside ONE durable, account-owned Vortex job.
+"""Bounded multi-engine extraction inside ONE durable, account-owned job.
 
-All compatible inspections start together. Downloads race in quality cohorts
-(up to two at once); a failed download does not discard other candidates.
-Only a verified final artifact wins. No engine output is sent to the UI.
+Every eligible method gets a slot, including fallbacks queued behind slow ones.
+Downloads keep alternative candidates until a fully verified artifact succeeds.
 """
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -16,14 +16,15 @@ import psutil
 
 from vortex_adapters import ADAPTERS
 
-PUBLIC_ERROR = 'Vortex could not retrieve this media. It may be unavailable or require sign-in.'
-MAX_ENGINES = 5
+PUBLIC_ERROR = 'Vortex could not retrieve this media with the available methods. Please try again.'
+MAX_ENGINES = 12
+MAX_INSPECTIONS = 3
 MAX_DOWNLOADS = 2
 MAX_MEMORY = 2 * 1024**3
 MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
-              'authentication', 'rate_limited', 'network', 'unsupported'}
+              'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured'}
 
 
 def diagnostic(engine, category, started):
@@ -33,7 +34,6 @@ def diagnostic(engine, category, started):
 
 
 def public_result(result):
-    # Allowlist public metadata; strip internal evidence and extractor names.
     fields = {'title', 'url', 'source', 'thumbnail', 'mediaType', 'width', 'height', 'fps', 'vcodec',
               'acodec', 'abr', 'asr', 'audioChannels', 'duration', 'ext', 'quality', 'itemCount', 'note', 'sourceUrl', 'aspectRatio'}
     clean = dict(result)
@@ -50,6 +50,7 @@ class Attempt:
     def __init__(self, adapter, request, directory, kind):
         self.adapter, self.directory, self.kind = adapter, directory, kind
         self.started = time.monotonic()
+        self.inspection_timeout = max(20, min(120, request.get('inspectionTimeout', 120)))
         self.result = None
         self.category = None
         self.finished = False
@@ -66,8 +67,6 @@ class Attempt:
         self.events = directory / 'events.jsonl'
         env = dict(os.environ, XDG_CACHE_HOME=str(directory / 'cache'), APPDATA=str(directory / 'cache'),
                    LOCALAPPDATA=str(directory / 'cache'), OMP_NUM_THREADS='2', OPENBLAS_NUM_THREADS='2')
-        # Native attempts receive no service configuration or optional secrets
-        # except the explicitly configured Spotify metadata credentials.
         if adapter.name != 'spotdl':
             for key in list(env):
                 if key.startswith('VORTEX_SPOTIFY_'):
@@ -100,12 +99,13 @@ class Attempt:
                 self.cancel()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-        if time.monotonic() - self.started > (120 if self.kind == 'inspect' else 40 * 60):
+        if time.monotonic() - self.started > (self.inspection_timeout if self.kind == 'inspect' else 40 * 60):
             self.category = 'timeout'
             self.cancel()
         with self.events.open('r', encoding='utf-8', errors='replace') as source:
             source.seek(self.event_offset)
             self.partial += source.read(MAX_EVENTS + 1)
+            self.event_offset = 0
             self.event_offset = source.tell()
         lines = self.partial.split('\n')
         self.partial = lines.pop()
@@ -118,7 +118,7 @@ class Attempt:
                 continue
             if event.get('phase') in ('Downloading media', 'Converting to MP4', 'Converting to MOV', 'Converting to M4A', 'Converting to MP3', 'Converting to WAV'):
                 self.progress_event = {'phase': event['phase'], 'progress': event.get('progress')}
-            if event.get('category') in CATEGORIES:
+            if event.get('category') in CATEGORIES and self.category not in ('timeout', 'resource_limit'):
                 self.category = event['category']
         if self.process.poll() is None:
             return False
@@ -167,20 +167,33 @@ def quality_rank(result, request):
 def race(request, *, adapters=None, attempt_factory=Attempt):
     from vortex_worker import WorkerError, emit
     directory = Path(request['directory']).resolve()
-    selected = [a for a in (ADAPTERS if adapters is None else adapters)
-                if a.compatible(request['input']) and a.configured(request)]
-    if not selected:
-        raise WorkerError(PUBLIC_ERROR)
-    if len(selected) > MAX_ENGINES:
+    selected = []
+    # One missing/broken dependency must not prevent checking later engines.
+    # These redacted reasons are logged internally, never shown as retry UI.
+    for adapter in ADAPTERS if adapters is None else adapters:
+        try:
+            if not adapter.compatible(request['input']):
+                continue
+            if not adapter.configured(request):
+                diagnostic(adapter.name, 'not_configured' if getattr(adapter, 'service', False) else 'missing_dependency', time.monotonic())
+                continue
+            selected.append(adapter)
+        except Exception:
+            diagnostic(adapter.name, 'unavailable', time.monotonic())
+    if not selected or len(selected) > MAX_ENGINES:
         raise WorkerError(PUBLIC_ERROR)
     race_dir = directory / 'race'
     race_dir.mkdir(mode=0o700)
     attempts, candidates = [], []
     started = time.monotonic()
+    # Reserve time for EVERY inspection wave inside the HTTP worker's 180s
+    # deadline. More recipes do not mean more simultaneous processes or no
+    # chance for the last fallback to start.
+    inspection_timeout = min(120, 150 / math.ceil(len(selected) / MAX_INSPECTIONS))
 
     def start(adapter, kind, suffix, candidate=None):
         try:
-            specification = dict(request)
+            specification = dict(request, inspectionTimeout=inspection_timeout)
             if candidate:
                 specification['expectedDuration'] = (candidate.result.get('media') or {}).get('duration')
             attempt = attempt_factory(adapter, specification, race_dir / (adapter.name + suffix), kind)
@@ -191,9 +204,13 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
             return None
 
     def budget():
-        # Same aggregate temporary-file allowance as the pre-race worker,
-        # not a fresh allowance for each engine. Only one durable job runs.
-        total = sum(p.stat().st_size for p in race_dir.rglob('*') if p.is_file() and not p.is_symlink())
+        total = 0
+        for path in race_dir.rglob('*'):
+            try:
+                if path.is_file() and not path.is_symlink():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                pass  # A competing worker may have just cleaned a partial file.
         if total > 3 * int(request['maxBytes']) or time.monotonic() - started > (165 if request['kind'] == 'inspect' else 44 * 60):
             raise WorkerError(PUBLIC_ERROR)
 
@@ -215,16 +232,19 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
 
     try:
         emit(phase='Finding media…', progress=None)
-        pending = [a for adapter in selected if (a := start(adapter, 'inspect', '-inspect'))]
-        while pending:
+        waiting, pending = list(selected), []
+        while waiting or pending:
             budget()
+            while waiting and len(pending) < MAX_INSPECTIONS:
+                adapter = waiting.pop(0)
+                attempt = start(adapter, 'inspect', '-inspect')
+                if attempt:
+                    pending.append(attempt)
             for attempt in list(pending):
                 if attempt.poll():
                     pending.remove(attempt)
                     if attempt.result:
                         candidates.append(attempt)
-                        # Max waits for available catalogs so a fast lower
-                        # rendition cannot beat a known higher-quality source.
                         if request['kind'] == 'inspect' and request.get('quality') != 'max':
                             return promote(attempt)
                     else:
@@ -236,9 +256,6 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
         if request['kind'] == 'inspect' and candidates:
             return promote(candidates[0])
         emit(phase='Preparing download…', progress=None)
-        # Race equally suitable candidates first. Keep lower/unknown quality
-        # alternatives until better candidates fail, rather than dropping them
-        # after a successful metadata lookup.
         while candidates:
             rank = quality_rank(candidates[0].result, request)
             cohort = [a for a in candidates if quality_rank(a.result, request) == rank]
@@ -257,15 +274,11 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                 for attempt in list(pending):
                     if attempt.poll():
                         pending.remove(attempt)
-                        # A re-extraction must not silently downgrade a known
-                        # resolution after inspection (one pixel for rounding).
                         if attempt.result and quality_rank(attempt.result, request) + 1 >= attempt.expected_rank:
                             return promote(attempt)
                         attempt.cancel()
                         shutil.rmtree(attempt.directory, ignore_errors=True)
                 if pending:
-                    # One live contender's actual stream/encode progress. The
-                    # browser never sees which contender it belongs to.
                     progress = getattr(pending[0], 'progress_event', None)
                     if progress:
                         emit(**progress)
@@ -273,7 +286,6 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                     time.sleep(.05)
         raise WorkerError(PUBLIC_ERROR)
     finally:
-        # Reap descendants before deleting files, including on Windows.
         for attempt in attempts:
             if not attempt.finished:
                 diagnostic(attempt.adapter.name, 'cancelled', attempt.started)

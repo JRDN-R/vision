@@ -39,15 +39,13 @@ not need its engines or Docker services reinstalled. The updater includes
 
 ## Version
 
-Current release: **v1.0.1**. This patch fixes successful normalized URL lookups
-being silently discarded by the webpage and adds visible feedback when an
-inspection receipt is no longer available. The active job retains its original
-submitted text so shared/short URLs can match the server's canonical response
-without allowing late results to overwrite a genuinely edited input.
-The fix is in the webpage and works with the existing backend; no engine or
-Docker reinstall is required. Updating the Windows processor is only needed
-to advance its separately reported version. This does not make unavailable
-provider media accessible or bypass authentication requirements.
+Current proposed release: **v1.0.3**. This update builds on v1.0.2
+and adds a guarded fallback for direct, time-limited Instagram CDN MP4s and
+explicitly supplied VideoDropper download links. It does not send regular
+Instagram post or Reel links to VideoDropper, does not require source-account
+cookies, and does not guarantee that every Instagram original URL can be
+resolved. The backend must be updated on FUPCJ for the new adapter to work.
+No new download packages or Docker service are required.
 
 Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
 version. Open the side menu to see the web version directly beneath the Vortex
@@ -179,6 +177,7 @@ No engine configuration comes from a browser request.
 | --- | --- |
 | yt-dlp | Native public video/audio inspection and download; compatible providers and existing YouTube search/pagination. Installed by Update/InstallVortexTools. |
 | gallery-dl | Native public gallery/video extraction; now races yt-dlp for X, Instagram and Reddit. X candidates must match the requested tweet ID; quotes, replies and previews are excluded. Installed by InstallVortexTools. |
+| Instagram signed MP4 | New local adapter accepts a pasted direct HTTPS Instagram CDN MP4 or an explicit `dl.videodropper.app/?url=...` download link **only when it wraps one Instagram CDN MP4**. Attempts the CDN first, then the user-supplied relay if needed, with standard size limits, local FFmpeg conversion and full-file verification. Never sends ordinary Instagram links to VideoDropper automatically; signed URLs expire. |
 | spotDL | Existing official Spotify metadata and public YouTube/YouTube Music audio matching. Only compatible Spotify work is dispatched here. Installed by InstallVortexTools. |
 | FFmpeg/FFprobe | Existing Windows tools; shared local conversion plus mandatory final file verification. |
 | Cobalt | Implemented opt-in API adapter and pinned self-hosted Linux-container provisioning. The local service must pass health checks; unsupported services, picker responses and unavailable streams fail only this adapter. It is not enabled by a normal Update. |

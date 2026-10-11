@@ -31,7 +31,7 @@ from flask import g, jsonify, request, send_file
 from uploaded_media import WindowsJob
 from vortex_network import engine_for, validate_input
 
-VORTEX_VERSION = '1.0.2'
+VORTEX_VERSION = '1.0.3'
 RETENTION_SECONDS = 5 * 86400
 MAX_BYTES = 2 * 1024**3
 ACCOUNT_BYTES = 10 * 1024**3
@@ -210,7 +210,10 @@ class VortexJobs:
                     service_ready = True
                 except (ValueError, TypeError):
                     pass
-        if not service_ready and not any(capability['engines'].get(a.name) for a in compatible):
+        if not service_ready and not any(
+                capability['engines'].get(a.name)
+                or (a.name == 'instagram-direct' and a.configured({}))
+                for a in compatible):
             raise self.Error('This source is unavailable on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallVortexTools.', 503)
         now, job_id = time.time(), secrets.token_hex(12)
         with self.db() as db:
