@@ -303,7 +303,7 @@ def finish_artifact(artifact, media, request):
     if not (audio if audio_only else video):
         raise ValueError('not_video')
     duration = worker.number((probe.get('format') or {}).get('duration'))
-    if not duration or duration > int(request.get('maxDuration', 7200)):
+    if not duration or duration > int(request.get('maxDuration', 14400)):
         raise ValueError('duration_limit')
     worker.apply_probe(media, probe)
     artifact = worker.export_media(artifact, media, request)
@@ -401,7 +401,7 @@ def cobalt_local(result, media, request, client):
         durations = []
         for data in details:
             duration = worker.number((data.get('format') or {}).get('duration'))
-            if not duration or duration > int(request.get('maxDuration', 7200)):
+            if not duration or duration > int(request.get('maxDuration', 14400)):
                 raise ValueError('duration_limit')
             durations.append(duration)
         if max(durations) - min(durations) > max(2, max(durations) * .02):
