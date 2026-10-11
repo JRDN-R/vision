@@ -303,3 +303,10 @@ real embeddings with random/hash vectors and label that semantic validation.
 See the implementation report and benchmark artifacts for measured retrieval
 coverage, token counts, test results and remaining functional limits. An 80–95%
 input reduction is a workload target, not an installation guarantee.
+
+## Durable import ownership preview
+
+The opt-in Phase 1A retention implementation, diagnostics and outstanding release
+gates are documented in [Durable import ownership](../docs/durable-import-ownership.md).
+It is disabled by default, does not activate Qwen or change model preferences, and
+does not yet complete board attachment on the server.

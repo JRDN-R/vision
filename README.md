@@ -274,3 +274,10 @@ Local updates check the fixed repository manifest on startup, reconnect and ever
 ### Verification
 
 `node tests/run-local.test.cjs` covers settings normalization and registered-file routing. `python tests/run-local-smoke.py` uses Playwright with network stubs to exercise bundled startup, settings, previews, downloads, and sandbox isolation at 390px/1280px widths; `VISION_TEST_FILE=1` checks the literal local file URL. `RunParameterTests` in `vision-pc/test_sessions.py` checks persisted options, outbound Responses fields, opt-out behavior, invalid settings and source citations, with no paid API requests. Live sign-in and the installed Windows PC still require an end-to-end check in the owner's environment.
+
+## Durable import ownership preview
+
+The opt-in Phase 1A retention implementation, diagnostics and outstanding release
+gates are documented in [Durable import ownership](docs/durable-import-ownership.md).
+It is disabled by default, does not activate Qwen or change model preferences, and
+does not yet complete board attachment on the server.

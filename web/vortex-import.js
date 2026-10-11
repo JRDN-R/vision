@@ -101,7 +101,8 @@ async function applyVortexImportResult(n,source,job,result,check){
  const text=result.hasAudio?soundResultText(result.transcription?.text):'';
  const soundJob={includeSoundEvents:job.includeSoundEvents,sourceKind:audio?'audio':'video',offsetSeconds:0,sections:[{start:0,end:result.duration}]};
  if(result.hasAudio&&job.includeSoundEvents)soundJob.soundResult=validateSoundResult(result.transcription,soundJob);
- check();source.name=title+(audio?'.m4a':'.mp4');source.mime=audio?'audio/mp4':'video/mp4';source.role=audio?'audio':'video';source.transcriptionProvider=job.provider;source.videoDuration=result.duration;source.videoHasAudio=!!result.hasAudio;source.snapshotsStatus='complete';if(!audio)source.snapshotInterval=result.snapshotInterval;
+ check();if(result.sourceAsset){if(!/^[0-9a-f]{24}$/.test(result.sourceAsset.id||''))throw new Error('Invalid retained source reference.');source.ownedAssetId=result.sourceAsset.id;source.sourceRepresentation='acquired-analysis-proxy';}
+ source.name=title+(audio?'.m4a':'.mp4');source.mime=audio?'audio/mp4':'video/mp4';source.role=audio?'audio':'video';source.transcriptionProvider=job.provider;source.videoDuration=result.duration;source.videoHasAudio=!!result.hasAudio;source.snapshotsStatus='complete';if(!audio)source.snapshotInterval=result.snapshotInterval;
  n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);
  if(n.videoSourceId===source.id){
   n.title=title;

@@ -1,6 +1,9 @@
 {
-  "title": "Vortex imports in Vision",
+  "title": "Retained import foundation (preview)",
   "items": [
+    "An opt-in server preview retains acquired Vortex analysis proxies and completed import evidence outside temporary download storage. It is off by default.",
+    "Retained imports include owner-checked source references. Full automatic board attachment and paginated frame delivery are not part of this preview.",
+    "No local Qwen model or all-user model-default migration is enabled by this update. Existing model selections remain unchanged.",
     "Add Vortex media from Add to board or the selected module’s Files tab. Paste a URL, Find, then Apply.",
     "Vision automatically uses lightweight video with snapshots and transcription, or audio for music and audio-only links.",
     "Accepted imports continue processing on FUPCJ Server while the page is closed. Reopen the saved project to receive the result.",

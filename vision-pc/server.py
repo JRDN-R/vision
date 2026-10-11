@@ -32,6 +32,7 @@ from gemini_access import GeminiAccess, GeminiUsage
 from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 from vortex import VortexJobs
 from account_administration import AccountAdministration
+from owned_assets import OwnedAssets
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
@@ -117,6 +118,8 @@ def configure(config_path, migrate_gemini=False):
     app.config['TRIALS'] = trials
     trials.initialize()
     account_admin.initialize(config)
+    owned_assets.initialize(config)
+    app.config['OWNED_ASSETS'] = owned_assets
     return config
 
 
@@ -360,7 +363,8 @@ def get_job(job_id):
     if row is None or (has_request_context() and row['uid'] != g.uid):
         raise APIError('This import is unavailable.', 404)
     value = dict(row)
-    if value['expires_at'] < time.time() and value['status'] not in ('queued', 'processing'):
+    retained = (value['source_kind'] == 'vortex' and json.loads(value['import_options']).get('assetOwnership') == 1)
+    if not retained and value['expires_at'] < time.time() and value['status'] not in ('queued', 'processing'):
         raise APIError('This import has expired. Start it again.', 410)
     return value
 
@@ -416,7 +420,7 @@ def youtube():
         if client_id:
             old = db.execute('SELECT id,status,url,include_sound_events,provider,source_kind,import_options FROM jobs WHERE client_request_id=? AND uid=?', (client_id, g.uid)).fetchone()
             if old:
-                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events or old['provider'] != provider or old['source_kind'] != source_kind or old['import_options'] != options_json:
+                if old['url'] != url or bool(old['include_sound_events']) != include_sound_events or old['provider'] != provider or old['source_kind'] != source_kind or {k: v for k, v in json.loads(old['import_options']).items() if k != 'assetOwnership'} != import_options:
                     raise APIError('This request identifier belongs to another video or sound setting.', 409)
                 return jsonify(id=old['id'], status=old['status']), 202
         if include_sound_events and not transcriptions.sound_capability()['ready']:
@@ -424,6 +428,10 @@ def youtube():
         pending = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
         if pending >= 25:
             raise APIError('The server queue is full. Wait for an import to finish.', 429)
+        if source_kind == 'vortex' and owned_assets.enabled:
+            # Pin the server-selected retention contract at acceptance; later flag
+            # changes and old-client retries never downgrade already accepted work.
+            options_json = json.dumps({**import_options, 'assetOwnership': 1}, sort_keys=True)
         job_id, now = secrets.token_hex(12), time.time()
         db.execute('''INSERT INTO jobs(id,client_request_id,url,status,phase,created_at,updated_at,expires_at,uid,include_sound_events,provider,source_kind,import_options)
             VALUES(?,?,?,'queued','Waiting',?,?,?,?,?,?,?,?)''', (job_id, client_id, url, now, now, now + 86400, g.uid, int(include_sound_events), provider, source_kind, options_json))
@@ -435,11 +443,20 @@ def youtube():
 
 def prune_expired():
     with connect_db() as db:
-        expired = db.execute("SELECT id,result_path FROM jobs WHERE expires_at<? AND status NOT IN ('queued','processing')", (time.time(),)).fetchall()
+        expired = db.execute("SELECT id,result_path FROM jobs WHERE expires_at<? AND status NOT IN ('queued','processing') AND NOT (source_kind='vortex' AND COALESCE(json_extract(import_options,'$.assetOwnership'),0)=1)", (time.time(),)).fetchall()
         for row in expired:
             if row['result_path']:
                 Path(row['result_path']).unlink(missing_ok=True)
             db.execute('DELETE FROM jobs WHERE id=?', (row['id'],))
+        # Retained imports keep their acceptance identity and owned evidence.
+        # Only the duplicate browser-delivery JSON may expire after publication.
+        delivered = db.execute("""SELECT j.id,j.result_path FROM jobs j
+            JOIN owned_import_receipts r ON r.job_id=j.id AND r.uid=j.uid
+            JOIN owned_assets a ON a.id=r.result_asset_id AND a.uid=j.uid AND a.state='ready'
+            WHERE j.status='complete' AND j.expires_at<? AND j.result_path IS NOT NULL""", (time.time(),)).fetchall()
+        for row in delivered:
+            Path(row['result_path']).unlink(missing_ok=True)
+            db.execute('UPDATE jobs SET result_path=NULL WHERE id=?', (row['id'],))
         db.execute('DELETE FROM responses WHERE expires_at<?', (time.time(),))
         sessions.venture.dictation.prune(db)
 
@@ -541,10 +558,15 @@ def job_result(job_id):
     value = get_job(job_id)
     if value['status'] != 'complete':
         raise APIError('This import is not finished yet.', 409)
-    if not value['result_path'] or not Path(value['result_path']).is_file():
-        raise APIError('This result has already been received or has expired.', 410)
+    path = Path(value['result_path']) if value['result_path'] else None
+    if not path or not path.is_file():
+        retained = owned_assets.import_asset(value['uid'], job_id, 'result') if value['uid'].startswith('firebase:') else None
+        if retained:
+            path = owned_assets.ready_path(retained)
+        else:
+            raise APIError('This result has already been received or has expired.', 410)
     def chunks():
-        with open(value['result_path'], 'rb') as source:
+        with open(path, 'rb') as source:
             while chunk := source.read(65536):
                 yield chunk
     return Response(stream_with_context(chunks()), content_type='application/json')
@@ -738,6 +760,8 @@ documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
 account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
+owned_assets = OwnedAssets(app, connect_db, APIError)
+owned_assets.register_routes()
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')

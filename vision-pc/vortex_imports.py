@@ -1,7 +1,8 @@
 """Durable Vision imports using Vortex's guarded downloader and ASR queue.
 
-Only frames and transcripts go into the Vision result. A separate, ordinary
-Vortex download is queued by VortexJobs, independently of the browser's lifetime.
+Frames and transcripts use the existing result format. Opt-in owned imports also
+retain their acquired analysis proxy and completed result outside expiring storage.
+A separate ordinary Vortex history download remains independent.
 """
 from __future__ import annotations
 
@@ -76,7 +77,9 @@ def prepare_source(source, metadata, ffmpeg, temporary, update):
 def advance(server, value, update):
     """Advance one checkpoint without occupying the media slot while waiting."""
     job_id, uid = value['id'], value['uid']
-    project_id = json.loads(value['import_options'])['projectId']
+    options = json.loads(value['import_options'])
+    project_id = options['projectId']
+    retained = options.get('assetOwnership') == 1
     with server.connect_db() as db:
         owner = db.execute('SELECT owner_uid FROM projects WHERE id=?', (project_id,)).fetchone()
     if not owner or owner['owner_uid'] != uid:
@@ -91,29 +94,48 @@ def advance(server, value, update):
         if value.get('result_path') and Path(value['result_path']).is_file():
             prepared = json.loads(Path(value['result_path']).read_text(encoding='utf-8'))
         if prepared is None:
-            low = server.vortex.enqueue(dict(input=value['url'], kind='download', quality='small',
-                requestId='vision-import-' + job_id, videoFormat='mp4', audioFormat='m4a'), uid, purpose='vision')
-            if low['status'] in ('queued', 'processing'):
-                waiting(low['phase'], (low.get('progress') or 0) * .4)
-                return
-            if low['status'] != 'complete':
-                raise ValueError(low.get('error') or 'Vortex could not retrieve this media. Apply the link again to retry.')
-            if (low.get('media') or {}).get('mediaType') not in ('video', 'audio'):
-                raise ValueError('This link contains images. Use Images & videos or paste a video or audio link.')
-            row = server.vortex.row(low['id'], uid)
+            source_asset = server.owned_assets.import_asset(uid, job_id, 'source') if retained else None
+            low_id = None
+            if source_asset:
+                # Recovery reuses acknowledged bytes even after the Vortex copy expired.
+                source = server.owned_assets.ready_path(source_asset)
+                acquisition = json.loads(source_asset['metadata_json'])
+                metadata, low_id = acquisition['media'], acquisition['vortexJobId']
+            else:
+                low = server.vortex.enqueue(dict(input=value['url'], kind='download', quality='small',
+                    requestId='vision-import-' + job_id, videoFormat='mp4', audioFormat='m4a'), uid, purpose='vision',
+                    **({'source_lease': job_id} if retained else {}))
+                if low['status'] in ('queued', 'processing'):
+                    waiting(low['phase'], (low.get('progress') or 0) * .4)
+                    return
+                if low['status'] != 'complete':
+                    raise ValueError(low.get('error') or 'Vortex could not retrieve this media. Apply the link again to retry.')
+                if (low.get('media') or {}).get('mediaType') not in ('video', 'audio'):
+                    raise ValueError('This link contains images. Use Images & videos or paste a video or audio link.')
+                low_id, metadata = low['id'], low.get('media') or {}
+                row = server.vortex.row(low_id, uid)
+                if retained:
+                    source_asset = server.owned_assets.adopt_vortex(server.vortex, uid, job_id, project_id, low_id)
+                    source = server.owned_assets.ready_path(source_asset)
+                else:
+                    source = server.vortex.output_path(row)
             with MEDIA_LOCK:
-                prepared, sections = prepare_source(server.vortex.output_path(row), low.get('media') or {},
+                prepared, sections = prepare_source(source, metadata,
                     server.app.config['FFMPEG'], str(server.app.config['DATA_DIR'] / 'temporary'),
                     lambda **fields: update(job_id, **fields))
+            if source_asset:
+                prepared['sourceAsset'] = server.owned_assets.snapshot(source_asset)
             prepared.update(url=value['url'], provider=value['provider'], includeSoundEvents=bool(value['include_sound_events']))
             prepared['audioSections'] = sections
             update(job_id, status='queued', phase='Preparing transcription', progress=80, retry_at=time.time() + 3,
                    result=json.dumps(prepared, ensure_ascii=False).encode('utf-8'))
-            # The checkpoint now owns the frames and small mono audio sections.
-            # Keep only hidden metadata for the independent history-copy retry.
+            # New retained imports have an acknowledged source receipt before
+            # releasing temporary media. Legacy imports preserve their old path.
             with server.connect_db() as db:
-                db.execute("UPDATE vortex_jobs SET status='expired',filename=NULL WHERE id=?", (low['id'],))
-            server.vortex._remove_terminal(low['id'])
+                db.execute('BEGIN IMMEDIATE')
+                if not server.vortex.source_leased(db, low_id):
+                    db.execute("UPDATE vortex_jobs SET status='expired',filename=NULL WHERE id=? AND uid=?", (low_id, uid))
+            server.vortex._remove_terminal(low_id)
             return
         if 'audioSections' in prepared:
             sections = prepared.pop('audioSections')
@@ -134,6 +156,8 @@ def advance(server, value, update):
                 waiting(transcript.get('phase') or 'Transcribing', 80 + (transcript.get('progress') or 0) * .19)
                 return
             prepared['transcription'] = transcript['result']
+        if retained:
+            server.owned_assets.retain_result(uid, job_id, project_id, prepared)
         update(job_id, status='complete', phase='Ready to add to Vision', progress=100,
                result=json.dumps(prepared, ensure_ascii=False).encode('utf-8'))
     except server.APIError as error:

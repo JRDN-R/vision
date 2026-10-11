@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import sqlite3
 import stat
@@ -101,6 +102,25 @@ def hardware_report(root: Path) -> dict:
             "defaultEmbeddingThreads": 2, "paidApiCalls": 0}
 
 
+def _protected_vortex_sources(source: Path) -> set[str]:
+    """Cold-backup only: pending adoption is permanent-work recovery, not cache."""
+    if not (source / 'vortex').exists():
+        return set()
+    database = source / 'vision.sqlite3'
+    _regular_path(database)
+    if not database.is_file():
+        raise ValueError('Cannot exclude Vortex media without its ownership database.')
+    try:
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owned_source_leases'").fetchone()
+            values = {row[0] for row in db.execute('SELECT vortex_id FROM owned_source_leases')} if exists else set()
+    except sqlite3.Error as error:
+        raise ValueError('Cannot verify Vortex source leases; no exclusion backup was made.') from error
+    if any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{24}', value) for value in values):
+        raise ValueError('Invalid Vortex source lease; administrator recovery is required.')
+    return values
+
+
 def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool = False) -> dict:
     """Copy a stopped service's complete data directory, including WAL sidecars.
 
@@ -108,7 +128,8 @@ def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool =
     paths, unexpected files, insufficient space, or files changing during copy.
     A manifest is written last so an interrupted copy is never a valid backup.
     Processor updates exclude ephemeral Vortex media explicitly so rollback
-    snapshots cannot retain those files beyond their five-day deadline.
+    snapshots cannot retain those files beyond their five-day deadline. Pending
+    Vision-adoption leases are an explicit exception and are included in full.
     """
     if not source.is_absolute() or not destination.is_absolute():
         raise ValueError("Backup paths must be absolute.")
@@ -119,6 +140,7 @@ def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool =
         raise ValueError("Backup source and destination must be separate trees.")
     if destination.exists():
         raise ValueError("Backup destination must be a new directory.")
+    protected_sources = _protected_vortex_sources(source) if exclude_vortex_media else set()
     files = []
     total = 0
     if source.exists():
@@ -127,7 +149,11 @@ def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool =
         for directory, subdirs, names in os.walk(source, followlinks=False):
             if exclude_vortex_media and Path(directory) == source and 'vortex' in subdirs:
                 _regular_path(source / 'vortex')
-                subdirs.remove('vortex')
+                if not protected_sources:
+                    subdirs.remove('vortex')
+            if exclude_vortex_media and Path(directory) == source / 'vortex':
+                subdirs[:] = [name for name in subdirs if name in protected_sources]
+                names = []
             for name in subdirs + names:
                 path = Path(directory) / name
                 _regular_path(path)
@@ -161,7 +187,8 @@ def backup_data(source: Path, destination: Path, *, exclude_vortex_media: bool =
               "createdAt": datetime.now(timezone.utc).isoformat(), "fileCount": len(copied),
               "bytes": total, "elapsedSeconds": round(time.monotonic() - started, 3), "files": copied}
     if exclude_vortex_media:
-        result['excludedTransientDirectories'] = ['vortex']
+        result['excludedTransientDirectories'] = ['vortex'] if not protected_sources else ['vortex (except protected source leases)']
+        result['protectedVortexSourceIds'] = sorted(protected_sources)
     _json(destination / "backup-manifest.json", result)
     return {key: value for key, value in result.items() if key != "files"}
 
