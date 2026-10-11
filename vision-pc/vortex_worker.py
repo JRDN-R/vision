@@ -234,8 +234,8 @@ def export_media(artifact, media, request, *, stem='export'):
     if streams and ((audio and audio_stream is None) or (not audio and video is None)):
         raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
     duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
-    if duration and duration > int(request.get('maxDuration', 7200)):
-        raise WorkerError("This media exceeds the server's two-hour duration limit.")
+    if duration and duration > int(request.get('maxDuration', 14400)):
+        raise WorkerError("This media exceeds the server's four-hour duration limit.")
     output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
@@ -360,7 +360,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if search and not inspect:
         raise WorkerError("Select a search result before downloading.")
     cap_bytes = int(request.get("maxBytes", 2 * 1024**3))
-    duration_limit = int(request.get("maxDuration", 7200))
+    duration_limit = int(request.get("maxDuration", 14400))
     options = {
         "quiet": True, "no_warnings": True, "logger": QuietLogger(),
         "noplaylist": True, "playlistend": 5 if search else 1,
@@ -386,7 +386,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise WorkerError("Wait until this live broadcast has finished before downloading.")
         if (number(info.get("duration")) or 0) > duration_limit:
-            raise WorkerError("This media exceeds the server's two-hour duration limit.")
+            raise WorkerError("This media exceeds the server's four-hour duration limit.")
         if info.get("has_drm"):
             raise WorkerError("DRM-protected media cannot be downloaded.")
 
@@ -458,7 +458,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     if music:
         media.update(url=safe_url(value), source="YouTube Music", mediaType="audio")
     if (number(media.get("duration")) or 0) > duration_limit:
-        raise WorkerError("This media exceeds the server's two-hour duration limit.")
+        raise WorkerError("This media exceeds the server's four-hour duration limit.")
     artifact = export_media(artifact, media, dict(request, downloadMode='audio' if audio else request.get('downloadMode', 'video')))
     media.update(quality=request.get("quality", "balanced"))
     return {"complete": True, "media": media, "results": [media], "filename": artifact.name}
@@ -564,7 +564,7 @@ def run_spotify(request):
     if len(songs) != 1:
         raise WorkerError("Spotify could not identify one public track from that link.")
     song = songs[0]
-    if (number(song.duration) or 0) > int(request.get("maxDuration", 7200)):
+    if (number(song.duration) or 0) > int(request.get("maxDuration", 14400)):
         raise WorkerError("This track exceeds the server duration limit.")
     emit(phase="Matching track to a public audio source", progress=None)
     matched = client.get_download_urls([song])
@@ -708,8 +708,8 @@ def run_gallery(request):
         if item["extension"] not in IMAGE_EXTENSIONS:
             probe = probe_file(artifact, request.get("ffmpeg"), directory)
             measured_duration = number((probe.get("format") or {}).get("duration")) or number(item["metadata"].get("duration")) or 0
-            if measured_duration > int(request.get("maxDuration", 7200)):
-                raise WorkerError("This media exceeds the server's two-hour duration limit.")
+            if measured_duration > int(request.get("maxDuration", 14400)):
+                raise WorkerError("This media exceeds the server's four-hour duration limit.")
             properties = apply_probe(dict(media), probe)
             artifact = export_media(artifact, properties, request, stem=f'export-{index + 1:03d}')
             if len(files) > 1:
@@ -743,7 +743,7 @@ def verify_result(result, request):
     media = result.get('media') or {}
     if result.get('complete') is not True or not media or media.get('mediaType') == 'unknown':
         raise WorkerError('No playable media was returned.')
-    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 7200)):
+    if (number(media.get('duration')) or 0) > int(request.get('maxDuration', 14400)):
         raise WorkerError('This media exceeds the server duration limit.')
     if request['kind'] == 'download' or result.get('filename'):
         directory = Path(request['directory']).resolve()
@@ -773,7 +773,7 @@ def verify_result(result, request):
         if artifact.suffix != '.' + expected or (audio_only and (not audio or video)) or (not audio_only and (not video or video.get('codec_name') != 'h264')):
             raise WorkerError('The requested media format could not be verified.')
         duration = number((data.get('format') or {}).get('duration'))
-        if not duration or duration > int(request.get('maxDuration', 7200)):
+        if not duration or duration > int(request.get('maxDuration', 14400)):
             raise WorkerError('The media duration could not be verified.')
         expected_duration = number(request.get('expectedDuration')) or number(media.get('duration'))
         if expected_duration and duration + max(2, expected_duration * .02) < expected_duration:
@@ -848,7 +848,7 @@ def main():
         detail = str(exc).lower()
         category = ('identity_mismatch' if 'different media' in detail else 'authentication' if 'signed-in' in detail or 'login' in detail
                     else 'rate_limited' if 'limiting requests' in detail else 'network' if 'connection' in detail or 'reached' in detail
-                    else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
+                    else 'duration_limit' if 'duration limit' in detail else 'resource_limit' if 'limit' in detail else 'invalid_media' if 'verif' in detail or 'incomplete' in detail else 'unavailable')
         # Surface bounded, actionable help for Instagram without exposing
         # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
         from vortex_urls import instagram_signed_source, platform
