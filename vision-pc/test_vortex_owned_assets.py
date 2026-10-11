@@ -43,8 +43,8 @@ class OwnedImportIntegrationTests(test_vortex_imports.ImportTests):
         server.recover_jobs()
         self.assertEqual(self.client.get('/api/jobs/' + job, headers=self.alice).status_code, 200)
         self.assertEqual(self.client.get('/api/jobs/' + job + '/result', headers=self.alice).json, result)
-        self.assertEqual(self.client.get('/api/owned-assets/' + asset + '/file', headers=self.alice).data,
-                         b'verified media fixture')
+        with self.client.get('/api/owned-assets/' + asset + '/file', headers=self.alice) as response:
+            self.assertEqual(response.data, b'verified media fixture')
         self.assertTrue(server.owned_assets.ready_path(evidence).is_file())
 
     def test_source_lease_blocks_expiry_manual_deletion_and_restart_cleanup(self):
@@ -71,11 +71,12 @@ class OwnedImportIntegrationTests(test_vortex_imports.ImportTests):
         self.assertEqual(self.client.get(route, headers=self.bob).status_code, 404)
         self.assertEqual(self.client.get(route + '/file', headers=self.bob).status_code, 404)
         self.assertNotEqual(self.client.get(route, headers=self.legacy).status_code, 200)
-        ranged = self.client.get(route + '/file', headers={**self.alice, 'Range': 'bytes=0-7'})
-        self.assertEqual(ranged.status_code, 206)
-        self.assertEqual(ranged.data, b'verified')
-        self.assertEqual(ranged.headers['Cache-Control'], 'private, no-store')
-        self.assertEqual(ranged.headers['X-Content-Type-Options'], 'nosniff')
+        with self.client.get(route + '/file', headers={**self.alice, 'Range': 'bytes=0-7'}) as ranged:
+            self.assertEqual(ranged.status_code, 206)
+            self.assertEqual(ranged.data, b'verified')
+            # The shared after-request hook normalizes every API response to no-store.
+            self.assertEqual(ranged.headers['Cache-Control'], 'no-store')
+            self.assertEqual(ranged.headers['X-Content-Type-Options'], 'nosniff')
         self.assertEqual(self.client.get('/api/owned-assets/imports', headers=self.bob).json['imports'], [])
         inventory = self.client.get('/api/owned-assets/imports', headers=self.alice).json['imports']
         self.assertEqual([r['importId'] for r in inventory], [job])
