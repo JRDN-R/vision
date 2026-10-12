@@ -32,9 +32,25 @@ with sync_playwright() as pw:
         page.route('**/*', lambda route: (requests.append(route.request.url), route.abort()))
         page.set_content(fixture)
         page.wait_for_function("[...document.querySelectorAll('venture-qwen-symbol')].every(el=>el.ready && el.visible)")
-        page.evaluate("window.symbol=document.querySelector('venture-qwen-symbol');window.order=[];symbol.players.forEach((p,i)=>{p.setSpeed(20);p.addEventListener('complete',()=>order.push(i+1));});")
+        page.evaluate('''
+          window.symbol=document.querySelector('venture-qwen-symbol');
+          window.order=[];window.renderErrors=[];window.rotations=[[],[]];
+          symbol.players.forEach((p,i)=>{
+            p.addEventListener('complete',()=>order.push(i+1));
+            p.addEventListener('error',e=>renderErrors.push(String(e.nativeError||e.type)));
+            p.addEventListener('drawnFrame',()=>{
+              const transform=symbol.frames[i].querySelector('svg g[transform]')?.transform.baseVal.consolidate();
+              if(transform)rotations[i].push(Math.atan2(transform.matrix.b,transform.matrix.a)*180/Math.PI);
+            });
+            p.setSpeed(4);
+          });
+        ''')
         page.wait_for_function('order.length>=4')
         assert page.evaluate('order.slice(0,4)') == [1, 2, 1, 2]
+        assert page.evaluate('renderErrors') == []
+        rotations = page.evaluate('rotations')
+        assert min(rotations[0]) < -90 and max(rotations[0]) > 90, 'Part 1 must visibly spin, not just advance its clock'
+        assert min(rotations[1]) < -15 and max(rotations[1]) > 15, 'Part 2 must visibly rock in both directions'
         assert page.evaluate('symbol.players.every(p=>!p.loop)')
         assert page.locator('.venture-model-name').first.inner_text() == 'Qwen3.8 Local'
         assert page.locator('.venture-model-name').first.evaluate('(el)=>getComputedStyle(el).color') == 'rgb(72, 125, 255)'
@@ -68,6 +84,6 @@ with sync_playwright() as pw:
         assert page.evaluate('lottie.getRegisteredAnimations().length') == 0
         assert not requests, requests
         assert not errors, errors
-        print(f'{width}px: p1/p2/p1/p2, offline images, label styling, visibility, reduced motion and cleanup passed')
+        print(f'{width}px: visible spin/rock in p1/p2/p1/p2 order without render errors; offline images, styling, visibility, reduced motion and cleanup passed')
         page.close()
     browser.close()
