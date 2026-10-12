@@ -1,5 +1,5 @@
-// Actual Vortex modules with deterministic DOM/auth fixtures. The native share
-// boundary is mocked: these checks cannot assert installed Moises/iOS behavior.
+// Actual Vortex modules with deterministic DOM/auth fixtures. Native sharing
+// and shortcut launching are mocked; installed Moises/iOS still needs a device.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,26 +16,29 @@ function element() {
   return {hidden:false, disabled:false, textContent:'', value:'', dataset:{}, children:[], style:{},
     classList:{toggle(name,on) { if (on) classes.add(name); else classes.delete(name); }, add:name=>classes.add(name), remove:name=>classes.delete(name)},
     setAttribute:(k,v)=>attributes.set(k,v), getAttribute:k=>attributes.get(k) ?? null, removeAttribute:k=>attributes.delete(k),
-    addEventListener() {}, remove() {}, click() {}, close() {},
+    addEventListener() {}, remove() {}, click() {}, showModal() { this.open = true; }, close() { this.open = false; },
     replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); }};
 }
-function harness() {
+function harness({ios=false, configured=false, storage=new Map()}={}) {
   let identity = {uid:'alice'}, epoch = 1, serial = 0, handler = async () => new Blob(['media'], {type:'application/octet-stream'});
-  const elements = new Map(), calls = [], shared = [], saved = [];
+  let ticketHandler = async route => ({url:BACKEND+'/api'+route.replace('/ticket','/file')+'?ticket=fixture',expiresAt:Date.now()/1000+300});
+  const elements = new Map(), calls = [], shared = [], saved = [], launched = [];
+  if (configured) storage.set('vortex:moises-shortcut:v1','ready');
   const node = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const document = {hidden:false, getElementById:node, querySelectorAll:()=>[], addEventListener() {}, body:element(), createElement:element};
   const sandbox = {URL, Blob, File, AbortController, crypto:{randomUUID}, document,
-    navigator:{canShare:()=>true, share:async data=>shared.push(data)}, matchMedia:()=>({matches:true,addEventListener(){}}),
+    navigator:{userAgent:ios?'iPhone':'',canShare:()=>true, share:async data=>shared.push(data)}, matchMedia:()=>({matches:true,addEventListener(){}}),
     setTimeout:()=>1, clearTimeout() {}, request:async (route, options={}) => {
       calls.push({route, options});
       if (options.binary) return handler(route, options);
       if (route === '/vortex/capabilities') return {videoFormats:['mp4','mov'], audioFormats:['m4a','mp3','wav']};
       if (route === '/vortex/jobs' && options.method === 'POST') return {id:'queued-'+(++serial), status:'queued', ...options.body};
-      if (route.endsWith('/ticket')) return {url:BACKEND+'/api'+route.replace('/ticket','/file')+'?ticket=fixture',expiresAt:Date.now()/1000+300};
+      if (route.endsWith('/ticket')) return ticketHandler(route, options);
       throw new Error('Unexpected request: '+route);
     }, user:()=>identity, accountEpoch:()=>epoch, initAuth:()=>new Promise(()=>{}), authError:error=>error.message,
-    signOut:async()=>{}, BACKEND, fetch:async()=>({ok:false}), sessionStorage:{getItem:()=>null,setItem(){}}, console};
-  sandbox.window = {addEventListener() {}};
+    signOut:async()=>{}, BACKEND, fetch:async()=>({ok:false}), sessionStorage:{getItem:()=>null,setItem(){}},
+    localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},console};
+  sandbox.window = {addEventListener() {},location:{assign:url=>launched.push(url)}};
   const context = vm.createContext(sandbox);
   const source = fs.readFileSync(path.join(ROOT,'web/vortex/app.js'),'utf8').replace(/^import .*;\n/, '');
   vm.runInContext(source, context);
@@ -48,9 +51,10 @@ function harness() {
     evaluate("state.selected=fixtureMedia; state.jobs=[fixtureJob]; state.downloadMode=fixtureMedia.mediaType; state.videoFormat='mp4'; state.audioFormat='m4a'; state.readyDownload={key:currentDownloadKey(),url:BACKEND+'/api/vortex/jobs/'+fixtureJob.id+'/file?ticket=fixture',filename:fixtureJob.filename,expiresAt:Date.now()/1000+300}; renderDownloadStatus();");
     return job;
   }
-  return {node,calls,shared,saved,sandbox,evaluate,ready,
+  return {node,calls,shared,saved,launched,storage,sandbox,evaluate,ready,
     click:()=>evaluate('openInMoises()'),
-    setBinary:fn=>{handler=fn;}, switchAccount:uid=>{identity=uid?{uid}:null;epoch++;evaluate('renderDownloadStatus()');},
+    setBinary:fn=>{handler=fn;}, setTicket:fn=>{ticketHandler=fn;},
+    switchAccount:uid=>{identity=uid?{uid}:null;epoch++;evaluate('renderDownloadStatus()');},
     binaryCalls:()=>calls.filter(call=>call.options.binary)};
 }
 
@@ -73,6 +77,112 @@ test('each Vortex audio/video format hands off a File with an explicit MIME type
     assert.equal(h.binaryCalls()[0].options.timeout, 90000);
     assert.equal(h.evaluate('state.moisesPrepared'), null);
   }
+});
+
+test('iOS setup is required once, persists only the preference, and never starts an export or app itself', async () => {
+  const h = harness({ios:true}); h.ready('mp3'); await h.click();
+  assert.equal(h.node('moisesSetupDialog').open,true);
+  assert.equal(h.node('moisesSetupButton').hidden,false);
+  assert.equal(h.calls.length,0); assert.equal(h.launched.length,0);
+  h.node('moisesSetupDone').onclick();
+  assert.equal(h.node('moisesSetupDialog').open,false);
+  assert.deepEqual([...h.storage],[['vortex:moises-shortcut:v1','ready']]);
+  assert.equal(h.launched.length,0);
+  const next = harness({ios:true,storage:h.storage}); next.ready('mp3'); await next.click();
+  assert.equal(next.launched.length,1);
+  assert.equal(next.node('moisesSetupDialog').open,undefined);
+});
+
+test('iPhone and desktop-mode iPad dispatch the scoped URL synchronously without sharing, fetching bytes, or a page size cap', async () => {
+  for (const ipad of [false,true]) {
+    const h = harness({ios:!ipad,configured:true});
+    if (ipad) Object.assign(h.sandbox.navigator,{userAgent:'Macintosh',platform:'MacIntel',maxTouchPoints:5});
+    h.ready('mp3',{size:LIMIT+1});
+    h.sandbox.navigator.share = undefined;
+    const pending = h.click();
+    assert.equal(h.launched.length,1,'launch must happen before awaiting a network response');
+    await pending;
+    const url = new URL(h.launched[0]);
+    assert.equal(url.protocol,'shortcuts:'); assert.equal(url.host,'run-shortcut');
+    assert.deepEqual([...url.searchParams],[['name','Vortex to Moises'],['input','text'],['text',BACKEND+'/api/vortex/jobs/ready-1/file?ticket=fixture']]);
+    assert.equal(h.calls.length,0); assert.equal(h.shared.length,0); assert.equal(h.saved.length,0);
+  }
+});
+
+test('iOS reuses the export queue but never launches Shortcuts from background completion', async () => {
+  const h = harness({ios:true,configured:true}); h.ready('mp3'); h.evaluate('state.readyDownload=null');
+  await h.click(); await h.click(); await tick();
+  assert.equal(h.calls.filter(call=>call.route==='/vortex/jobs').length,1);
+  h.evaluate("Object.assign(state.jobs[0],{status:'complete',resultReady:true,filename:'fixture.mp3',size:5,expiresAt:Date.now()/1000+86400}); checkAutoSaves();");
+  await tick();
+  assert.equal(h.saved.length,0); assert.equal(h.launched.length,0); assert.equal(h.binaryCalls().length,0);
+  assert.match(h.node('moisesStatus').textContent,/run your shortcut/);
+  await h.click(); assert.equal(h.launched.length,1);
+});
+
+test('iOS refreshes expiring tickets once and waits for another tap before launching', async () => {
+  const h = harness({ios:true,configured:true}); h.ready('mp3'); h.evaluate('state.readyDownload.expiresAt=Date.now()/1000+30');
+  let release;
+  h.setTicket(()=>new Promise(resolve=>release=resolve));
+  const pending = h.click(); await h.click();
+  assert.equal(h.calls.length,1); assert.equal(h.calls[0].route,'/vortex/jobs/ready-1/ticket');
+  assert.equal(h.calls[0].options.method,'POST'); assert.equal(h.node('moisesOpenButton').disabled,true);
+  release({url:BACKEND+'/api/vortex/jobs/ready-1/file?ticket=renewed_token.sig',expiresAt:Date.now()/1000+300});
+  await pending;
+  assert.equal(h.launched.length,0); assert.equal(h.node('moisesOpenButton').disabled,false);
+  assert.match(h.node('moisesStatus').textContent,/Ready\. Tap/);
+  await h.click(); assert.equal(h.launched.length,1);
+  assert.equal(new URL(h.launched[0]).searchParams.get('text'),BACKEND+'/api/vortex/jobs/ready-1/file?ticket=renewed_token.sig');
+  assert.equal(h.calls.length,1);
+});
+
+test('iOS rejects unsafe URLs, unavailable results, and failed refreshes without launching or stranding the button', async () => {
+  const file = BACKEND+'/api/vortex/jobs/ready-1/file';
+  for (const url of [file,file+'?ticket=',file+'?ticket=a&ticket=b',file+'?ticket=a&token=secret',file+'?ticket=a#fragment',
+    file+'?ticket='+encodeURIComponent('a&b'),file.replace('https:','http:')+'?ticket=a',
+    file.replace('https://','https://user:password@')+'?ticket=a',
+    'https://example.test/api/vortex/jobs/ready-1/file?ticket=a',BACKEND+'/api/vortex/jobs/missing/file?ticket=a']) {
+    const h = harness({ios:true,configured:true}); h.ready('mp3'); h.sandbox.fixtureURL=url;
+    h.evaluate('state.readyDownload.url=fixtureURL'); await h.click();
+    assert.equal(h.launched.length,0); assert.equal(h.calls.length,0);
+    assert.equal(h.node('moisesOpenButton').disabled,false); assert.ok(h.node('moisesStatus').textContent);
+  }
+  for (const fields of [{size:0},{size:Infinity},{status:'expired'},{resultReady:false},{kind:'inspect'},{expiresAt:1},{filename:'file.zip'}]) {
+    const h = harness({ios:true,configured:true}); h.ready('mp3',fields); await h.click();
+    assert.equal(h.launched.length,0); assert.equal(h.calls.length,0);
+  }
+  for (const response of [new Error('offline'),{url:file+'?ticket=a',expiresAt:Date.now()/1000+30},
+    {url:'https://example.test/file?ticket=a',expiresAt:Date.now()/1000+300}]) {
+    const h = harness({ios:true,configured:true}); h.ready('mp3'); h.evaluate('state.readyDownload.expiresAt=1');
+    h.setTicket(async()=>{if(response instanceof Error)throw response;return response;});
+    await h.click(); assert.equal(h.launched.length,0); assert.equal(h.node('moisesOpenButton').disabled,false);
+    assert.equal(h.node('moisesOpenButton').getAttribute('aria-busy'),null);
+    assert.equal(h.evaluate('state.readyDownload.expiresAt'),1);
+  }
+});
+
+test('iOS ticket refresh aborts across account, selection and result changes and ignores late responses', async () => {
+  for (const change of [h=>h.switchAccount('bob'),h=>h.switchAccount('alice'),h=>h.switchAccount(null),
+    h=>h.evaluate("discardQueuedDownload(); state.selected.url='https://example.test/other'; renderDownloadStatus(); state.selected.url='https://example.test/media'; renderDownloadStatus()"),
+    h=>h.evaluate("state.jobs[0].resultReady=false; renderDownloadStatus()")]) {
+    const h = harness({ios:true,configured:true}); h.ready('mp3'); h.evaluate('state.readyDownload.expiresAt=1');
+    let release, signal;
+    h.setTicket((_,options)=>{signal=options.signal;return new Promise(resolve=>release=resolve);});
+    const pending=h.click(); change(h); assert.equal(signal.aborted,true);
+    release({url:BACKEND+'/api/vortex/jobs/ready-1/file?ticket=stale',expiresAt:Date.now()/1000+300});
+    await pending;
+    assert.equal(h.launched.length,0); assert.equal(h.evaluate('state.moisesShortcutRequest'),null);
+    assert.equal(h.node('moisesStatus').textContent,''); assert.equal(h.node('moisesOpenButton').disabled,false);
+    assert.ok(!h.evaluate('state.readyDownload?.url.includes("stale")'));
+  }
+});
+
+test('a blocked shortcut launch leaves setup help and manual saving available', async () => {
+  const h = harness({ios:true,configured:true}); h.ready('mp3');
+  h.sandbox.window.location.assign=()=>{throw new Error('blocked');};
+  await h.click(); assert.match(h.node('moisesStatus').textContent,/Could not open Shortcuts/);
+  assert.equal(h.node('moisesOpenButton').disabled,false);
+  assert.equal(h.node('moisesSetupButton').hidden,false); assert.equal(h.node('downloadFallback').hidden,false);
 });
 
 test('Moises uses the existing queue once, skips automatic saves, and allows an explicit Download upgrade', async () => {

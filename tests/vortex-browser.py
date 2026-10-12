@@ -792,6 +792,30 @@ def run():
                 page.locator('#moisesOpenButton').click()
                 assert page.evaluate('__moisesShared') == dict(name='Harbor.mp4', size=19, type='video/mp4', active=True, keys=['files'])
                 page.evaluate("Object.defineProperty(navigator,'canShare',{configurable:true,value:undefined}); Object.defineProperty(navigator,'share',{configurable:true,value:undefined});")
+            if width < 760:
+                # Check the iPhone setup UI in Chromium. The URL dispatch is
+                # covered by vortex-moises.test.cjs; native import needs iOS.
+                page.evaluate("Object.defineProperty(navigator,'userAgent',{configurable:true,value:'iPhone'});")
+                before_setup = len(api.calls)
+                page.locator('#moisesOpenButton').click()
+                setup = page.locator('#moisesSetupDialog')
+                setup.wait_for(state='visible')
+                assert setup.get_by_text('Vortex to Moises', exact=True).is_visible()
+                assert setup.get_by_text('Shortcut Input', exact=True).is_visible()
+                assert setup.locator('a[href^="https://apps.apple.com/"]').count() == 1
+                assert setup.evaluate('(node)=>node.scrollWidth <= node.clientWidth')
+                bounds = setup.bounding_box()
+                assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= width
+                assert bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 844
+                page.screenshot(path=str(SHOTS/f'vortex-moises-setup-{width}.png'))
+                page.locator('#moisesSetupDone').click()
+                setup.wait_for(state='hidden')
+                assert page.evaluate("localStorage.getItem('vortex:moises-shortcut:v1')") == 'ready'
+                assert not any(call['method'] == 'POST' or call['path'].endswith('/file') for call in api.calls[before_setup:]), 'Setup must not export or transfer a file'
+                page.locator('#moisesSetupButton').click()
+                setup.wait_for(state='visible')
+                setup.locator('.close-dialog').click()
+                page.evaluate('delete navigator.userAgent')
             page.locator('input[name=quality][value=max]').check()
             restore_max = next_job(page, api, queued_download['id'])
             restore_max.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])

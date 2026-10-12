@@ -147,23 +147,53 @@ Files workflow, without holding a large video in page memory.
 
 The selected audio/video panel also offers **Open in Moises** directly below
 Download, with the same responsive width and 44 px height and the supplied Moises
-artwork. Its first tap reuses Vortex's export queue or retrieves the completed
-file with the current account's authentication. A Moises-only export does not
-also start a browser download; tapping Download still requests the normal save.
-Sharing is opt-in and limited to 32 MiB, checked against both job metadata and
-the received bytes. MP4/MOV and M4A/MP3/WAV use explicit media MIME types.
-Changing accounts, media, quality or format, deleting/expiring a result, and
-leaving the page discard the prepared handoff. Selection changes abort pending
-file retrieval; late responses cannot populate another selection or account.
+artwork. A Moises-only export reuses Vortex's queue and does not also start a
+browser download; tapping Download still requests the normal save.
 
-Once prepared, a fresh tap opens the native Share Sheet with the **file**, not
-its ticket URL. Select Moises if the installed app offers itself for that file,
-then complete its import options. Web Share cannot choose a specific app or
-start Moises's upload/separation automatically. If Moises is absent, sharing
-is unsupported, or the file exceeds the browser limit, save to Files and import
-inside Moises. Cancelling the Share Sheet preserves the prepared file for retry.
-Expired delivery tickets can still be prepared while the underlying job remains
-available, because this retrieval uses authenticated `/file` rather than a ticket.
+On **iPhone and iPad**, the button uses an installed Apple Shortcut to download
+the finished file and open it directly in Moises. Set up once on each device:
+
+1. In Shortcuts, name the shortcut exactly **Vortex to Moises**.
+2. Add **Get Contents of URL**, using **Shortcut Input** as the URL and **GET**
+   as the method.
+3. Add **Open File**, using the previous action's **Contents of URL** output.
+   Choose **Moises** and turn **Show Open In Menu** off.
+4. Back in Vortex, select **I've set up the shortcut** in the setup dialog.
+
+To update the two-action test shortcut, rename it, replace **Select File** with
+**Get Contents of URL**, and connect that output to Open File. The tested native
+Open File action imported an MP3 into Moises's instrument selection screen;
+the complete website-to-shortcut download still needs a physical-device test.
+Start with Audio only → M4A or MP3. Video imports depend on the installed Moises
+version accepting the selected format. The user still chooses instruments and
+submits processing inside Moises.
+
+When the export is ready, a fresh tap invokes
+`shortcuts://run-shortcut?name=Vortex%20to%20Moises&input=text&text=<encoded-file-url>`.
+The shortcut receives only Vortex's HTTPS, short-lived, job-specific file ticket,
+never a Firebase token. Its download uses the existing GET `/file` endpoint and
+attachment filename; no server change or Music AI API is needed. Vortex does not
+load the media bytes into browser memory on this path, so the browser's 32 MiB
+sharing limit does not apply. Moises's own size/format/account limits still apply.
+Expired or nearly expired tickets are refreshed with account authentication;
+after that completes, another tap launches the shortcut. No background callback
+opens another app. Account, selection, format, result, or page changes abort a
+pending refresh and ignore late responses. Only the setup preference is persisted.
+
+**Shortcut setup / help** remains available. iOS may ask permission to run the
+shortcut or download from the Vortex server. Vortex cannot detect installation;
+the setup includes a Moises App Store link. If Shortcuts reports a missing
+shortcut, check its exact name. If a link expires while approving prompts, return
+to Vortex and tap Open in Moises again. Save file manually remains available.
+See Apple's [URL scheme](https://support.apple.com/guide/shortcuts/run-a-shortcut-from-a-url-apd624386f42/ios).
+
+Other platforms retain the browser's native Share Sheet fallback. Vortex prepares
+a file using authenticated retrieval, then a fresh tap opens the chooser. This
+path is limited to 32 MiB, checked against metadata and received bytes, and uses
+explicit MP4/MOV and M4A/MP3/WAV MIME types. The browser cannot select Moises for
+the user. Cancellation retains the prepared file for retry; account, selection,
+format, result, or page changes discard it. If sharing is unsupported or Moises
+is absent from the chooser, save the file and import inside Moises.
 See [WebKit's user activation guidance](https://webkit.org/blog/13862/the-user-activation-api/),
 the [Web Share standard](https://www.w3.org/TR/web-share/), and
 [Moises's import instructions](https://help.moises.ai/hc/en-us/articles/8583454469276-How-to-Upload-and-Edit-your-track-using-Moises).

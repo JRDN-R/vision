@@ -9,6 +9,10 @@ Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a'
 Object.assign(state, {queuedDownload:null, submittingDownload:null, autoSaveJobs:new Map(), readyDownload:null, downloadError:''});
 Object.assign(state, {sessionJobs:new Set(), deletedIds:new Set(), historyLoaded:false, visitEpoch:0});
 Object.assign(state, {moisesContext:null, moisesPrepared:null, moisesPreparing:null, moisesSharing:null});
+Object.assign(state, {moisesShortcutConfigured:false, moisesShortcutRequest:null});
+const MOISES_SHORTCUT_NAME = 'Vortex to Moises';
+const MOISES_SHORTCUT_SETUP_KEY = 'vortex:moises-shortcut:v1';
+try { state.moisesShortcutConfigured = localStorage.getItem(MOISES_SHORTCUT_SETUP_KEY) === 'ready'; } catch {}
 const MOISES_SHARE_LIMIT = 32 * 1024 * 1024;
 const MOISES_MIME_TYPES = Object.freeze({mp4:'video/mp4', mov:'video/quicktime', m4a:'audio/mp4', mp3:'audio/mpeg', wav:'audio/wav'});
 const searchObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
@@ -385,7 +389,7 @@ function renderDownloadStatus() {
     message = running[1].delivering ? 'File ready · Preparing secure download…' : (job?.phase || (job?.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress + (running[1].delivery === 'moises' ? ' · Preparing for Moises' : ' · Saving automatically when ready');
     working = true;
   } else if (ready) {
-    message = ready.delivery === 'moises' ? 'File ready. Tap Open in Moises to prepare it for sharing, or save it below.' : 'File ready. Download started automatically where supported. You can also save it below.';
+    message = ready.delivery === 'moises' ? moisesReadyMessage() : 'File ready. Download started automatically where supported. You can also save it below.';
   } else if (state.downloadError && input) {
     message = state.downloadError;
   } else if (state.qualityRefreshing && input) {
@@ -483,7 +487,7 @@ function checkAutoSaves() {
           state.readyDownload = {key:intent.key, input:intent.input, filename:job.filename || 'media', url:url.href, expiresAt:ticket.expiresAt, delivery:intent.delivery || 'save'};
           state.autoSaveJobs.delete(id); renderDownloadStatus();
           if (intent.delivery === 'moises') {
-            if (currentDownloadKey() === intent.key) moisesNotice('File ready. Tap Open in Moises to prepare it for sharing.');
+            if (currentDownloadKey() === intent.key) moisesNotice(moisesReadyMessage());
           } else {
             triggerBrowserSave(url.href, job.filename || 'media');
             notice('Your file is ready. The download should start automatically. If your browser blocks it, tap Save file below or use Download history.');
@@ -513,8 +517,16 @@ function moisesNotice(message = '', error = false) {
   status.textContent = message; status.hidden = !message; status.classList.toggle('error', error);
 }
 function moisesEligibleMedia() { return ['audio', 'video'].includes(state.selected?.mediaType); }
+function moisesUsesShortcut() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function moisesReadyMessage() {
+  return moisesUsesShortcut() ? 'File ready. Tap Open in Moises to run your shortcut.' : 'File ready. Tap Open in Moises to prepare it for sharing, or save it below.';
+}
 function resetMoisesHandoff() {
   state.moisesPreparing?.controller.abort();
+  state.moisesShortcutRequest?.controller.abort();
+  state.moisesShortcutRequest = null;
   state.moisesContext = null; state.moisesPrepared = null; state.moisesPreparing = null; state.moisesSharing = null;
   $('moisesOpenButton').disabled = false; $('moisesOpenButton').removeAttribute('aria-busy');
   moisesNotice();
@@ -528,12 +540,94 @@ function moisesContextCurrent(context) {
 }
 function renderMoisesControl() {
   if (state.moisesContext && !moisesContextCurrent(state.moisesContext)) resetMoisesHandoff();
+  if (state.moisesShortcutRequest && !moisesShortcutContextCurrent(state.moisesShortcutRequest)) resetMoisesHandoff();
   const button = $('moisesOpenButton');
   button.hidden = !moisesEligibleMedia();
-  button.disabled = !!(state.moisesPreparing || state.moisesSharing);
+  button.disabled = !!(state.moisesPreparing || state.moisesSharing || state.moisesShortcutRequest);
   if (button.disabled) button.setAttribute('aria-busy', 'true'); else button.removeAttribute('aria-busy');
+  $('moisesSetupButton').hidden = button.hidden || !moisesUsesShortcut();
+  $('moisesSetupButton').textContent = state.moisesShortcutConfigured ? 'Shortcut setup / help' : 'Set up iPhone shortcut';
 }
 async function openInMoises() {
+  if (moisesUsesShortcut()) return openMoisesShortcut();
+  return shareMoisesFile();
+}
+function showMoisesSetup() { $('moisesSetupDialog').showModal(); }
+function completeMoisesSetup() {
+  state.moisesShortcutConfigured = true;
+  try { localStorage.setItem(MOISES_SHORTCUT_SETUP_KEY, 'ready'); } catch {}
+  $('moisesSetupDialog').close();
+  renderMoisesControl();
+  moisesNotice('Shortcut setup saved. Tap Open in Moises when your file is ready.');
+}
+function moisesShortcutJobReady(job) {
+  return job?.kind === 'download' && job.status === 'complete' && job.resultReady &&
+    Number.isFinite(Number(job.size)) && Number(job.size) > 0 && seconds(job.expiresAt) > Date.now() + 5000;
+}
+function moisesShortcutContextCurrent(context) {
+  return context.epoch === accountEpoch() && context.uid === user()?.uid && context.key === currentDownloadKey() &&
+    moisesEligibleMedia() && state.readyDownload === context.ready && moisesShortcutJobReady(getJob(context.jobId));
+}
+function moisesShortcutFileURL(job, ready) {
+  const url = validateTicketURL(job, ready);
+  // Only pass the existing scoped file capability to the installed shortcut.
+  // Never pass Firebase tokens, arbitrary URLs, extra query parameters or fragments.
+  const ticket = url.searchParams.get('ticket');
+  if (url.protocol !== 'https:' || url.hash || url.searchParams.size !== 1 || !ticket ||
+      ticket.length > 1024 || !/^[A-Za-z0-9_.-]+$/.test(ticket)) throw new Error('Invalid secure media link. Refresh Vortex, then try again.');
+  return url;
+}
+function launchMoisesShortcut(fileURL) {
+  const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(MOISES_SHORTCUT_NAME) + '&input=text&text=' + encodeURIComponent(fileURL.href);
+  // This must run synchronously from the user's tap, never after ticket retrieval.
+  window.location.assign(url);
+}
+async function openMoisesShortcut() {
+  renderMoisesControl();
+  const identity = user(), key = currentDownloadKey();
+  if (!identity || !key || !moisesEligibleMedia()) { moisesNotice('Select an audio or video first.', true); return; }
+  if (!state.moisesShortcutConfigured) { showMoisesSetup(); return; }
+  if (state.moisesShortcutRequest) return;
+  const ready = state.readyDownload;
+  if (!ready || ready.key !== key) {
+    downloadSelected(undefined, undefined, null, 'moises');
+    moisesNotice('Preparing your file. Keep Vortex open, then tap Open in Moises when it is ready.');
+    return;
+  }
+  let job, fileURL;
+  try {
+    const match = new URL(ready.url, BACKEND).pathname.match(/^\/api\/vortex\/jobs\/([\w-]{1,120})\/file$/);
+    job = match && getJob(match[1]);
+    if (!moisesShortcutJobReady(job)) throw new Error('The media file is no longer available. Tap Download to prepare it again.');
+    if (!MOISES_MIME_TYPES[String(job.filename || ready.filename).split('.').pop().toLowerCase()]) throw new Error('Choose M4A, MP3 or WAV audio, or MP4/MOV video for Moises.');
+    fileURL = moisesShortcutFileURL(job, ready);
+  } catch (error) { moisesNotice(error.message, true); return; }
+  if (seconds(ready.expiresAt) > Date.now() + 60000) {
+    moisesNotice('Opening your shortcut. If nothing opens, check Shortcut setup / help.');
+    try { launchMoisesShortcut(fileURL); }
+    catch { moisesNotice('Could not open Shortcuts. Check Shortcut setup / help, or save the file and import it inside Moises.', true); }
+    return;
+  }
+  const context = {uid:identity.uid, epoch:accountEpoch(), key, jobId:job.id, ready, controller:new AbortController()};
+  state.moisesShortcutRequest = context; renderMoisesControl();
+  moisesNotice('Refreshing your file link…');
+  try {
+    const ticket = await request(jobPath(job.id) + '/ticket', {method:'POST', signal:context.controller.signal});
+    if (state.moisesShortcutRequest !== context || !moisesShortcutContextCurrent(context)) return;
+    const url = moisesShortcutFileURL(job, ticket);
+    if (seconds(ticket.expiresAt) <= Date.now() + 60000) throw new Error('This file is about to expire. Tap Download to prepare it again.');
+    state.moisesShortcutRequest = null;
+    state.readyDownload = {...ready, url:url.href, expiresAt:ticket.expiresAt};
+    renderDownloadStatus();
+    moisesNotice('Ready. Tap Open in Moises to run your shortcut.');
+  } catch (error) {
+    if (state.moisesShortcutRequest === context && moisesShortcutContextCurrent(context)) moisesNotice(error.message, true);
+  } finally {
+    if (state.moisesShortcutRequest === context) state.moisesShortcutRequest = null;
+    renderMoisesControl();
+  }
+}
+async function shareMoisesFile() {
   renderMoisesControl();
   const identity = user(), key = currentDownloadKey();
   if (!identity || !key || !moisesEligibleMedia()) { moisesNotice('Select an audio or video first.', true); return; }
@@ -874,6 +968,8 @@ for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio
 $('outputFormat').onchange = () => { discardQueuedDownload(); state[state.downloadMode === 'audio' ? 'audioFormat' : 'videoFormat'] = $('outputFormat').value; renderDownloadStatus(); };
 $('downloadButton').onclick = () => downloadSelected(); $('refreshButton').onclick = () => void refresh();
 $('moisesOpenButton').onclick = () => void openInMoises();
+$('moisesSetupButton').onclick = showMoisesSetup;
+$('moisesSetupDone').onclick = completeMoisesSetup;
 $('downloadFallback').onclick = event => { if (!state.readyDownload || seconds(state.readyDownload.expiresAt) <= Date.now() + 5000) { event.preventDefault(); notice('This secure save link expired. Open Download history and choose Download to get a new link.', true); renderDownloadStatus(); } };
 $('loadOlder').onclick = () => void loadOlder();
 $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
