@@ -2,11 +2,11 @@
 VENTURE_MODEL_SYMBOLS.qwen = "<svg role=\"img\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><title>QWen</title><path d=\"M23.919 14.545 20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.57.57 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801-6.205-.002 1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315-1.634-2.83c2.129-3.673 4.25-7.351 6.373-11.028h3.592l3.102 5.374z\"/></svg>";
 function ventureIsLocal(model=venture.settings.model){return model==='qwen3.8-local';}
 function ventureLocalVisionReady(){return venture.localCapability?.capabilities?.vision===true;}
-function ventureLocalSubtitle(){return ventureLocalVisionReady()?'9B Distill + Vision':'9B Distill · vision not ready';}
+function ventureLocalSubtitle(){return ventureLocalVisionReady()?'9B Distill + Vision':venture.localCapability?.enabled===true&&venture.localCapability?.visual?.status==='awaiting-integrated-check'?'9B Distill · image check pending':'9B Distill · vision not ready';}
 function ventureAcceptLocalCapability(data){
  if(!Object.prototype.hasOwnProperty.call(data,'localModel'))return;
- const before=ventureLocalVisionReady();venture.localCapability=data.localModel||null;
- if(before!==ventureLocalVisionReady()){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
+ const before=ventureLocalSubtitle();venture.localCapability=data.localModel||null;
+ if(before!==ventureLocalSubtitle()){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
 }
 function ventureLocalSourceLink(label,url,run){
  const index=run?.localVisualEvidence?.findIndex(e=>e.sourceURL===url)??-1;
@@ -53,12 +53,37 @@ async function ventureOpenLocalVisual(run,index){
  const close=document.createElement('button');close.textContent='Close';close.onclick=()=>dialog.close();
  dialog.append(caption,image,close);dialog.addEventListener('close',()=>{URL.revokeObjectURL(url);dialog.remove();},{once:true});document.body.appendChild(dialog);dialog.showModal();
 }
-function ventureLocalProgress(run){
+function ventureLocalProgress(run,details=false){
  const q=run.localQueue;if(!q)return '';
  const active=ventureActive(run),wait=Math.round(q.waitingSeconds||0),processing=Math.round(q.processingSeconds||0);
- return '<div class="venture-local-progress" role="status"><strong>'+(active?(q.requestsAhead?q.requestsAhead+' request'+(q.requestsAhead===1?'':'s')+' ahead':run.status==='queued'?'Queued · next in line':'Your request is running'):'Local inference · no API token charge')+'</strong>'+
- (active?'<progress aria-label="Local answer in progress"></progress><span>'+escapeHTML(run.phase||'Queued')+'</span>':'')+
- '<small>Waited '+wait+'s · Processing '+processing+'s'+(active?' · Completion estimate not calibrated':'')+'</small></div>';
+ if(!active&&!details)return '';
+ let estimate='Learning response times · estimate available after 3 similar answers';
+ const range=q.estimatedRemainingRange;
+ if(q.estimateStatus==='estimated'&&Array.isArray(range)&&range.length===2&&range.every(n=>Number.isFinite(n)&&n>=0))estimate='About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' remaining'+(q.requestsAhead?' including queue':'')+' · based on '+Number(q.estimateSamples)+' similar answers';
+ else if(q.estimateStatus==='overrun')estimate='Taking longer than recent answers · still working';
+ return '<div class="venture-local-progress'+(active?' is-active':' is-complete')+'" role="status"><div class="venture-progress-heading">'+(active?'<span class="venture-thinking-orb" aria-hidden="true"><i></i><i></i><i></i></span>':'')+'<strong>'+(active?(q.requestsAhead?q.requestsAhead+' request'+(q.requestsAhead===1?'':'s')+' ahead':run.status==='queued'?'Queued · next in line':escapeHTML(run.phase||'Your request is running')):'Local inference · no API token charge')+'</strong></div>'+
+ (active?'<div class="venture-progress-track" role="progressbar" aria-label="Local answer in progress"><span></span></div><span class="venture-progress-estimate">'+escapeHTML(estimate)+'</span>':'')+
+ '<small>Waited '+ventureLocalDuration(wait)+' · Processing '+ventureLocalDuration(processing)+'</small></div>';
+}
+function ventureLocalDuration(seconds){seconds=Math.max(0,Math.round(seconds));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m'+(seconds%60?' '+seconds%60+'s':'');}
+function ventureLocalDetailsButton(run){
+ return run.localQueue?'<button type="button" class="venture-response-info" data-v-action="local-info" aria-label="Response information" aria-haspopup="dialog" aria-expanded="false" title="Response information"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="12" r="6.5"/><path d="M9 11v5m0-9v.5m9 3 3 2.5-3 2.5"/></svg></button>':'';
+}
+let ventureLocalInfo=null;
+function ventureCloseLocalInfo(){if(ventureLocalInfo){ventureLocalInfo.close();ventureLocalInfo=null;}}
+function ventureOpenLocalInfo(run,button){
+ const same=ventureLocalInfo?.runId===run.runId;ventureCloseLocalInfo();if(same)return;
+ const controller=new AbortController(),popover=document.createElement('section');popover.className='venture-response-popover';popover.setAttribute('role','dialog');popover.setAttribute('aria-label','Local response information');popover.setAttribute('popover','auto');popover.tabIndex=-1;popover.innerHTML=ventureLocalProgress(run,true);
+ const close=()=>{controller.abort();button.setAttribute('aria-expanded','false');if(popover.matches(':popover-open'))popover.hidePopover();popover.remove();if(ventureLocalInfo?.element===popover)ventureLocalInfo=null;};
+ ventureLocalInfo={runId:run.runId,element:popover,close};document.body.appendChild(popover);button.setAttribute('aria-expanded','true');
+ if(popover.showPopover)popover.showPopover();
+ const anchor=button.getBoundingClientRect(),rect=popover.getBoundingClientRect();
+ popover.style.left=Math.max(12,Math.min(innerWidth-rect.width-12,anchor.right-rect.width))+'px';
+ popover.style.top=(anchor.top>rect.height+20?anchor.top-rect.height-10:Math.min(innerHeight-rect.height-12,anchor.bottom+10))+'px';
+ document.addEventListener('pointerdown',event=>{if(!popover.contains(event.target)&&!button.contains(event.target))close();},{signal:controller.signal});
+ document.addEventListener('keydown',event=>{if(event.key==='Escape'){close();if(button.isConnected)button.focus();}},{signal:controller.signal});
+ window.addEventListener('resize',close,{signal:controller.signal});$('ventureTranscript').addEventListener('scroll',close,{signal:controller.signal});
+ popover.addEventListener('toggle',event=>{if(event.newState==='closed')close();},{signal:controller.signal});
 }
 async function ventureFlushLocalSettings(){
  clearTimeout(venture.settingsSaving);

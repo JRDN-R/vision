@@ -7,7 +7,9 @@ param(
     [string]$InstallRoot = (Join-Path $env:ProgramData 'VisionPC'),
     [string]$SourceRef = '',
     [ValidateRange(0,99)][int]$GpuLayers = 0,
-    [ValidateSet(4096,8192,16384)][int]$ContextTokens = 4096
+    [ValidateSet(4096,8192,16384)][int]$ContextTokens = 4096,
+    [ValidateRange(0,16)][int]$Threads = 0,
+    [string]$AcceptancePath = ''
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -105,7 +107,19 @@ if ($Action -eq 'Inventory') {
     exit
 }
 if ($Action -eq 'EnableDefault') {
-    throw 'All-user default activation is deliberately blocked in this release: tested photo input, workload/memory measurements, and the complete acceptance gates are still pending. Explicit text-only Qwen selection can be enabled separately.'
+    if (-not $Config.localAI -or $Config.localAI.enabled -ne $true -or $Config.localAI.visualEnabled -ne $true) { throw 'Enable and test the combined local path first.' }
+    if (-not $AcceptancePath) { $AcceptancePath = [string]$Config.localAI.acceptancePath }
+    if (-not $AcceptancePath -or -not [IO.Path]::IsPathRooted($AcceptancePath) -or -not (Test-Path -LiteralPath $AcceptancePath -PathType Leaf)) { throw 'Supply the absolute path to the completed, reviewed acceptance receipt. A smoke test is not sufficient.' }
+    & $Python (Join-Path $InstallRoot 'local_acceptance.py') --config $ConfigPath --verify --receipt $AcceptancePath
+    if ($LASTEXITCODE -ne 0) { throw 'Acceptance verification failed. No defaults were changed.' }
+    $CheckReport = Join-Path $ModelRoot 'default-integrity-check.json'
+    & $Python (Join-Path $InstallRoot 'setup_local_ai.py') --config $ConfigPath --action check --gpu-layers 0 --context $Config.localAI.contextTokens --output $CheckReport
+    if ($LASTEXITCODE -ne 0) { throw 'Model/runtime integrity verification failed. No defaults were changed.' }
+    $Config.localAI | Add-Member -NotePropertyName acceptancePath -NotePropertyValue ([IO.Path]::GetFullPath($AcceptancePath)) -Force
+    $Config.localAI | Add-Member -NotePropertyName defaultEpoch -NotePropertyValue 'qwen3_8_local_v1' -Force
+    Save-Json $ConfigPath $Config
+    Write-Host 'All-user Qwen default migration configured. Apply it at the next authorized Vision restart. Accounts migrate once after the running backend confirms the visual path; later explicit model choices remain available. No service was stopped.'
+    exit
 }
 if ($Action -eq 'Rollback') {
     throw 'Use Disable to stop accepting local jobs, then the reviewed normal updater rollback under a maintenance boundary. Never restore a stale database over newer conversations. See docs/local-qwen-rag.md.'
@@ -151,8 +165,13 @@ if ($Action -eq 'Download') {
 if ($Action -in @('Check','Benchmark')) {
     if (-not $Config.localAI) { throw 'Run Download first.' }
     $Report = Join-Path $ModelRoot ($Action.ToLowerInvariant() + '-' + $GpuLayers + '-' + $ContextTokens + '.json')
+    $ThreadArgs = @()
+    if ($Threads -gt 0) {
+        $Report = Join-Path $ModelRoot ($Action.ToLowerInvariant() + '-' + $GpuLayers + '-' + $ContextTokens + '-threads-' + $Threads + '.json')
+        $ThreadArgs = @('--threads', $Threads)
+    }
     $CheckAction = $Action.ToLowerInvariant()
-    & $Python (Join-Path $InstallRoot 'setup_local_ai.py') --config $ConfigPath --action $CheckAction --gpu-layers $GpuLayers --context $ContextTokens --output $Report
+    & $Python (Join-Path $InstallRoot 'setup_local_ai.py') --config $ConfigPath --action $CheckAction --gpu-layers $GpuLayers --context $ContextTokens --output $Report @ThreadArgs
     if ($LASTEXITCODE -ne 0) { throw 'Local check failed. Do not enable the default.' }
     Write-Host ('Report: ' + $Report)
     exit
@@ -160,14 +179,20 @@ if ($Action -in @('Check','Benchmark')) {
 if (-not $Config.localAI) { throw 'No local model configuration is installed.' }
 if ($Action -eq 'Enable') {
     $Report = Join-Path $ModelRoot ('benchmark-' + $GpuLayers + '-' + $ContextTokens + '.json')
+    $SelectedThreads = $Config.localAI.threads
+    if ($Threads -gt 0) {
+        $SelectedThreads = $Threads
+        $Report = Join-Path $ModelRoot ('benchmark-' + $GpuLayers + '-' + $ContextTokens + '-threads-' + $Threads + '.json')
+    }
     $Passed = Get-Content -LiteralPath $Report -Raw | ConvertFrom-Json
     if (-not $Passed.checks.integrity -or -not $Passed.checks.syntheticAnswer) { throw 'Run a successful Benchmark for this exact profile first.' }
     if ((Get-FileHash -LiteralPath $Config.localAI.manifestPath -Algorithm SHA256).Hash -ne $Passed.manifestSha256) { throw 'The installed manifest changed after the benchmark. Check and benchmark again.' }
-    foreach ($Pair in @{gpuLayers=$GpuLayers;contextTokens=$ContextTokens;threads=$Config.localAI.threads;maxOutputTokens=$Config.localAI.maxOutputTokens}.GetEnumerator()) {
+    foreach ($Pair in @{gpuLayers=$GpuLayers;contextTokens=$ContextTokens;threads=$SelectedThreads;maxOutputTokens=$Config.localAI.maxOutputTokens}.GetEnumerator()) {
         if ($Passed.profile.($Pair.Key) -ne $Pair.Value) { throw 'The benchmark profile does not match these settings. Benchmark this exact profile again.' }
     }
     $Config.localAI.gpuLayers = $GpuLayers
     $Config.localAI.contextTokens = $ContextTokens
+    $Config.localAI.threads = $SelectedThreads
 }
 $Config.localAI.enabled = ($Action -eq 'Enable')
 Save-Json $ConfigPath $Config

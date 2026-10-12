@@ -21,9 +21,9 @@ function ventureModelIdentity(model, mode='auto') {
  if(brand&&id!==base)name+=' · '+id.slice(-10);
  return {...brand,name,family:brand?.family||'',base};
 }
-function ventureModelBadge(model,mode='auto') {
+function ventureModelBadge(model,mode='auto',details='') {
  const item=ventureModelIdentity(model,mode),symbol=VENTURE_MODEL_SYMBOLS[item.icon];
- const subtitle=item.family==='qwen'?'<small class="venture-model-subtitle">'+escapeHTML(typeof ventureLocalSubtitle==='function'?ventureLocalSubtitle():'9B Distill · vision not ready')+'</small>':'';
+ const subtitle=item.family==='qwen'?'<small class="venture-model-subtitle">'+escapeHTML(typeof ventureLocalSubtitle==='function'?ventureLocalSubtitle():'9B Distill · vision not ready')+details+'</small>':'';
  return '<span class="venture-model-identity'+(item.family?' model-'+item.family:'')+'">'+(symbol?'<span class="venture-model-symbol" aria-hidden="true" style="--model-symbol:url(\'data:image/svg+xml,'+encodeURIComponent(symbol).replace(/'/g,'%27')+'\')"></span>':'')+'<span class="venture-model-title"><span class="venture-model-name">'+escapeHTML(item.name)+'</span>'+subtitle+'</span></span>';
 }
 function ventureModelIsAstra(model=venture.settings.model){return ventureModelIdentity(model).family==='astra';}

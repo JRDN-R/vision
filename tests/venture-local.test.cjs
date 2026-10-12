@@ -17,10 +17,19 @@ test('queue states show actual counts and elapsed time without made-up percent o
  assert.match(render({status:'queued',ahead:2}),/2 requests ahead/);
  assert.match(render({status:'queued'}),/next in line/);
  assert.match(render({status:'in_progress'}),/request is running/);
- assert.match(render({status:'completed'}),/no API token charge/);
+ assert.equal(render({status:'completed'}),'');
+ assert.match(c.ventureLocalProgress({status:'completed',localQueue:{processingSeconds:42}},true),/no API token charge/);
  assert.doesNotMatch(render({status:'completed'}),/<progress/);
  assert.doesNotMatch(render({status:'in_progress'}),/value=|[0-9]+%/);
  assert.match(render({status:'in_progress',phase:'<unsafe>'}),/&lt;unsafe&gt;/);
+});
+test('completed local replies use an icon beside the model and a compact optional timing panel',()=>{
+ const c=fixture(),run={status:'completed',localQueue:{waitingSeconds:0,processingSeconds:42}};
+ assert.equal(c.ventureLocalProgress(run),'');
+ const icon=c.ventureLocalDetailsButton(run);
+ assert.match(icon,/data-v-action="local-info"/);assert.match(icon,/aria-label="Response information"/);
+ assert.match(icon,/<svg/);assert.doesNotMatch(icon,/Show details|show details/);
+ assert.match(c.ventureLocalProgress(run,true),/Processing 42s/);
 });
 test('preferences retain account revision, epoch, acknowledgement and provider profiles',()=>{
  const c=fixture();c.ventureAcceptPreferences({preferenceRevision:4,defaultEpoch:'qwen3_8_local_v1',disclosureAcknowledged:true,profiles:{'gpt-6-astra':{maxOutputTokens:16000}}});
@@ -61,4 +70,23 @@ test('a backend restart or lost connection removes visual advertising',()=>{
  c.ventureAcceptLocalCapability({localModel:{capabilities:{vision:false}}});
  assert.equal(c.ventureLocalVisionReady(),false);assert.equal(c.venture.rendered.size,0);
  c.ventureAcceptLocalCapability({localModel:null});assert.match(c.ventureLocalSubtitle(),/not ready/);
+});
+test('enabled but unconfirmed image path has a distinct status without advertising vision',()=>{
+ const c=fixture();let paints=0;c.venture.rendered=new Map();c.venturePaintModelPicker=()=>paints++;c.venturePaintTurns=()=>{};
+ c.ventureAcceptLocalCapability({localModel:{enabled:true,visual:{status:'awaiting-integrated-check'},capabilities:{vision:false}}});
+ assert.equal(c.ventureLocalSubtitle(),'9B Distill · image check pending');
+ assert.equal(c.ventureLocalVisionReady(),false);assert.equal(paints,1);
+ c.ventureAcceptLocalCapability({localModel:null});
+ assert.match(c.ventureLocalSubtitle(),/vision not ready/);assert.equal(paints,2);
+});
+test('loading uses measured ranges and never turns elapsed time into a percent',()=>{
+ const c=fixture();
+ const run={status:'in_progress',phase:'Inspecting image',localQueue:{processingSeconds:65,waitingSeconds:2,estimateStatus:'estimated',estimatedRemainingRange:[30,120],estimateSamples:4}};
+ let html=c.ventureLocalProgress(run);
+ assert.match(html,/About 30s–2m remaining/);assert.match(html,/based on 4 similar answers/);
+ assert.match(html,/Inspecting image/);assert.match(html,/Processing 1m 5s/);
+ assert.match(html,/venture-thinking-orb/);assert.doesNotMatch(html,/aria-valuenow|[0-9]+%/);
+ run.localQueue.estimateStatus='overrun';html=c.ventureLocalProgress(run);
+ assert.match(html,/Taking longer than recent answers/);assert.doesNotMatch(html,/0s remaining/);
+ run.localQueue.estimateStatus='learning';assert.match(c.ventureLocalProgress(run),/after 3 similar answers/);
 });

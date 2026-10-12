@@ -58,9 +58,22 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', required=True)
-    parser.add_argument('--output', required=True)
+    parser.add_argument('--output')
+    parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--receipt')
     args = parser.parse_args()
     settings = json.loads(Path(args.config).read_text(encoding='utf-8-sig'))['localAI']
+    if args.verify:
+        if args.receipt:
+            settings['acceptancePath'] = str(Path(args.receipt).resolve())
+        if settings.get('enabled') is not True or settings.get('visualEnabled') is not True:
+            raise SystemExit('Default activation requires enabled local answering and the integrated visual path.')
+        if not eligible(settings):
+            raise SystemExit('Default activation stopped: the complete acceptance receipt does not match this installed code and CPU profile. No defaults changed.')
+        print('The complete acceptance receipt matches this installed code and CPU profile.')
+        return
+    if not args.output:
+        parser.error('--output is required to create a review template')
     report = dict(schema='qwen-local-acceptance-v1', approvedForDefault=False,
                   identity=identity(settings), reviewer='', reviewedAt='',
                   checks={key:dict(passed=False, evidence='') for key in CHECKS},
