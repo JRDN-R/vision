@@ -14,8 +14,8 @@ New additive audit tables record the verified authentication provider and the fi
 
 - `GET /api/admin/activity?module=all|logins|transcriptions|vortex&user=<hashed-id>&limit=100`: module filtering happens before the event limit; totals and pagination use the same filters. The response includes module counts and provider/app metadata. Omitted `module` retains the existing behavior.
 - `GET /api/admin/vortex?user=<hashed-id>&limit=100`: owner-only, read-only job metadata, totals over all matching retained jobs, newest-first pages up to 2,000 rows, and expiration-aware ready-file sizes. An older PC without the Vortex table returns `available: false`.
-- `GET /api/admin/accounts/<hashed-id>`: owner-only deletion preview (the same hashed directory identifier as activity, never an arbitrary Firebase UID). Returns counts and whether current jobs block deletion.
-- `POST /api/admin/accounts/<hashed-id>/delete` with JSON `{"email":"exact-account-email","confirmation":"DELETE"}`: owner-only permanent removal of the Firebase Auth account and its local Vision, Venture, Vortex, context, and media assets. Owner/admin targets and active jobs are rejected.
+- `GET /api/admin/accounts`: owner-only registered-user directory with hashed account identifiers and aggregate usage counts. Raw Firebase UIDs and credentials are not returned.
+- `POST /api/admin/accounts/delete` with JSON `{"userId":"<hashed-id>","confirmation":"DELETE exact-account-email"}`: owner-only permanent removal of the Firebase Auth account and its local Vision, Venture, Vortex, context, and media assets. Owner/admin targets and active jobs are rejected.
 
 The Vortex report reads existing jobs. It excludes deleted jobs and never selects URLs, search queries, media titles, filenames, tickets, error output, or credentials. Ready downloads are not device-save counts. Request and worker audit records use fixed event names and allowlisted fields.
 
@@ -23,17 +23,19 @@ Frontend reads are authenticated, uncached, and discarded after account changes.
 
 ## Deletion prerequisite and scope
 
-Account deletion is **off by default**. Configure `firebaseAuth.adminServiceAccountPath` in the existing protected `C:\\ProgramData\\VisionPC\\config.json` to the **absolute path** of a private Firebase Admin SDK service-account JSON for the same Firebase project. Do not commit or serve this JSON, and restrict it to the service administrator. The server checks the explicit Google UID allowlist in `activity-admins.json`; Firebase ID tokens, sign-in names, or general access tokens alone cannot authorize this operation.
+Account deletion is **off by default**. Configure `firebaseAdminServiceAccount` (the earlier `firebaseAuth.adminServiceAccountPath` is also accepted) in the existing protected `C:\\ProgramData\\VisionPC\\config.json` to the **absolute path** of a private Firebase Admin SDK service-account JSON for the same Firebase project. Do not commit or serve this JSON, and restrict it to the service administrator. The server checks the explicit Google UID allowlist in `activity-admins.json`; Firebase ID tokens, sign-in names, or general access tokens alone cannot authorize this operation.
 
-The backend first verifies the preview, exact email/DELETE confirmation, and that the account is not running jobs. It writes a permanent local tombstone before calling Firebase Authentication deletion to prevent any surviving ID token from recreating content. Local cleanup then removes account-owned Vision projects, Venture conversations, Vortex downloads, processed uploads/transcripts/documents, context index entries, encrypted account credentials, and audit metadata, leaving the tombstone. If cleanup is interrupted, the administrator can retry while the user remains blocked. Removal does **not** delete downloaded copies on other devices or guarantee deletion of independently retained external-service data. Take a protected backup before using this operation. Never attempt an actual account deletion in automated tests.
+The backend first verifies the registered account, exact typed DELETE/email confirmation, and that the account is not running jobs. It writes a permanent local tombstone before calling Firebase Authentication deletion to prevent any surviving ID token from recreating content. Local cleanup then removes account-owned Vision projects, Venture conversations, Vortex downloads, processed uploads/transcripts/documents, context index entries, encrypted account credentials, and audit metadata, leaving the tombstone. If cleanup is interrupted, the administrator can retry while the user remains blocked. Removal does **not** delete downloaded copies on other devices or guarantee deletion of independently retained external-service data. Take a protected backup before using this operation. Never attempt an actual account deletion in automated tests.
 
-First/last names use verified Firebase given/family claims where present, falling back to the recorded display name. Missing names remain undisclosed as `Not provided`; sign-in methods are retained without guessing.
+Observed activity uses verified Firebase given/family claims where present, falling back to the recorded display name. The registered-user directory splits the Firebase display name into first/last fields. Missing names remain undisclosed as `Not provided`; sign-in methods are retained without guessing.
 
 ## Validation
 
 ```sh
 python -m unittest discover -s tests -p test_activity_dashboard.py -v
 python -m unittest discover -s vision-pc -p test_firebase_auth.py -v
+python -m unittest discover -s vision-pc -p test_account_administration.py -v
+python tests/test_account_administration.py -v
 python -m unittest discover -s vision-pc -p test_vortex.py -v
 node tests/gemini-admin.test.cjs
 python tests/activity_browser_smoke.py
