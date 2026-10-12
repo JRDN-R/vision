@@ -44,6 +44,11 @@ class AuditLogs:
                     uid TEXT NOT NULL, app TEXT NOT NULL, first_seen REAL NOT NULL,
                     last_seen REAL NOT NULL, PRIMARY KEY(uid,app));
             ''')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(audit_users)')}
+            if 'first_name' not in columns:
+                db.execute("ALTER TABLE audit_users ADD COLUMN first_name TEXT NOT NULL DEFAULT ''")
+            if 'last_name' not in columns:
+                db.execute("ALTER TABLE audit_users ADD COLUMN last_name TEXT NOT NULL DEFAULT ''")
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.lock:
             try:
@@ -99,6 +104,7 @@ class AuditLogs:
 
     def identity(self, uid, claims, app='vision'):
         name, email, auth_time = clean(claims.get('name')), clean(claims.get('email')), claims['auth_time']
+        first_name, last_name = clean(claims.get('given_name'), 100), clean(claims.get('family_name'), 100)
         provider = {'google.com': 'google', 'password': 'password'}.get(
             (claims.get('firebase') or {}).get('sign_in_provider'), 'unknown')
         app = app if app in ('vision', 'vortex') else ''
@@ -107,14 +113,17 @@ class AuditLogs:
             with self.lock:
                 cache_key = (uid, auth_time, app)
                 previous = self.seen.get(cache_key)
-                if previous and previous[1:] == (name, email, provider) and now - previous[0] < 60:
+                if previous and previous[1:] == (name, email, provider, first_name, last_name) and now - previous[0] < 60:
                     return
                 with self.db() as db:
                     new_sign_in = bool(db.execute('INSERT OR IGNORE INTO audit_signins VALUES(?,?)', (uid, auth_time)).rowcount)
-                    db.execute('''INSERT INTO audit_users VALUES(?,?,?,?,?,?,1) ON CONFLICT(uid) DO UPDATE SET
+                    db.execute('''INSERT INTO audit_users
+                        (uid,name,email,first_seen,last_seen,auth_time,sign_in_sightings,first_name,last_name)
+                        VALUES(?,?,?,?,?,?,1,?,?) ON CONFLICT(uid) DO UPDATE SET
                         name=excluded.name,email=excluded.email,last_seen=excluded.last_seen,auth_time=excluded.auth_time,
+                        first_name=excluded.first_name,last_name=excluded.last_name,
                         sign_in_sightings=sign_in_sightings+?''',
-                        (uid, name, email, now, now, auth_time, int(new_sign_in)))
+                        (uid, name, email, now, now, auth_time, first_name, last_name, int(new_sign_in)))
                     db.execute('INSERT OR REPLACE INTO audit_account_metadata VALUES(?,?)', (uid, provider))
                     first_app = False
                     if app:
@@ -123,7 +132,7 @@ class AuditLogs:
                         db.execute('UPDATE audit_user_apps SET last_seen=? WHERE uid=? AND app=?', (now, uid, app))
                 if len(self.seen) >= 10000:
                     self.seen.clear()
-                self.seen[cache_key] = (now, name, email, provider)
+                self.seen[cache_key] = (now, name, email, provider, first_name, last_name)
                 if new_sign_in:
                     self._event(uid, 'google_sign_in' if provider == 'google' else 'account_sign_in',
                                 {'authProvider': provider, **({'app': app} if app else {})})

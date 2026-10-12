@@ -52,7 +52,9 @@ class AccountAdministration:
 
     def initialize(self, config):
         # This is a private machine-local path, not a Firebase web API key.
-        self.credential_path = str(config.get('firebaseAdminServiceAccount') or '')
+        firebase_config = config.get('firebaseAuth')
+        legacy_path = firebase_config.get('adminServiceAccountPath') if isinstance(firebase_config, dict) else None
+        self.credential_path = str(config.get('firebaseAdminServiceAccount') or legacy_path or '')
         with self.db() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS account_deletions (
                 id TEXT PRIMARY KEY, uid TEXT, email TEXT, state TEXT NOT NULL,

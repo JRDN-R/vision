@@ -255,7 +255,7 @@ function paintDirectory(){
   if(activeIds.has(person.id)){const select=node('button','account-pick',firstName);select.type='button';select.addEventListener('click',()=>selectPerson(person.id));firstCell.append(select);}
   else firstCell.textContent=firstName;
   const uses=[person.projects?person.projects+' project'+(person.projects===1?'':'s'):'—',person.conversations?person.conversations+' chat'+(person.conversations===1?'':'s'):'—',person.vortex?person.vortex+' job'+(person.vortex===1?'':'s'):'—'];
-  const usage=accountAdmin?.available?uses.join(' / '):(person.apps||[]).map(a=>a.app==='vortex'?'Vortex':'Vision').join(', ')||'Not recorded';
+  const usage=accountAdmin?.available?uses.join(' / '):(person.apps||[]).map(a=>a.app==='vortex'?'Vortex':a.app==='venture'?'Venture':'Vision').join(', ')||'Not recorded';
   const action=node('td'),remove=node('button','account-delete',person.deleteStatus?'Resume removal':'Delete');
   // Only the full Firebase directory supplies verified deletion permissions.
   // Observed activity records have no canDelete field and are not administrators by default.
