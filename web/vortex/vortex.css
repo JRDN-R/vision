@@ -34,6 +34,11 @@
 .moises-button .moises-logo{display:block;flex:none;width:92px;height:auto;object-fit:contain}
 .moises-button .moises-arrow{flex:none;width:18px;height:18px}
 .moises-status.error{color:var(--danger)}
+.moises-setup-button{grid-column:1/-1;text-align:center;font-size:11px;min-height:44px}
+.moises-setup-dialog{max-height:calc(100dvh - 32px);overflow:auto}
+.moises-setup-dialog p,.moises-setup-dialog li{line-height:1.55}
+.moises-setup-dialog ol{padding-left:22px}.moises-setup-dialog li{margin:12px 0}
+.moises-setup-dialog a{color:var(--beige)}
 @media(max-width:600px){.moises-button{gap:7px;padding-left:10px;padding-right:10px}.moises-button .moises-logo{width:62px}.moises-button .moises-arrow{width:16px;height:16px}}
 @media(max-width:380px){.moises-button{gap:3px;padding-left:5px;padding-right:5px;font-size:11px}.moises-button .moises-logo{width:34px}.moises-button .moises-arrow{width:13px;height:13px}}
 
