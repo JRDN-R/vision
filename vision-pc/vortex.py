@@ -120,6 +120,9 @@ class VortexJobs:
     def snapshot(self, value):
         media = json.loads(value['media_json']) if value.get('media_json') else None
         expired = value['status'] == 'complete' and value.get('expires_at') is not None and value['expires_at'] <= time.time()
+        if expired:
+            with self.db() as db:
+                expired = not self.source_leased(db, value['id'])
         status = 'expired' if expired else value['status']
         return dict(id=value['id'], requestId=value['request_id'], input=value['input'],
                     kind=value['kind'], quality=value['quality'], engine=None,
@@ -154,9 +157,11 @@ class VortexJobs:
             if shutil.disk_usage(self.root).free < DISK_RESERVE + pending + 3 * MAX_BYTES:
                 raise self.Error('FUPCJ Server needs more free space before accepting another download.', 507)
 
-    def enqueue(self, data, uid, *, purpose=''):
+    def enqueue(self, data, uid, *, purpose='', source_lease=None):
         if purpose not in ('', 'vision'):
             raise ValueError('Invalid internal media purpose')
+        if source_lease is not None and purpose != 'vision':
+            raise ValueError('Only a server-owned Vision import can lease media')
         if not isinstance(data, dict):
             raise self.Error('Send a media link or search as JSON.')
         kind, quality = data.get('kind', 'download'), data.get('quality', 'max')
@@ -191,6 +196,10 @@ class VortexJobs:
                 raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
             if old['delete_requested']:
                 raise self.Error('This Vortex request has been removed.', 410)
+            if source_lease is not None:
+                with self.db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    self.app.config['OWNED_ASSETS'].lease_vortex(db, old['id'], source_lease, uid)
             return self.snapshot(dict(old))
         try:
             value = validate_input(value, kind)
@@ -229,11 +238,15 @@ class VortexJobs:
                     raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
                 if old['delete_requested']:
                     raise self.Error('This Vortex request has been removed.', 410)
+                if source_lease is not None:
+                    self.app.config['OWNED_ASSETS'].lease_vortex(db, old['id'], source_lease, uid)
                 return self.snapshot(dict(old))
             self._capacity(db, uid, kind)
             db.execute('''INSERT INTO vortex_jobs(id,uid,request_id,input,kind,quality,engine,options_json,purpose,status,phase,created_at,updated_at)
                           VALUES(?,?,?,?,?,?,?,?,?,'queued','Waiting for FUPCJ Server',?,?)''',
                        (job_id, uid, request_id, value, kind, quality, engine, options_json, purpose, now, now))
+            if source_lease is not None:
+                self.app.config['OWNED_ASSETS'].lease_vortex(db, job_id, source_lease, uid)
         self.wake.set()
         return self.snapshot(self.row(job_id, uid))
 
@@ -295,6 +308,8 @@ class VortexJobs:
                     current = db.execute('SELECT status FROM vortex_jobs WHERE id=? AND uid=?', (job_id, uid)).fetchone()
                     if current is None:
                         raise self.Error('This Vortex item is unavailable.', 404)
+                    if self.source_leased(db, job_id):
+                        raise self.Error('Vision is retaining this source. Remove the temporary copy after adoption finishes.', 409)
                     running = current['status'] == 'processing'
                     if running:
                         db.execute('UPDATE vortex_jobs SET cancel_requested=1,delete_requested=1,updated_at=? WHERE id=?', (time.time(), job_id))
@@ -315,6 +330,8 @@ class VortexJobs:
                 row = db.execute('SELECT status FROM vortex_jobs WHERE id=? AND uid=?', (job_id, uid)).fetchone()
                 if row is None:
                     raise self.Error('This Vortex item is unavailable.', 404)
+                if self.source_leased(db, job_id):
+                    raise self.Error('This source belongs to an accepted Vision import.', 409)
                 if row['status'] not in ACTIVE:
                     raise self.Error('This operation has already finished.', 409)
                 db.execute("UPDATE vortex_jobs SET cancel_requested=1,phase='Cancelling',updated_at=? WHERE id=?", (time.time(), job_id))
@@ -397,7 +414,8 @@ class VortexJobs:
         """Startup only: accepted operations resume after a processor/Windows restart."""
         now = time.time()
         with self.db() as db:
-            rows = [dict(row) for row in db.execute("SELECT * FROM vortex_jobs WHERE status IN ('queued','processing') OR delete_requested=1")]
+            rows = [dict(row) for row in db.execute("SELECT * FROM vortex_jobs WHERE status IN ('queued','processing') OR delete_requested=1")
+                    if not self.source_leased(db, row['id']) or row['status'] in ACTIVE]
             for row in rows:
                 if row['delete_requested']:
                     db.execute('DELETE FROM vortex_jobs WHERE id=?', (row['id'],))
@@ -412,12 +430,24 @@ class VortexJobs:
         # Remove orphan directories left by an interrupted delete, never live jobs.
         with self.db() as db:
             retained = {row[0] for row in db.execute('SELECT id FROM vortex_jobs')}
+            if self.app.config.get('OWNED_ASSETS'):
+                retained.update(row[0] for row in db.execute('SELECT vortex_id FROM owned_source_leases'))
         for directory in self.root.iterdir():
             if directory.is_dir() and re.fullmatch(r'[0-9a-f]{24}', directory.name) and directory.name not in retained:
                 shutil.rmtree(directory, ignore_errors=True)
         self.sweep()
 
+    def source_leased(self, db, job_id):
+        assets = self.app.config.get('OWNED_ASSETS')
+        return bool(assets and assets.source_leased(db, job_id))
+
     def _remove_terminal(self, job_id, delete=False):
+        if not isinstance(job_id, str) or not re.fullmatch(r'[0-9a-f]{24}', job_id):
+            raise ValueError('Invalid Vortex cleanup identifier')
+        with self.db() as db:
+            row = db.execute('SELECT status,delete_requested FROM vortex_jobs WHERE id=?', (job_id,)).fetchone()
+            if self.source_leased(db, job_id) or (row and row['status'] in (*ACTIVE, 'complete')):
+                return False
         directory = self.root / job_id
         try:
             if directory.exists():
@@ -443,12 +473,15 @@ class VortexJobs:
             db.execute('BEGIN IMMEDIATE')
             expired = [row['id'] for row in db.execute("SELECT id FROM vortex_jobs WHERE status='complete' AND expires_at IS NOT NULL AND expires_at<=?", (now,))]
             for job_id in expired:
-                db.execute("UPDATE vortex_jobs SET status='expired',phase='File expired',filename=NULL,updated_at=? WHERE id=?", (now, job_id))
+                if not self.source_leased(db, job_id):
+                    db.execute("UPDATE vortex_jobs SET status='expired',phase='File expired',filename=NULL,updated_at=? WHERE id=?", (now, job_id))
             # Metadata history remains until its owner removes it. Only short-lived
             # inspection receipts are pruned; download history is never silently lost.
             db.execute("DELETE FROM vortex_jobs WHERE kind='inspect' AND status NOT IN ('queued','processing') AND updated_at<?", (now - 86400,))
             cleanup = [(row['id'], bool(row['delete_requested'])) for row in db.execute("SELECT id,delete_requested FROM vortex_jobs WHERE status IN ('expired','error','cancelled') OR (delete_requested=1 AND status NOT IN ('queued','processing'))")]
             retained = {row[0] for row in db.execute('SELECT id FROM vortex_jobs')}
+            if self.app.config.get('OWNED_ASSETS'):
+                retained.update(row[0] for row in db.execute('SELECT vortex_id FROM owned_source_leases'))
         for job_id, deleted in cleanup:
             self._remove_terminal(job_id, delete=deleted)
         for directory in self.root.iterdir():

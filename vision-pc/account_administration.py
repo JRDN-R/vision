@@ -289,6 +289,11 @@ class AccountAdministration:
                 raise ValueError('A YouTube identifier is invalid; cleanup was stopped.')
             for suffix in ('.json','.tmp'):
                 remove_owned(base / 'results' / (job+suffix))
+        from owned_assets import reject_link, owner_key
+        owned_root = base.resolve() / 'owned-assets'
+        reject_link(owned_root)
+        reject_link(owned_root / owner_key(uid))
+        remove_owned(owned_root / owner_key(uid))
         remove_owned(self.sessions.venture.user_root(uid))
         audit = self.app.config.get('AUDIT_LOGS')
         if audit:
@@ -327,13 +332,14 @@ class AccountAdministration:
             # Non-native Venture records can also exist, without owning their board project.
             db.execute('DELETE FROM venture_memory WHERE uid=?', (uid,))
             db.execute('DELETE FROM venture_conversations WHERE uid=?', (uid,))
-            for table, col in (('venture_preferences','uid'),('venture_workspace_preferences','uid'),
+            for table, col in (('venture_preferences','uid'),('venture_selection','uid'),('venture_workspace_preferences','uid'),
                                ('venture_funding','uid'),('venture_calibrations','uid'),
                                ('venture_ledger','uid'),('venture_container_costs','uid'),
                                ('venture_dictation_requests','uid'),('account_credentials','uid'),
                                ('gemini_access','uid'),('gemini_access_decisions','uid'),
                                ('gemini_usage','uid'),('vortex_jobs','uid'),('responses','uid'),
-                               ('jobs','uid'),('audit_events','uid'),('audit_signins','uid'),
+                               ('jobs','uid'),('owned_source_leases','uid'),('owned_import_receipts','uid'),('owned_assets','uid'),
+                               ('audit_events','uid'),('audit_signins','uid'),
                                ('audit_account_metadata','uid'),('audit_user_apps','uid'),
                                ('audit_users','uid')):
                 if table in existing:

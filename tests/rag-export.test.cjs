@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const test=require('node:test');
+const {gunzipSync}=require('node:zlib');
 const source=fs.readFileSync('web/rag-export.js','utf8').replace(/installRagExport\(\);\s*$/,'');
 
 function harness(){
@@ -117,4 +118,13 @@ test('overall timeout returns control without a file or a stuck download button'
  const pending=h.run('downloadRagExport()');
  [...h.timers.values()].find(v=>v.delay===120000).fn();release({capabilities:{intelligentContextV1:true}});
  await pending;assert.equal(h.downloads.length,0);assert.match(h.el('ragExportStatus').textContent,/Try RAG again/);assert.equal(h.el('downloadRag').disabled,false);
+});
+
+test('optional gzip reduces repetitive snapshots and restores the exact readable text',async()=>{
+ const h=harness();h.c.Response=Response;h.c.CompressionStream=CompressionStream;
+ h.el('ragCompress').checked=true;h.c.result.text+='\n'+('RH bore 0.380. Do not enlarge. LH bore 0.379.\n'.repeat(3000));
+ const expected=h.run('ragExportText(result)');await h.run('downloadRagExport()');
+ assert.equal(h.downloads[0].name,'Exact records.rag.txt.gz');
+ const bytes=Buffer.from(await h.downloads[0].blob.arrayBuffer());
+ assert.equal(gunzipSync(bytes).toString(),expected);assert.ok(bytes.length<Buffer.byteLength(expected)/10);
 });

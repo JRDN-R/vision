@@ -74,6 +74,9 @@ def output_measure(text: str, model: str) -> dict:
 
 def estimate(response: dict, requested_model: str, catalog: dict, now: float | None = None) -> dict:
     """Compute known token/search charges. Unknown coverage is explicit, not zero cost."""
+    if requested_model == 'qwen3.8-local':
+        return dict(micro=0, coverage='complete', problems=[], issues=[], model=requested_model,
+                    usageKind='local-no-api-charge', containers=[], usage=response.get('usage') or {}, pricingVersion='local-v1')
     now = time.time() if now is None else now
     problems = []
     model = response.get('model') or requested_model

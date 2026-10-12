@@ -509,3 +509,15 @@ Use the existing updater's `Rollback` action and selected backup directory to
 restore the previous processor if activation fails. Vortex tables are additive;
 do not remove the shared database or other Vision data during rollback. Revert
 the Vortex change in GitHub to remove its page and navigation additions.
+
+## Durable import ownership preview
+
+The opt-in Phase 1A retention implementation, diagnostics and outstanding release
+gates are documented in [Durable import ownership](../docs/durable-import-ownership.md).
+It is disabled by default, does not activate Qwen or change model preferences, and
+does not yet complete board attachment on the server.
+
+
+### Local Qwen and RAG preview
+
+The optional Qwen provider, durable local queue, versioned preferences, lossless RAG cache/export compression, and indexing progress are documented in [the implementation and installation guide](../docs/local-qwen-rag.md). Ordinary updates keep Qwen disabled and do not activate account defaults. Photo input, FUPCJ hardware validation, and streamed 400+ MB source ingestion remain pending.

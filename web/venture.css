@@ -84,3 +84,15 @@
 .venture-battery>div{transition:width .25s linear,background .25s}
 .venture-battery.partial{border-style:dashed}
 @media(prefers-reduced-motion:reduce){.venture-battery>div{transition:none}}
+/* Qwen symbol remains white; only its name carries the blue/yellow gradient. */
+.model-qwen .venture-model-symbol{background:#fff;filter:drop-shadow(0 0 3px #182bff55)}
+.model-qwen .venture-model-name{color:#8090ff;text-shadow:0 0 8px #182bff25}
+@supports (background-clip:text){.model-qwen .venture-model-name{background:linear-gradient(105deg,#182bff 0%,#182bff 70%,#ffc300 82%,#182bff 95%);background-size:200% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:qwen-name-shift 14s ease-in-out infinite alternate}}
+@keyframes qwen-name-shift{to{background-position:100% 0}}
+.venture-local-progress{display:grid;gap:8px;margin:12px 0;padding:12px;border:1px solid #5367a755;border-radius:12px;font-size:.85rem}
+.venture-local-progress progress{width:100%;height:5px;accent-color:#6677ff}
+.venture-local-progress small{opacity:.75}
+.venture-local-notice{max-width:min(480px,calc(100vw - 32px));padding:24px;border:1px solid #7887b455;border-radius:20px;background:#151923;color:#f4f5ff}
+.venture-local-notice p{line-height:1.5}
+.venture-local-notice::backdrop{background:#0009}
+@media(prefers-reduced-motion:reduce){.model-qwen .venture-model-name{animation:none}}

@@ -15,7 +15,7 @@ function harness(){
   state:{title:'Original board',nodes:[{id:'one',prompt:'Keep exact values',attachments:[{name:'records.pdf',data:'original bytes'}]}],edges:[],projectCloud:{id:'project-1234567890123456',key:'secret-project-key',revision:8}},
   projectEpoch:1,projectPending:false,venture:{uid:'alice',epoch:1,open:true,current:{id:'conversation-a'},ready:true,sending:false,pending:null,runs:[],files:[],settings:{model:'model-fixture',runOptions:{codeInterpreter:true}}},
   escapeHTML:s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
-  ventureActive:r=>r.status==='queued',ventureDictationBusy:()=>false,ventureSetNotice:s=>{c.notice=s;},ventureError:e=>e.message,venturePaintStatus(){},ventureSchedule(){},ventureRemember(){},ventureId:()=> 'request-fixture',
+  ventureIsLocal:()=>false,ventureFlushLocalSettings:async()=>true,ventureActive:r=>r.status==='queued',ventureDictationBusy:()=>false,ventureSetNotice:s=>{c.notice=s;},ventureError:e=>e.message,venturePaintStatus(){},ventureSchedule(){},ventureRemember(){},ventureId:()=> 'request-fixture',
   ensureRemoteProject:async()=>c.state.projectCloud,
   consoleBoardFiles:async()=>{calls.push('legacy-export');return [{name:'MAIN_PROMPT.txt'}];},consoleFileText:async()=> 'Full original prompt',R:{zip:async()=>new Blob(['ZIP fixture'])},
   venturePostPending:async()=>{calls.push(c.venture.pending.form);c.venture.pending=null;},

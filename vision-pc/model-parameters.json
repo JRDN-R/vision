@@ -113,6 +113,21 @@
       "pro": false,
       "verbosity": false,
       "source": "https://developers.openai.com/api/docs/models/o3"
+    },
+    "qwen3.8-local": {
+      "context": 4096,
+      "maxOutput": 2048,
+      "efforts": [
+        "auto"
+      ],
+      "pro": false,
+      "verbosity": false,
+      "tools": {
+        "webSearch": false,
+        "codeInterpreter": false
+      },
+      "localProfile": true,
+      "source": "https://huggingface.co/guideboardlabs/Qwen3.8-27B-Q3-DOWN-XS-GGUF/tree/6374af6aaa473b4f3b5387db526ee533c709c6af"
     }
   }
 }

@@ -129,6 +129,8 @@ class Sessions:
         self.venture = Venture(self)
         from context_integration import ContextIntegration
         self.context = ContextIntegration(self)
+        from local_inference import LocalInference
+        self.local = LocalInference(self)
 
     def initialize(self):
         (self.app.config['DATA_DIR'] / 'projects').mkdir(exist_ok=True)
@@ -171,6 +173,7 @@ class Sessions:
             if 'title' not in columns:
                 db.execute("ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT 'Untitled project'")
             db.execute('CREATE INDEX IF NOT EXISTS projects_owner_updated ON projects(owner_uid,updated_at)')
+        self.local.initialize(self.app.config.get('LOCAL_AI', {}))
         self.venture.initialize()
 
     def project(self, project_id, create=False, db=None):
@@ -231,7 +234,7 @@ class Sessions:
         status = value['status']
         response = json.loads(value.get('response_json') or '{}')
         citations = [a for item in response.get('output', []) for c in item.get('content', []) for a in c.get('annotations', []) if a.get('type') == 'url_citation' and re.match(r'^https?://', str(a.get('url', '')))]
-        return dict(boardContext=({k:v for k,v in json.loads(value.get('board_context_json') or '{}').items() if k!='owner'} or None), contextMetrics=json.loads(value.get('context_metrics_json') or 'null'), memoryEnabled=bool(value.get('venture_memory_enabled')),memorySources=self.venture.memory.visible_sources(value),preparationNotes=json.loads(value.get('venture_preparation_json') or '[]'), retryOf=value.get('venture_retry_of'),
+        return dict(provider=value.get('provider','openai'), localQueue=self.local.snapshot(value), boardContext=({k:v for k,v in json.loads(value.get('board_context_json') or '{}').items() if k!='owner'} or None), contextMetrics=json.loads(value.get('context_metrics_json') or 'null'), memoryEnabled=bool(value.get('venture_memory_enabled')),memorySources=self.venture.memory.visible_sources(value),preparationNotes=json.loads(value.get('venture_preparation_json') or '[]'), retryOf=value.get('venture_retry_of'),
                     runOptions=normalize_run_options(json.loads(value.get('run_options_json') or '{}')), maxOutputTokens=value['max_tokens'],
                     citations=[dict(url=a['url'], title=str(a.get('title') or a['url'])[:300]) for a in citations[:100]],runId=value['id'], projectId=value['project_id'], clientRequestId=value['client_id'],
                     status=status if status in TERMINAL or status == 'queued' else 'in_progress', phase=value['phase'],
@@ -262,7 +265,7 @@ class Sessions:
             db.execute('DELETE FROM run_events WHERE run_id=? AND sequence<?', (run_id, snap['sequence'] - 150))
         if fields.get('status') in TERMINAL and previous_status and previous_status['status'] not in TERMINAL:
             row = self.row(run_id)
-            self.app.config['AUDIT_LOGS'].project_event(row['project_id'], 'run_finished', jobType='openai',
+            self.app.config['AUDIT_LOGS'].project_event(row['project_id'], 'run_finished', jobType=row.get('provider','openai'),
                 outcome=fields['status'], runElapsedSeconds=time.time()-row['created_at'],
                 uploadedBytes=sum(v.get('size', 0) for v in json.loads(row['inputs_json'])),
                 outputBytes=sum(v['size'] for v in snap['artifacts']))
@@ -400,16 +403,21 @@ class Sessions:
                 old = db.execute('SELECT * FROM project_runs WHERE project_id=? AND client_id=?', (project_id, client_id)).fetchone()
             if old:
                 return jsonify(self.snapshot(dict(old))), 202
+            local = options.get('model') == 'qwen3.8-local'
+            if g.auth_kind == 'firebase-google' and venture:
+                self.local.accept(g.uid, options)
+            elif local:
+                raise self.Error('Sign in to your account to use Qwen.', 403)
             key = request.headers.get('X-OpenAI-Key', '').strip()
-            if not key and g.auth_kind == 'firebase-google':
+            if not local and not key and g.auth_kind == 'firebase-google':
                 with self.db() as db:
                     saved_key = db.execute('SELECT openai_key_cipher FROM account_credentials WHERE uid=?', (g.uid,)).fetchone()
                 if saved_key:
                     key = unprotect_secret(saved_key[0])
-            if not key or len(key) > 512 or '\n' in key or '\r' in key:
+            if not local and (not key or len(key) > 512 or '\n' in key or '\r' in key):
                 raise self.Error('Enter your OpenAI API key.')
             try:
-                cipher = protect_secret(key)
+                cipher = None if local else protect_secret(key)
             except Exception:
                 raise self.Error('FUPCJ Server could not protect the API key. Restart the installed Windows processor and try again.', 503)
             model = options.get('model') or 'gpt-6-astra'
@@ -419,6 +427,8 @@ class Sessions:
                 run_options = normalize_run_options(options.get('runOptions'))
             except ValueError as error:
                 raise self.Error(str(error))
+            if local:
+                run_options = dict(mode='auto', effort='auto', verbosity='auto', webSearch=False, codeInterpreter=False)
             if ((model.startswith('gpt-6-astra') and run_options['effort'] in ('none', 'minimal')) or
                 (model.startswith('gpt-6.1-sol') and run_options['effort'] in ('none', 'minimal'))):
                 raise self.Error('This model does not support the selected thinking effort. Choose Model default or a higher effort.')
@@ -427,7 +437,7 @@ class Sessions:
                 raise self.Error('Past-conversation memory requires an authenticated Venture account.')
             message = str(options.get('message') or '')[:50000]
             try:
-                limit = int(options.get('maxOutputTokens', 16000))
+                limit = int(options.get('maxOutputTokens', self.local.max_output if local else 16000))
                 validate_parameters(model, run_options, limit)
             except (ValueError, TypeError):
                 raise self.Error('Choose a valid output length.')
@@ -456,7 +466,7 @@ class Sessions:
             uploads = []
             for field in ('file', 'archive', 'attachments', 'attachments[]'):
                 uploads.extend(request.files.getlist(field))
-            if (uploads or reused) and not run_options['codeInterpreter']:
+            if (uploads or reused) and not local and not run_options['codeInterpreter']:
                 raise self.Error('Enable Code & files to send a board or attachments.')
             if len(uploads) + len(reused) > 20:
                 raise self.Error('Attach up to 20 files per message.')
@@ -496,12 +506,20 @@ class Sessions:
                     count = db.execute("SELECT COUNT(*) FROM project_runs WHERE status IN ('queued','preparing','submitting','in_progress','saving')").fetchone()[0]
                     if count >= 25:
                         raise self.Error('FUPCJ Server run queue is full. Try again after a response finishes.', 429)
+                    if local:
+                        outstanding = db.execute("SELECT COUNT(*) FROM project_runs r JOIN projects p ON p.id=r.project_id WHERE p.owner_uid=? AND r.provider='local_llama_cpp' AND r.status IN ('queued','preparing','submitting','in_progress','saving')", (g.uid,)).fetchone()[0]
+                        if outstanding >= 3:
+                            raise self.Error('You already have three local requests waiting or running.', 429)
                     now = time.time()
                     db.execute('''INSERT INTO project_runs(id,project_id,client_id,status,phase,message,model,max_tokens,previous_id,key_cipher,inputs_json,project_prompt,created_at,updated_at)
                         VALUES(?,?,?,'queued','Waiting for FUPCJ Server',?,?,?,?,?,?,?,?,?)''',
                         (run_id, project_id, client_id, message, model, limit, previous, cipher, json.dumps(inputs), str(options.get('projectPrompt') or '')[:250000], now, now))
                     db.execute('UPDATE project_runs SET run_options_json=?,venture_retry_of=?,venture_memory_enabled=?,board_context_json=? WHERE id=?', (json.dumps(run_options), retry_of, int(memory_enabled), json.dumps(board_context) if board_context else None, run_id))
-                    self.venture.funding.bind(db, run_id, key)
+                    if local:
+                        profile={k:v for k,v in self.local.settings.items() if k in ('runtimePath','modelPath','manifestPath','port','contextTokens','maxOutputTokens','threads','gpuLayers','reserveRamGiB','maxRunSeconds')}
+                        db.execute("UPDATE project_runs SET provider='local_llama_cpp',local_profile_json=? WHERE id=?", (json.dumps(profile),run_id))
+                    else:
+                        self.venture.funding.bind(db, run_id, key)
             except Exception:
                 import shutil
                 shutil.rmtree(directory, ignore_errors=True)
@@ -591,10 +609,13 @@ class Sessions:
             response.close()
 
     def recover(self):
+        self.local.recover()
         with self.db() as db:
             rows = db.execute("SELECT * FROM project_runs WHERE status IN ('preparing','submitting','in_progress','saving')").fetchall()
         for record in rows:
             row = dict(record)
+            if row.get('provider') == 'local_llama_cpp':
+                continue
             if row.get('context_pending_parent'):
                 self.update(row['id'], status='error', phase='Check interrupted context continuation', key_cipher=None,
                             error='A retrieval continuation was interrupted before its new response ID was saved. Check OpenAI usage before retrying; it was not submitted again.')
@@ -620,7 +641,9 @@ class Sessions:
     def prepare_payload(self, row, key):
         options = normalize_run_options(json.loads(row.get('run_options_json') or '{}'))
         chain = self.lineage(row)
-        previous = next((item for item in reversed(chain[:-1]) if item['response_id'] and item['status'] in ('completed', 'incomplete')), None)
+        previous = next((item for item in reversed(chain[:-1]) if item.get('provider', 'openai') == 'openai' and item['response_id'] and item['status'] in ('completed', 'incomplete')), None)
+        if any(item.get('provider') == 'local_llama_cpp' for item in chain):
+            previous = None
         if previous and previous.get('venture_key_id') and row.get('venture_key_id') != previous['venture_key_id']:
             previous = None  # Different API account: rebuild from this user's retained evidence.
         # Never reuse a provider chain that may contain stale/deleted cross-chat excerpts.
@@ -879,6 +902,8 @@ class Sessions:
         if record is None:
             return False
         row = dict(record)
+        if row.get('provider') == 'local_llama_cpp':
+            return self.local.work_once(row)
         run_id, key = row['id'], ''
         trial = self.app.config.get('TRIALS')
         if trial and trial.expired(row['project_id']):

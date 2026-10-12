@@ -19,7 +19,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-local.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
