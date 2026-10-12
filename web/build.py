@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import re
+import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
@@ -46,6 +47,24 @@ def select_release(requested, previous_raw, changed):
     if changed and (previous_raw == previous or requested < previous):
         previous[3] += 1
     return normalize_version(previous)
+
+
+def qwen_animation_script():
+    """Bundle the two dotLottie archives using the existing offline SVG player."""
+    animations = []
+    for name in ('qwen-p1.lottie', 'qwen-p2.lottie'):
+        with zipfile.ZipFile(WEB / name) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            animation_id = manifest['activeAnimationId']
+            animation = json.loads(archive.read(f'animations/{animation_id}.json'))
+            # These supplied archives include their PNGs as data URLs.
+            if any(asset.get('p') and not asset['p'].startswith('data:')
+                   for asset in animation.get('assets', [])):
+                raise ValueError(f'{name} contains an unbundled image')
+            animations.append(animation)
+    controller = (WEB / 'venture-qwen-animation.js').read_text(encoding='utf-8')
+    return controller.replace('/* VISION_QWEN_ANIMATIONS */ []',
+                              json.dumps(animations, separators=(',', ':')))
 
 
 def build():
@@ -95,7 +114,7 @@ def build():
     controller = (WEB / 'workspace-chevron.js').read_text().replace('/* VISION_CHEVRONS */ {}', json.dumps(chevrons, separators=(',', ':')))
     menu_data = json.loads((WEB / 'animations/menu-in-out.json').read_text())
     menu_controller = (WEB / 'navigation-animation.js').read_text().replace('/* VISION_MENU_ANIMATION */ {}', json.dumps(menu_data, separators=(',', ':')))
-    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + menu_controller + '\n' + script)
+    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + menu_controller + '\n' + qwen_animation_script() + '\n' + script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')
