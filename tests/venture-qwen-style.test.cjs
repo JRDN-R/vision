@@ -6,7 +6,7 @@ test('Qwen Local keeps a solid blue label with a slow, orbiting glow',()=>{
  const css=fs.readFileSync('web/venture.css','utf8');
  const nameRule=css.match(/\.model-qwen \.venture-model-name\{([^}]*)\}/)?.[1];
  assert.ok(nameRule,'Qwen model name styling is present');
- assert.match(nameRule,/color:#526aff/);
+ assert.match(nameRule,/color:#487dff/);
  assert.match(nameRule,/animation:qwen-name-halo 7\.2s ease-in-out infinite/);
  assert.doesNotMatch(nameRule,/background|gradient|transparent/i);
  assert.match(css,/@keyframes qwen-name-halo\{/);
