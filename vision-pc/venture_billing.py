@@ -45,16 +45,39 @@ def count(value) -> int:
     return value
 
 
+def model_rates(model: str, catalog: dict):
+    rates = catalog.get('models', {}).get(model)
+    if rates is None:
+        match = re.fullmatch(r'(.+)-\d{4}-\d{2}-\d{2}', model)
+        candidate = catalog.get('models', {}).get(match[1]) if match else None
+        if candidate and candidate.get('inheritSnapshots', True):
+            rates = candidate
+    return rates
+
+
+def output_measure(text: str, model: str) -> dict:
+    """Local text only; never claim to observe the model's hidden reasoning.
+
+    Reuse an installed, already loaded model encoding without downloading one
+    in the request path. Final provider usage always replaces this estimate.
+    """
+    try:
+        import tiktoken
+        name = tiktoken.model.encoding_name_for_model(model)
+        encoder = tiktoken.registry.ENCODINGS.get(name)
+        if encoder is not None:
+            return dict(tokens=len(encoder.encode(text, disallowed_special=())), kind='local-tokenizer')
+    except (ImportError, AttributeError, KeyError):
+        pass
+    return dict(tokens=(len(text)+3)//4, kind='text-estimate')
+
+
 def estimate(response: dict, requested_model: str, catalog: dict, now: float | None = None) -> dict:
     """Compute known token/search charges. Unknown coverage is explicit, not zero cost."""
     now = time.time() if now is None else now
     problems = []
     model = response.get('model') or requested_model
-    rates = catalog.get('models', {}).get(model)
-    # Only dated snapshots of a known exact ID inherit its rates, not arbitrary suffixes.
-    if rates is None:
-        match = re.fullmatch(r'(.+)-\d{4}-\d{2}-\d{2}', model)
-        rates = catalog.get('models', {}).get(match[1]) if match else None
+    rates = model_rates(model, catalog)
     usage = response.get('usage') or {}
     token_cost = Decimal(0)
     try:
@@ -66,21 +89,23 @@ def estimate(response: dict, requested_model: str, catalog: dict, now: float | N
         writes = count(details.get('cache_write_tokens', 0))
         if cached + writes > total_in:
             raise ValueError('Provider input-token details are inconsistent.')
-        if 'cache_write_tokens' not in details:
+        if 'cached_tokens' not in details:
+            problems.append('Cached-input usage was not returned.')
+        if rates.get('cacheWriteUsageRequired', True) and 'cache_write_tokens' not in details:
             problems.append('Cache-write usage was not returned.')
         tier = response.get('service_tier')
         if not tier:
             tier = 'default'
             problems.append('Service tier was not returned; standard pricing was assumed.')
-        multiplier = catalog['tierMultipliers'].get(tier)
+        multiplier = rates.get('tierMultipliers', catalog['tierMultipliers']).get(tier)
         if multiplier is None:
             raise ValueError('The returned service tier has no verified price.')
-        long_context = total_in > rates['longThreshold']
+        long_context = rates.get('longThreshold') is not None and total_in > rates['longThreshold']
         in_factor = Decimal(rates['longInputFactor']) if long_context else Decimal(1)
         out_factor = Decimal(rates['longOutputFactor']) if long_context else Decimal(1)
         token_cost = (Decimal(total_in-cached-writes)*Decimal(rates['input']) +
                       Decimal(cached)*Decimal(rates['cached']) +
-                      Decimal(writes)*Decimal(rates['write'])) * in_factor
+                      Decimal(writes)*Decimal(rates.get('write', rates['input']))) * in_factor
         token_cost += Decimal(total_out)*Decimal(rates['output'])*out_factor
         token_cost *= Decimal(multiplier)
         # Prices are USD / million, so the result above already is micro-USD.
@@ -169,7 +194,7 @@ class Funding:
                     PRIMARY KEY(run_id,response_id));
             ''')
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
-            for name, declaration in [('venture_key_id', 'TEXT'), ('venture_pricing_json', 'TEXT')]:
+            for name, declaration in [('venture_key_id', 'TEXT'), ('venture_pricing_json', 'TEXT'), ('venture_live_json', 'TEXT')]:
                 if name not in columns:
                     db.execute('ALTER TABLE project_runs ADD COLUMN '+name+' '+declaration)
 
@@ -178,6 +203,111 @@ class Funding:
         # silently reprice requests already accepted or rebill old responses.
         db.execute('UPDATE project_runs SET venture_key_id=?,venture_pricing_json=? WHERE id=?',
                    (key_id(key), json.dumps(self.catalog), run_id))
+
+    def prepare_live(self, row: dict, key: str, payload: dict):
+        """Count the exact prepared request, not just the text in the composer.
+
+        Counting is best-effort and never retries or prevents generation. Only
+        calibrated connections need this extra read-only provider request.
+        Neither the key nor the prepared input is stored in live telemetry.
+        """
+        if not row.get('venture_key_id'):
+            return
+        with self.db() as db:
+            baseline = db.execute('SELECT 1 FROM venture_funding f JOIN projects p ON p.owner_uid=f.uid '
+                                  'WHERE p.id=? AND f.key_id=?', (row['project_id'], row['venture_key_id'])).fetchone()
+        if not baseline:
+            return
+        live = dict(model=payload['model'], serviceTier=payload.get('service_tier', 'default'),
+                    inputTokens=None, inputSource='unavailable', responseId=None, observedAt=time.time())
+        # The count endpoint's schema excludes generation-only controls such as
+        # background/stream/store/max_output_tokens/service_tier.
+        fields = ('model', 'input', 'instructions', 'tools', 'tool_choice', 'reasoning', 'text',
+                  'previous_response_id', 'conversation', 'truncation', 'parallel_tool_calls')
+        try:
+            measured = self.sessions.call_json(key, 'POST', '/responses/input_tokens',
+                                              json={k: payload[k] for k in fields if k in payload}, timeout=(3, 8))
+            live.update(inputTokens=count(measured['input_tokens']), inputSource='provider-count')
+        except Exception:
+            # Do not echo provider errors: they may contain request content.
+            pass
+        with self.db() as db:
+            db.execute('UPDATE project_runs SET venture_live_json=? WHERE id=?', (json.dumps(live), row['id']))
+
+    def observe_live(self, row: dict, response: dict):
+        if not row.get('venture_key_id'):
+            return
+        live = json.loads(row.get('venture_live_json') or '{}')
+        live.update(responseId=response.get('id'), model=response.get('model') or row['model'],
+                    observedAt=time.time())
+        if response.get('service_tier'):
+            live['serviceTier'] = response['service_tier']
+        usage = response.get('usage')
+        if isinstance(usage, dict):
+            live['usage'] = usage
+        with self.db() as db:
+            db.execute('UPDATE project_runs SET venture_live_json=? WHERE id=?', (json.dumps(live), row['id']))
+
+    def pending_estimate(self, db, runs: list) -> dict:
+        """A read-only overlay; it never debits or advances the durable ledger."""
+        micro, issues, input_tokens, output_tokens, models, observed = 0, [], 0, 0, set(), 0
+        provisional, waiting = False, False
+        coverage = {}  # Share container estimates across this snapshot's active runs.
+        for value in runs:
+            row = dict(value)
+            catalog = json.loads(row.get('venture_pricing_json') or '{}') or self.catalog
+            responses = {r['response_id']: json.loads(r['response_json']) for r in db.execute(
+                'SELECT response_id,response_json FROM context_responses WHERE run_id=?', (row['id'],))}
+            final = json.loads(row.get('response_json') or '{}')
+            if final:
+                responses[final.get('id') or row['response_id'] or '__final__'] = final
+            live = json.loads(row.get('venture_live_json') or '{}')
+            rid = live.get('responseId')
+            if rid and rid not in responses:
+                usage = live.get('usage')
+                if not isinstance(usage, dict) or not all(isinstance(usage.get(k), int) and not isinstance(usage[k], bool)
+                                                        and usage[k] >= 0 for k in ('input_tokens', 'output_tokens')):
+                    provisional = True
+                    measured = output_measure(row.get('text') or '', live.get('model') or row['model'])
+                    usage = dict(input_tokens=live.get('inputTokens') or 0,
+                                 output_tokens=min(measured['tokens'], row['max_tokens']),
+                                 input_tokens_details=dict(cached_tokens=0, cache_write_tokens=0))
+                    if live.get('inputTokens') is None:
+                        issues.append('Input token count is unavailable for an active response.')
+                responses[rid] = dict(id=rid, model=live.get('model') or row['model'],
+                                      service_tier=live.get('serviceTier'), usage=usage, output=[])
+            elif not responses or row.get('context_pending_parent'):
+                waiting = True
+            priced = estimate_responses(list(responses.values()), row['model'], catalog)
+            micro += priced['micro']
+            issues.extend(priced['problems'])
+            input_tokens += priced['usage'].get('input_tokens', 0)
+            output_tokens += priced['usage'].get('output_tokens', 0)
+            if responses:
+                models.update(item.get('model') or row['model'] for item in responses.values())
+                observed = max(observed, row['updated_at'], live.get('observedAt', 0))
+            for cid in priced['containers']:
+                key = (row['venture_key_id'], cid)
+                if key not in coverage:
+                    prior = db.execute('SELECT covered_until FROM venture_container_costs WHERE uid=? AND key_id=? AND container_id=?',
+                                       (row['owner_uid'], key[0], cid)).fetchone()
+                    coverage[key] = prior[0] if prior else None
+                start = coverage[key]
+                if start is None or row['updated_at'] > start:
+                    import math
+                    seconds = int(catalog['tools']['containerSessionSeconds'])
+                    start = max(start or row['created_at'], row['created_at'])
+                    blocks = max(1, math.ceil((row['updated_at']-start)/seconds))
+                    micro += int(Decimal(catalog['tools']['container1gSession'])*MICRO)*blocks
+                    coverage[key] = start+blocks*seconds
+                issues.append('Container duration is estimated, not an official billing measurement.')
+        if provisional:
+            issues.append('Live estimates use counted input and visible output; caching, hidden reasoning and tool usage reconcile when reported.')
+        if waiting:
+            issues.append('Waiting for provider usage for an active response.')
+        return dict(micro=micro, issues=issues, observedAt=observed,
+                    usage=dict(inputTokens=input_tokens, outputTokens=output_tokens, models=sorted(models),
+                               kind='live-estimate' if provisional or waiting else 'provider', scope='active'))
 
     def account_for(self, row: dict):
         if not row.get('venture_key_id'):
@@ -260,31 +390,53 @@ class Funding:
                     balance=0,revision=revision+1,updated_at=excluded.updated_at''',
                     (owner[0],row['venture_key_id'],now,now))
 
-    def status(self, uid: str, kid: str | None) -> dict:
+    def status(self, uid: str, kid: str | None, model: str | None = None) -> dict:
         empty = dict(provider='estimate', status='uncalibrated', fraction=None, revision=0, connectionId=kid,
-                     updatedAt=None, coverage='unknown', issues=[], pricingVersion=self.catalog['version'])
+                     updatedAt=None, coverage='unknown', issues=[], pricingVersion=self.catalog['version'],
+                     liveMeterVersion=1, activeRuns=0, usage=None)
         if not kid:
             return {**empty,'status':'no-key'}
         reconciled = self.reconcile(uid,kid)
         with self.db() as db:
+            # Balance, ledger and pending responses must come from one snapshot:
+            # finalization on a worker thread cannot cause a transient double debit.
+            db.execute('BEGIN')
             row = db.execute('SELECT * FROM venture_funding WHERE uid=? AND key_id=?',(uid,kid)).fetchone()
             if row is None:
                 return empty
             rows = db.execute('SELECT details FROM venture_ledger WHERE uid=? AND key_id=? AND created_at>?',
                               (uid,kid,row['calibrated_at'])).fetchall()
-            active = db.execute("SELECT COUNT(*) FROM project_runs r JOIN projects p ON p.id=r.project_id WHERE p.owner_uid=? AND r.venture_key_id=? AND r.status IN ('queued','preparing','submitting','in_progress','saving')", (uid,kid)).fetchone()[0]
+            pending = db.execute("""SELECT r.*,p.owner_uid FROM project_runs r JOIN projects p ON p.id=r.project_id
+                LEFT JOIN venture_ledger l ON l.run_id=r.id
+                WHERE p.owner_uid=? AND r.venture_key_id=? AND l.run_id IS NULL
+                ORDER BY r.created_at""", (uid,kid)).fetchall()
+            live = self.pending_estimate(db, pending)
+            latest = db.execute('SELECT details FROM venture_ledger WHERE uid=? AND key_id=? ORDER BY created_at DESC LIMIT 1',
+                                (uid,kid)).fetchone()
+        active = sum(r['status'] in ('queued','preparing','submitting','in_progress','saving') for r in pending)
         issues = list(dict.fromkeys(p for r in rows for p in json.loads(r[0]).get('problems',[])))
-        fraction = max(0,min(1,row['balance']/row['capacity'])) if row['capacity'] else 0
+        issues.extend(live['issues'])
+        if model and not model_rates(model, self.catalog):
+            issues.append('The selected model has no verified price; its usage cannot be fully priced.')
+        fraction = max(0,min(1,(row['balance']-live['micro'])/row['capacity'])) if row['capacity'] else 0
+        if row['exhausted']:
+            fraction = 0
         status = 'exhausted' if row['exhausted'] else 'estimated-empty' if fraction<=0 else 'low' if fraction<=.2 else 'available'
         if not reconciled:
             issues.append('Some completed responses are awaiting local usage reconciliation.')
-        if active:
-            issues.append('An active response has not yet been deducted.')
         if time.time()>=utc_seconds(self.catalog['reviewAfter']):
             issues.append('Pricing needs review; update FUPCJ Server.')
-        return {**empty,'status':status,'fraction':round(fraction,5),'revision':row['revision'],
-                'updatedAt':row['updated_at'],'coverage':'partial' if issues else 'tracked',
-                'issues':issues,'activeRuns':active}
+        usage = live['usage'] if pending else None
+        if not pending and latest:
+            detail = json.loads(latest['details'])
+            tokens = detail.get('usage') or {}
+            usage = dict(inputTokens=tokens.get('input_tokens'), outputTokens=tokens.get('output_tokens'),
+                         cachedTokens=(tokens.get('input_tokens_details') or {}).get('cached_tokens'),
+                         reasoningTokens=(tokens.get('output_tokens_details') or {}).get('reasoning_tokens'),
+                         models=[detail['model']] if detail.get('model') else [], kind='provider', scope='last')
+        return {**empty,'status':status,'fraction':fraction,'revision':row['revision'],
+                'updatedAt':max(row['updated_at'],live['observedAt']),'coverage':'partial' if issues else 'tracked',
+                'issues':list(dict.fromkeys(issues)),'activeRuns':active,'usage':usage}
 
     def calibrate(self, uid: str, kid: str, body: dict) -> dict:
         rid, kind = body.get('requestId'), body.get('kind')

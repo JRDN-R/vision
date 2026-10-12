@@ -325,5 +325,3 @@ def register(app, connect_db):
     app.add_url_rule('/api/admin/gemini/pricing', 'vision_gemini_pricing', gemini_pricing, methods=['GET', 'PUT'])
     app.add_url_rule('/api/gemini/access', 'vision_gemini_own_access', gemini_own_access, methods=['GET', 'POST'])
 
-    from account_administration import register as register_account_admin
-    register_account_admin(app, connect_db, owner_access, forbidden, respond)

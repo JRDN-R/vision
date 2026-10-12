@@ -78,3 +78,9 @@
  .venture-root .venture-settings .venture-feature-grid input{width:16px;height:16px;min-width:16px}
  .venture-root .venture-settings .venture-coming-soon,.venture-root .venture-settings #ventureParameterDetails{display:none!important}
 }
+/* Keep sub-percent changes visible without jumping between whole values. */
+.venture-funding-readout{display:flex;align-items:baseline;margin-top:9px;color:#e3f3d5;font-size:14px;font-variant-numeric:tabular-nums}
+.venture-funding-readout strong{font-weight:550}
+.venture-battery>div{transition:width .25s linear,background .25s}
+.venture-battery.partial{border-style:dashed}
+@media(prefers-reduced-motion:reduce){.venture-battery>div{transition:none}}

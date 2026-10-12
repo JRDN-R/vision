@@ -38,6 +38,7 @@ jobs:
       - name: Build hosted application bundle
         run: |
           set -o pipefail
+          bash web/vendor/build-firebase.sh
           python web/build.py 2>&1 | tee tests/venture-logs/build.txt
           python tests/versioning-smoke.py
       - name: Browser-independent JavaScript checks
@@ -57,6 +58,7 @@ jobs:
           set -o pipefail
           python tests/venture-smoke.py 2>&1 | tee tests/venture-logs/venture.txt
           python tests/venture-board-submit.py 2>&1 | tee tests/venture-logs/board-submit.txt
+          python tests/rag-export-browser.py 2>&1 | tee tests/venture-logs/rag-export.txt
       - name: Workspace recovery unit and browser checks
         run: |
           set -o pipefail

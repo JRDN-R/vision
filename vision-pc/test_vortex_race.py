@@ -29,7 +29,7 @@ class URLTests(unittest.TestCase):
             'https:/m.youtube.com//shorts/abcdefghijk?si=abc': 'https://www.youtube.com/watch?v=abcdefghijk',
             'https://music.youtube.com/watch?v=abcdefghijk&list=album&t=9': 'https://music.youtube.com/watch?v=abcdefghijk&list=album&t=9',
             'https://www.youtube.com/watch?v=abcdefghijk#t=30': 'https://www.youtube.com/watch?v=abcdefghijk&t=30',
-            'https://mobile.twitter.com/user//status/123/video/1?s=46': 'https://x.com/user/status/123',
+            'https://mobile.twitter.com/user//status/123/video/1?s=46': 'https://x.com/user/status/123/video/1',
             'x.com/user/status/123/video/2?s=46': 'https://x.com/user/status/123/video/2',
             'https://fixupx.com/user/status/123': 'https://x.com/user/status/123',
             'https://m.instagram.com/reels/Ab_C/?igsh=token': 'https://www.instagram.com/reel/Ab_C/',
@@ -129,7 +129,7 @@ class ServiceTests(unittest.TestCase):
                    (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))]
         with patch.object(socket, 'getaddrinfo', return_value=answers), patch.object(socket.socket, 'connect') as connect:
             with self.assertRaises(ValueError): vortex_egress.connect_public('media.example.com:443')
-            connect.assert_not_called()
+        connect.assert_not_called()
 
 
 FIXTURE = r'''
@@ -143,7 +143,7 @@ if spec.get('child') and kind=='inspect':
  (d.parent.parent/(a.adapter+'.pid')).write_text(str(child.pid))
 time.sleep(spec.get(kind+'Delay',0.05))
 if spec.get(kind+'Fail'):raise SystemExit(1)
-media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter}
+media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter,'transferBytes':spec.get('bytes',1000)}
 result={'complete':True,'media':media,'results':[media]}
 if kind=='download':
  (d/'export.mp4').write_bytes(b'orchestration-only-fixture');result['filename']='export.mp4'
@@ -196,6 +196,13 @@ class RaceTests(unittest.TestCase):
         result = self.run_race({'fast_low': {'height': 360}, 'slow_high': {'inspectDelay': .3, 'height': 2160}}, quality='max')
         self.assertEqual(result['media']['height'], 2160)
 
+    def test_balanced_does_not_block_fast_fitting_fallback_behind_slow_hls(self):
+        started = time.monotonic()
+        result = self.run_race({'slow_high': {'height':720, 'downloadDelay':5},
+                                'fast_fitting': {'height':360, 'downloadDelay':.1}})
+        self.assertEqual(result['media']['height'], 360)
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_all_fail_one_safe_error_and_cleanup(self):
         with self.assertRaisesRegex(worker.WorkerError, '^' + race.PUBLIC_ERROR.replace('.', r'\.') + '$'):
             self.run_race({'one': {'inspectFail': True}, 'two': {'downloadFail': True}})
@@ -232,6 +239,61 @@ class RaceTests(unittest.TestCase):
         with self.assertRaises(worker.WorkerError):
             self.run_race({'one': {'inspectDelay': 30}}, maxBytes=1)
         self.assertFalse((self.root / 'race').exists())
+
+    def test_large_transfers_are_serialized_inside_unchanged_disk_budget(self):
+        active, peak = [], [0]
+        class CountingAttempt(race.Attempt):
+            def __init__(self, *args):
+                super().__init__(*args)
+                if self.kind == 'download':
+                    active[:] = [a for a in active if a.process.poll() is None]
+                    active.append(self)
+                    peak[0] = max(peak[0], len(active))
+        registry = [SimpleNamespace(name=str(i), compatible=lambda value: True, configured=lambda request: True) for i in range(3)]
+        fixtures = {a.name: {'bytes': 99000, 'downloadFail': True, 'downloadDelay': .1} for a in registry}
+        with self.assertRaises(worker.WorkerError):
+            race.race(dict(input='https://x.com/u/status/123', kind='download', quality='max', directory=str(self.root),
+                           maxBytes=100000, fixtures=fixtures), adapters=registry, attempt_factory=CountingAttempt)
+        self.assertEqual(peak[0], 1)
+
+    def test_adapter_that_downloads_for_inspection_gets_transfer_deadline(self):
+        started = []
+        class CountingAttempt(race.Attempt):
+            def __init__(self, adapter, request, directory, kind):
+                started.append((kind, request['downloadTimeout']))
+                super().__init__(adapter, request, directory, kind)
+        adapter = SimpleNamespace(name='direct', inspection_download=True, compatible=lambda value: True,
+                                  configured=lambda request: True)
+        result = race.race(dict(input='https://x.com/u/status/123', kind='download', quality='balanced',
+                          directory=str(self.root), maxBytes=100000, fixtures={'direct':{}}),
+                          adapters=[adapter], attempt_factory=CountingAttempt)
+        self.assertEqual([kind for kind, _ in started], ['download'])
+        self.assertGreater(started[0][1], 120)
+        self.assertEqual(result['filename'], 'download.mp4')
+
+    def test_more_than_five_methods_can_reach_a_late_success(self):
+        fixtures = {str(i): {'inspectFail': True} for i in range(7)}
+        fixtures['last'] = {}
+        result = self.run_race(fixtures)
+        self.assertEqual(result['media']['title'], 'last')
+
+    def test_inspection_pool_is_bounded_and_every_method_gets_a_turn(self):
+        active, peak, started = [], [0], []
+        class CountingAttempt(race.Attempt):
+            def __init__(self, *args):
+                super().__init__(*args)
+                if self.kind == 'inspect':
+                    active[:] = [a for a in active if a.process.poll() is None]
+                    active.append(self)
+                    started.append(self.adapter.name)
+                    peak[0] = max(peak[0], len(active))
+        registry = [SimpleNamespace(name=str(i), compatible=lambda value: True, configured=lambda request: True) for i in range(8)]
+        fixtures = {a.name: {'inspectFail': True, 'inspectDelay': .1} for a in registry}
+        with self.assertRaises(worker.WorkerError):
+            race.race(dict(input='https://x.com/u/status/123', kind='inspect', quality='max', directory=str(self.root),
+                           maxBytes=100000, fixtures=fixtures), adapters=registry, attempt_factory=CountingAttempt)
+        self.assertEqual(peak[0], 3)
+        self.assertEqual(set(started), {a.name for a in registry})
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')

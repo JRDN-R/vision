@@ -1,351 +1,433 @@
-"""Owner-only, irreversible removal of Firebase identities and their local Vision data.
+"""Owner-only Firebase account and local-data removal for Vision, Venture and Vortex.
 
-The Firebase Admin service-account JSON stays on the PC, outside the repository.
-A persistent tombstone is written *before* the remote Auth deletion so already
-issued ID tokens cannot recreate local data if a cleanup needs to be retried.
+Never expose service-account credentials to GitHub Pages. A permanently deleted
+account leaves only a SHA-256 UID tombstone, so already-minted Firebase ID tokens
+cannot re-enter the PC (the ordinary token verifier does not check revocation).
 """
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import re
-import shutil
 import sqlite3
+import shutil
 import threading
 import time
 
-from flask import g, request
+from flask import g, jsonify, request
 
-PUBLIC_ID = re.compile(r"^[0-9a-f]{64}$")
-LOCAL_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
-VORTEX_ID = re.compile(r"^[0-9a-f]{24}$")
-ACTIVE = ("queued", "preparing", "processing", "submitting", "in_progress",
-          "saving", "started", "pending", "uploading", "downloading", "transcribing")
-_LOCK = threading.RLock()
+from activity_dashboard import allowed, clean, public_id
 
-
-class RemovalError(Exception):
-    def __init__(self, message, status=409):
-        super().__init__(message)
-        self.status = status
+PROJECT_ID = re.compile(r'[A-Za-z0-9_-]{16,120}\Z')
+MEDIA_ID = re.compile(r'[0-9a-f]{24}\Z')
+HASH_ID = re.compile(r'[0-9a-f]{64}\Z')
 
 
-def _tables(db):
-    return {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+def name_parts(value):
+    parts = clean(value, 200).split(None, 1)
+    return (parts[0] if parts else '', parts[1] if len(parts) > 1 else '')
 
 
-def _count(db, tables, table, where, args):
-    return db.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", args).fetchone()[0] if table in tables else 0
-
-
-def _delete(db, tables, table, where, args):
-    if table in tables:
-        db.execute(f"DELETE FROM {table} WHERE {where}", args)
-
-
-def _target(db, public_id):
-    if not isinstance(public_id, str) or not PUBLIC_ID.fullmatch(public_id):
-        raise RemovalError("Choose a valid account.", 400)
-    for row in db.execute("SELECT uid,name,email FROM audit_users"):
-        if (row["uid"].startswith("firebase:") and
-                hashlib.sha256(row["uid"].encode()).hexdigest() == public_id):
-            return dict(row)
-    raise RemovalError("This account is no longer in the directory.", 404)
-
-
-def _admins(config):
-    path = Path(config["DATA_DIR"]) / "activity-admins.json"
-    if path.is_symlink() or path.stat().st_size > 65536:
-        raise RemovalError("The administrator list is unavailable.", 503)
-    value = json.loads(path.read_text(encoding="utf-8-sig"))
-    uids = value.get("uids") if isinstance(value, dict) else None
-    if not isinstance(uids, list) or not uids:
-        raise RemovalError("The administrator list is unavailable.", 503)
-    return set(uids)
-
-
-def _scope(db, uid):
-    tables = _tables(db)
-    projects = {r[0] for r in db.execute("SELECT id FROM projects WHERE owner_uid=?", (uid,))} if "projects" in tables else set()
-    conversations = {r[0] for r in db.execute("SELECT id FROM venture_conversations WHERE uid=?", (uid,))} if "venture_conversations" in tables else set()
-    ids = projects | conversations
-    if any(not LOCAL_ID.fullmatch(pid) for pid in ids):
-        raise RemovalError("An account project has an invalid storage identifier. Resolve this on the PC.", 409)
-    if "projects" in tables:
-        for cid in conversations - projects:
-            conflict = db.execute("SELECT owner_uid FROM projects WHERE id=?", (cid,)).fetchone()
-            if conflict and conflict[0] not in (None, uid):
-                raise RemovalError("A conversation has a different project owner. Resolve this on the PC.", 409)
-    vortex = [r[0] for r in db.execute("SELECT id FROM vortex_jobs WHERE uid=?", (uid,))] if "vortex_jobs" in tables else []
-    if any(not VORTEX_ID.fullmatch(job) for job in vortex):
-        raise RemovalError("A Vortex item has an invalid storage identifier. Resolve this on the PC.", 409)
-    return tables, sorted(ids), vortex
-
-
-def _busy(db, tables, uid, projects, context=None):
-    placeholders = ",".join("?" for _ in ACTIVE)
-    for table in ("jobs", "vortex_jobs", "venture_dictation_requests"):
-        if _count(db, tables, table, f"uid=? AND status IN ({placeholders})", (uid, *ACTIVE)):
-            return True
-    for table in ("gemini_usage",):
-        if _count(db, tables, table, "uid=? AND status='started' AND finished_at IS NULL", (uid,)):
-            return True
-    for pid in projects:
-        for table in ("project_runs", "local_transcriptions", "uploaded_media",
-                      "document_jobs"):
-            if _count(db, tables, table, f"project_id=? AND status IN ({placeholders})", (pid, *ACTIVE)):
-                return True
-    if context:
-        with context.db() as other:
-            ct = _tables(other)
-            if "context_jobs" in ct and _count(other, ct, "context_jobs",
-                                                "owner=? AND status IN ('queued','processing')", (uid,)):
-                return True
-    return False
-
-
-def _preview(app, db, actor, public_id):
-    target = _target(db, public_id)
-    uid = target["uid"]
-    if uid == actor or uid in _admins(app.config):
-        raise RemovalError("Administrator accounts cannot be deleted here.", 403)
-    tables, projects, vortex = _scope(db, uid)
-    context = getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)
-    is_busy = _busy(db, tables, uid, projects, context)
-    credential_path = Path(str(app.config.get("FIREBASE_ADMIN_CREDENTIALS") or ""))
-    configured = credential_path.is_absolute() and credential_path.is_file() and not credential_path.is_symlink()
-    schema_ready = "account_removals" in tables
-    return target, projects, vortex, dict(
-        id=public_id, name=target["name"], email=target["email"],
-        counts=dict(projects=len(projects),
-                    ventureConversations=_count(db, tables, "venture_conversations", "uid=?", (uid,)),
-                    vortexJobs=len(vortex),
-                    visionImports=_count(db, tables, "jobs", "uid=?", (uid,))),
-        hasActiveWork=is_busy, adminConfigured=configured and schema_ready,
-        canDelete=not is_busy and configured and schema_ready)
-
-
-def _firebase_client(app):
-    path = app.config.get("FIREBASE_ADMIN_CREDENTIALS")
-    identity = app.config.get("FIREBASE_IDENTITY")
-    if not path or not identity:
-        raise RemovalError("Configure Firebase account-deletion credentials on the Vision PC first.", 503)
-    credential_path = Path(path)
-    if not credential_path.is_absolute() or not credential_path.is_file():
-        raise RemovalError("Firebase account-deletion credentials are missing on the Vision PC.", 503)
-    try:
-        import firebase_admin
-        from firebase_admin import auth, credentials
-        credential = credentials.Certificate(str(credential_path))
-        if credential.project_id != identity.project_id:
-            raise RemovalError("The Firebase administrator credentials belong to a different project.", 503)
-        try:
-            sdk_app = firebase_admin.get_app("vision-account-removal")
-        except ValueError:
-            sdk_app = firebase_admin.initialize_app(credential, {"projectId": identity.project_id},
-                                                    name="vision-account-removal")
-        return auth, sdk_app
-    except (OSError, ValueError, ImportError, KeyError) as error:
-        if isinstance(error, RemovalError):
-            raise
-        raise RemovalError("Firebase account removal is not configured correctly on the Vision PC.", 503) from None
-
-
-def _remove_tree(path, root):
-    # Refuse to follow swapped parent directories or symlinks outside DATA_DIR.
-    safe_root = root.resolve()
-    if not path.parent.resolve().is_relative_to(safe_root):
-        raise RemovalError("An account storage directory points outside the Vision data folder.", 409)
+def remove_owned(path):
+    """Only call with a server-constructed, ID-validated path."""
     if path.is_symlink():
         path.unlink()
-    elif path.exists():
+    elif path.is_dir():
         shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
-def _media_directories(db, tables, projects):
-    media = []
-    for pid in projects:
-        for table, dirname in (("local_transcriptions", "transcriptions"),
-                               ("uploaded_media", "uploaded-media"),
-                               ("document_jobs", "documents")):
-            if table not in tables:
-                continue
-            for row in db.execute(f"SELECT id FROM {table} WHERE project_id=?", (pid,)):
-                if not LOCAL_ID.fullmatch(row[0]):
-                    raise RemovalError("An account media job has an invalid identifier.", 409)
-                media.append((dirname, row[0]))
-        if "uploaded_media_uploads" in tables:
-            for row in db.execute("SELECT request_id FROM uploaded_media_uploads WHERE project_id=?", (pid,)):
-                key = hashlib.sha256((pid + "\0" + row[0]).encode()).hexdigest()
-                media.append(("uploaded-media/.uploads", key))
-    return media
+class AccountAdministration:
+    def __init__(self, app, connect_db, sessions, vortex, transcriptions, media, documents):
+        self.app, self.db = app, connect_db
+        self.sessions, self.vortex = sessions, vortex
+        self.transcriptions, self.media, self.documents = transcriptions, media, documents
+        self.lock = threading.RLock()
+        self.firebase_app = None
+        self.active_requests = {}
+        self.register_routes()
 
+    def initialize(self, config):
+        # This is a private machine-local path, not a Firebase web API key.
+        firebase_config = config.get('firebaseAuth')
+        legacy_path = firebase_config.get('adminServiceAccountPath') if isinstance(firebase_config, dict) else None
+        self.credential_path = str(config.get('firebaseAdminServiceAccount') or legacy_path or '')
+        with self.db() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS account_deletions (
+                id TEXT PRIMARY KEY, uid TEXT, email TEXT, state TEXT NOT NULL,
+                requested_at REAL NOT NULL, completed_at REAL)""")
 
-def _remove_local_files(app, uid, projects, vortex, media, result_paths):
-    root = Path(app.config["DATA_DIR"])
-    user_dir = root / "users" / hashlib.sha256(uid.encode()).hexdigest()
-    _remove_tree(user_dir, root)
-    for pid in projects:
-        _remove_tree(root / "projects" / pid, root)
-        context_root = root / "context" / "sources" / hashlib.sha256((uid + "\0" + pid).encode()).hexdigest()
-        _remove_tree(context_root, root)
-    for job in vortex:
-        _remove_tree(root / "vortex" / job, root)
-    for directory, ident in media:
-        _remove_tree(root / directory / ident, root)
-    # Older import jobs can retain results outside the project directory.
-    safe_root = root.resolve()
-    for raw in result_paths:
-        if not raw:
-            continue
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            candidate = root / candidate
-        resolved = candidate.resolve()
-        if not resolved.is_relative_to(safe_root) or resolved == safe_root:
-            raise RemovalError("A saved import points outside Vision's data directory. Review it on the PC.", 409)
-        if candidate.is_symlink():
-            candidate.unlink()
-        elif candidate.is_file():
-            candidate.unlink()
+    def blocked(self, uid):
+        if not uid or not uid.startswith('firebase:'):
+            return False
+        with self.db() as db:
+            return db.execute('SELECT 1 FROM account_deletions WHERE id=?', (public_id(uid),)).fetchone() is not None
 
+    def begin_request(self, uid):
+        # Pair authorization with deletion under one lock, so an in-flight
+        # project upload cannot recreate data after the account was purged.
+        with self.lock:
+            if self.blocked(uid):
+                return False
+            self.active_requests[uid] = self.active_requests.get(uid, 0) + 1
+            return True
 
-def _remove_context(context, uid, data_dir):
-    """Purge the context index even when indexing is currently disabled."""
-    def purge(db):
-        db.execute("BEGIN IMMEDIATE")
-        tables = _tables(db)
-        if _count(db, tables, "context_jobs", "owner=? AND status='processing'", (uid,)) and context:
-            raise RemovalError("Context indexing is still active. Retry after it finishes.", 409)
-        for table in ("context_fts", "context_chunks", "context_sources", "context_generations",
-                      "context_heads", "context_jobs", "context_cache", "context_vectors"):
-            _delete(db, tables, table, "owner=?", (uid,))
+    def end_request(self, uid):
+        with self.lock:
+            current = self.active_requests.get(uid, 0)
+            if current <= 1:
+                self.active_requests.pop(uid, None)
+            else:
+                self.active_requests[uid] = current - 1
 
-    if context:
-        with context.db() as db:
-            purge(db)
-        return
-    path = Path(data_dir) / "context" / "context.sqlite3"
-    if path.is_symlink():
-        raise RemovalError("The saved context index uses a symbolic link. Review this on the PC.", 409)
-    if not path.is_file():
-        return
-    db = sqlite3.connect(path, timeout=30)
-    try:
-        purge(db)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    def owner(self):
+        return allowed(self.app.config, getattr(g, 'uid', ''), getattr(g, 'auth_kind', ''),
+                       request.headers.get('Origin'))
 
+    def administrators(self):
+        path = Path(self.app.config['DATA_DIR']) / 'activity-admins.json'
+        value = json.loads(path.read_text(encoding='utf-8-sig'))
+        return set(value['uids'])
 
-def _purge_database(db, uid, projects, tables):
-    for pid in projects:
-        run_ids = [r[0] for r in db.execute("SELECT id FROM project_runs WHERE project_id=?", (pid,))] if "project_runs" in tables else []
-        for rid in run_ids:
-            for table in ("run_events", "run_artifacts", "context_responses", "context_uploads",
-                          "venture_memory_indexed", "venture_ledger"):
-                column = "run_id"
-                _delete(db, tables, table, column + "=?", (rid,))
-        for table in ("project_runs", "local_transcriptions", "uploaded_media", "uploaded_media_uploads",
-                      "document_jobs", "context_sync_jobs"):
-            _delete(db, tables, table, "project_id=?", (pid,))
-        _delete(db, tables, "venture_memory", "cid=?", (pid,))
-        _delete(db, tables, "venture_conversations", "id=? AND uid=?", (pid, uid))
-        _delete(db, tables, "projects", "id=? AND owner_uid=?", (pid, uid))
-    for table in ("jobs", "responses", "vortex_jobs", "venture_conversations",
-                  "venture_preferences", "venture_workspace_preferences", "venture_dictation_requests",
-                  "venture_funding", "venture_calibrations", "venture_ledger",
-                  "venture_container_costs", "venture_memory", "gemini_usage", "gemini_access",
-                  "gemini_access_decisions", "account_credentials", "audit_events",
-                  "audit_signins", "audit_account_metadata", "audit_user_apps", "audit_users"):
-        _delete(db, tables, table, "uid=?", (uid,))
+    def firebase(self):
+        if self.firebase_app is not None:
+            return self.firebase_app
+        path = Path(self.credential_path) if self.credential_path else None
+        if not path or not path.is_file() or path.is_symlink():
+            raise RuntimeError('Configure firebaseAdminServiceAccount on the Vision PC to enable account administration.')
+        import firebase_admin
+        from firebase_admin import credentials
+        expected = self.app.config.get('FIREBASE_IDENTITY')
+        if expected is None:
+            raise RuntimeError('Enable Firebase identity verification on the Vision PC first.')
+        # A credential for another Firebase project must never delete its users.
+        data = json.loads(path.read_text(encoding='utf-8-sig'))
+        if data.get('type') != 'service_account' or data.get('project_id') != expected.project_id:
+            raise RuntimeError('The Firebase Admin service account must belong to this Vision Firebase project.')
+        with self.lock:
+            if self.firebase_app is None:
+                self.firebase_app = firebase_admin.initialize_app(
+                    credentials.Certificate(str(path)), {'projectId': expected.project_id},
+                    name='vision-account-administration')
+            return self.firebase_app
 
+    def firebase_users(self):
+        from firebase_admin import auth
+        users = []
+        page = auth.list_users(app=self.firebase())
+        while page:
+            users.extend(page.users)
+            if len(users) > 20000:
+                raise RuntimeError('The account directory exceeds the safe listing limit.')
+            page = page.get_next_page()
+        return users
 
-def register(app, connect_db, owner_access, forbidden, respond):
-    """Called from the already owner-restricted activity route registration."""
-    if "vision_account_remove" in app.view_functions:
-        return
+    def directory(self, remote_users):
+        by_id = {}
+        with self.db() as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            observed = list(db.execute('SELECT * FROM audit_users'))
+            providers = dict(db.execute('SELECT uid,provider FROM audit_account_metadata')) if 'audit_account_metadata' in tables else {}
+            apps = {}
+            if 'audit_user_apps' in tables:
+                for row in db.execute('SELECT uid,app FROM audit_user_apps'):
+                    apps.setdefault(row['uid'], []).append(row['app'])
+            counts = {}
+            for label, table, col in [('projects', 'projects', 'owner_uid'),
+                                      ('conversations', 'venture_conversations', 'uid'),
+                                      ('vortex', 'vortex_jobs', 'uid')]:
+                if table in tables:
+                    counts[label] = dict(db.execute('SELECT '+col+',COUNT(*) FROM '+table+' GROUP BY '+col))
+            pending = list(db.execute("SELECT id,uid,email,state FROM account_deletions WHERE state!='complete'"))
+        for row in observed:
+            identifier = public_id(row['uid'])
+            first, last = name_parts(row['name'])
+            by_id[identifier] = dict(id=identifier, name=clean(row['name']),
+                firstName=first, lastName=last, email=clean(row['email']), provider=providers.get(row['uid'], 'unknown'),
+                apps=apps.get(row['uid'], []), lastSeen=row['last_seen'],
+                signIns=row['sign_in_sightings'], projects=counts.get('projects', {}).get(row['uid'], 0),
+                conversations=counts.get('conversations', {}).get(row['uid'], 0),
+                vortex=counts.get('vortex', {}).get(row['uid'], 0),
+                deleteStatus='', canDelete=True)
+        for record in remote_users:
+            uid = 'firebase:' + record.uid
+            identifier = public_id(uid)
+            row = by_id.get(identifier)
+            display = clean(record.display_name or (row or {}).get('name'), 200)
+            first, last = name_parts(display)
+            # Never fabricate a name from an email address.
+            provider_ids = {p.provider_id for p in record.provider_data}
+            provider = 'google' if 'google.com' in provider_ids else ('password' if record.email else 'unknown')
+            if row is None:
+                row = dict(id=identifier, name=display, firstName=first, lastName=last,
+                           email=clean(record.email), provider=provider, apps=[], lastSeen=None,
+                           signIns=0, projects=counts.get('projects', {}).get(uid, 0),
+                           conversations=counts.get('conversations', {}).get(uid, 0),
+                           vortex=counts.get('vortex', {}).get(uid, 0), deleteStatus='', canDelete=True)
+                by_id[identifier] = row
+            else:
+                row.update(name=display or row['name'], firstName=first or row['firstName'],
+                           lastName=last or row['lastName'], email=clean(record.email) or row['email'],
+                           provider=providers.get(uid, provider))
+        for record in pending:
+            row = by_id.get(record['id'])
+            if row is None:
+                first, last = '', ''
+                row = dict(id=record['id'], name='', firstName=first, lastName=last,
+                           email=clean(record['email']), provider='unknown', apps=[], lastSeen=None,
+                           signIns=0, projects=counts.get('projects', {}).get(record['uid'], 0),
+                           conversations=counts.get('conversations', {}).get(record['uid'], 0),
+                           vortex=counts.get('vortex', {}).get(record['uid'], 0),
+                           canDelete=True)
+                by_id[record['id']] = row
+            row['deleteStatus'] = record['state']
+        admin_ids = {public_id(uid) for uid in self.administrators()}
+        for row in by_id.values():
+            row['canDelete'] = row['id'] not in admin_ids
+        return sorted(by_id.values(), key=lambda v: ((v['name'] or v['email']).lower(), v['id']))
 
-    def vision_account_preview(account_id):
-        if not owner_access():
-            return forbidden()
+    def identify(self, identifier):
+        """Resolve only server-known Firebase UIDs; a client never supplies a raw UID."""
+        with self.db() as db:
+            record = db.execute('SELECT uid,email,state FROM account_deletions WHERE id=?',
+                                (identifier,)).fetchone()
+            if record:
+                return record['uid'], clean(record['email']), record['state']
+            for row in db.execute('SELECT uid,email FROM audit_users'):
+                if public_id(row['uid']) == identifier:
+                    return row['uid'], clean(row['email']), ''
+        for account in self.firebase_users():
+            uid = 'firebase:' + account.uid
+            if public_id(uid) == identifier:
+                return uid, clean(account.email), ''
+        raise LookupError('This account no longer exists.')
+
+    @contextmanager
+    def context_db(self):
+        engine = self.sessions.context.engine
+        if engine:
+            with engine.db() as connection:
+                yield connection
+            return
+        path = Path(self.app.config['DATA_DIR']) / 'context' / 'context.sqlite3'
+        if not path.is_file() or path.is_symlink():
+            yield None
+            return
+        connection = sqlite3.connect(path, timeout=30)
         try:
-            with connect_db() as db:
-                _, _, _, preview = _preview(app, db, g.uid, account_id)
-            return respond(preview)
-        except RemovalError as error:
-            return respond({"error": str(error)}, error.status)
-        except (OSError, sqlite3.Error, ValueError):
-            return respond({"error": "Account removal preview is unavailable on the PC."}, 503)
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
-    def vision_account_remove(account_id):
-        if not owner_access():
-            return forbidden()
-        body = request.get_json(silent=True)
-        if not isinstance(body, dict) or set(body) != {"email", "confirmation"} or body.get("confirmation") != "DELETE":
-            return respond({"error": "Type DELETE and the account email to confirm removal."}, 400)
-        try:
-            with _LOCK:
-                with connect_db() as db:
-                    target, projects, vortex, preview = _preview(app, db, g.uid, account_id)
-                if body.get("email") != target["email"] or not target["email"]:
-                    raise RemovalError("The confirmation email does not match the selected account.", 400)
-                if preview["hasActiveWork"]:
-                    raise RemovalError("This account still has processing work. Stop it and retry.", 409)
-                if not preview["canDelete"]:
-                    raise RemovalError("Update the Vision PC and configure Firebase administrator credentials.", 503)
-                auth, sdk_app = _firebase_client(app)  # Fail before any changes if unconfigured.
-                uid = target["uid"]
-                with connect_db() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    tables, current_projects, current_vortex = _scope(db, uid)
-                    if _busy(db, tables, uid, current_projects,
-                             getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)):
-                        raise RemovalError("Work started since the preview. Stop it and retry.", 409)
-                    db.execute("INSERT OR IGNORE INTO account_removals(uid,created_at) VALUES(?,?)",
-                               (uid, time.time()))
-                # Delete Firebase Auth before discarding local records. A failed
-                # external call leaves the tombstone in place for an admin retry.
-                try:
-                    auth.delete_user(uid.removeprefix("firebase:"), app=sdk_app)
-                except auth.UserNotFoundError:
-                    pass
-                except Exception:
-                    raise RemovalError("Firebase did not confirm account deletion. Retry from this directory.", 503) from None
-                with connect_db() as db:
-                    tables, projects, vortex = _scope(db, uid)
-                    if _busy(db, tables, uid, projects,
-                             getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None)):
-                        raise RemovalError("A previous processing job is still finishing. Retry removal shortly.", 409)
-                    result_paths = [r[0] for r in db.execute("SELECT result_path FROM jobs WHERE uid=?", (uid,))] if "jobs" in tables else []
-                    media = _media_directories(db, tables, projects)
-                _remove_context(getattr(app.config.get("SESSIONS_CONTEXT"), "engine", None), uid,
-                                app.config["DATA_DIR"])
-                _remove_local_files(app, uid, projects, vortex, media, result_paths)
-                with connect_db() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    tables, projects, _ = _scope(db, uid)
-                    if _busy(db, tables, uid, projects):
-                        raise RemovalError("A processing job is still active. Retry when it finishes.", 409)
-                    _purge_database(db, uid, projects, tables)
-                audit = app.config.get("AUDIT_LOGS")
-                if audit:
-                    with audit.lock:
-                        (audit.directory / audit._filename(uid)).unlink(missing_ok=True)
-                        audit.seen = {k: v for k, v in audit.seen.items() if k[0] != uid}
-                        audit._index()
-                return respond({"deleted": True, "removedProjects": len(projects),
-                                "removedVortexJobs": len(vortex)})
-        except RemovalError as error:
-            return respond({"error": str(error)}, error.status)
-        except (OSError, sqlite3.Error, ValueError):
-            return respond({"error": "Account cleanup is incomplete. The account is blocked from this PC. Retry removal.", "retryable": True}, 503)
+    def active_work(self, uid, projects):
+        with self.db() as db:
+            for table, where, args in (
+                ('vortex_jobs', "uid=? AND status IN ('queued','processing')", (uid,)),
+                ('jobs', "uid=? AND status IN ('queued','processing')", (uid,)),
+                ('venture_dictation_requests', "uid=? AND status='processing'", (uid,))):
+                if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', args).fetchone():
+                    return True
+            for pid in projects:
+                for table, where in (
+                    ('project_runs', "project_id=? AND status IN ('queued','preparing','submitting','in_progress','saving')"),
+                    ('local_transcriptions', "project_id=? AND status IN ('queued','processing')"),
+                    ('uploaded_media', "project_id=? AND status IN ('queued','processing')"),
+                    ('document_jobs', "project_id=? AND status IN ('queued','processing')")):
+                    if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', (pid,)).fetchone():
+                        return True
+        with self.context_db() as context:
+            if context and context.execute(
+                "SELECT 1 FROM context_jobs WHERE owner=? AND status IN ('queued','processing') LIMIT 1",
+                (uid,)).fetchone():
+                return True
+        return False
 
-    app.add_url_rule("/api/admin/accounts/<account_id>", "vision_account_preview",
-                     vision_account_preview, methods=["GET"])
-    app.add_url_rule("/api/admin/accounts/<account_id>/delete", "vision_account_remove",
-                     vision_account_remove, methods=["POST"])
+    def owned(self, uid):
+        with self.db() as db:
+            projects = {row[0] for row in db.execute('SELECT id FROM projects WHERE owner_uid=?', (uid,))}
+            # A native Venture conversation is an account-owned project too.
+            projects.update(row[0] for row in db.execute(
+                'SELECT id FROM venture_conversations WHERE uid=? AND native=1', (uid,)))
+            media_ids = {table: [row[0] for row in db.execute(
+                'SELECT id FROM '+table+' WHERE project_id IN (SELECT id FROM projects WHERE owner_uid=?)', (uid,))]
+                for table in ('local_transcriptions', 'uploaded_media', 'document_jobs')}
+            # Include jobs belonging to native Venture projects (normally no media jobs).
+            for table in media_ids:
+                media_ids[table].extend(row[0] for pid in projects for row in db.execute(
+                    'SELECT id FROM '+table+' WHERE project_id=?', (pid,)))
+            uploads = [(row[0],row[1]) for row in db.execute(
+                'SELECT project_id,request_id FROM uploaded_media_uploads WHERE project_id IN '
+                '(SELECT id FROM projects WHERE owner_uid=?)', (uid,))]
+            vortex_ids = [row[0] for row in db.execute('SELECT id FROM vortex_jobs WHERE uid=?', (uid,))]
+            youtube_ids = [row[0] for row in db.execute('SELECT id FROM jobs WHERE uid=?', (uid,))]
+        return projects, media_ids, uploads, vortex_ids, youtube_ids
+
+    def erase_files(self, uid, projects, media_ids, uploads, vortex_ids, youtube_ids):
+        base = Path(self.app.config['DATA_DIR'])
+        for pid in projects:
+            if not PROJECT_ID.fullmatch(pid):
+                raise ValueError('A saved project identifier is invalid; no unverified path was removed.')
+            remove_owned(base / 'projects' / pid)
+            remove_owned(base / 'context' / 'sources' / hashlib.sha256((uid+'\0'+pid).encode()).hexdigest())
+        for table, directory in [('local_transcriptions','transcriptions'),
+                                 ('uploaded_media','uploaded-media'), ('document_jobs','documents')]:
+            for job in set(media_ids[table]):
+                if not MEDIA_ID.fullmatch(job):
+                    raise ValueError('A saved media identifier is invalid; cleanup was stopped.')
+                remove_owned(base / directory / job)
+        for pid, request_id in uploads:
+            remove_owned(base / 'uploaded-media' / '.uploads' /
+                hashlib.sha256((pid+'\0'+request_id).encode()).hexdigest())
+        for job in vortex_ids:
+            if not MEDIA_ID.fullmatch(job):
+                raise ValueError('A Vortex identifier is invalid; cleanup was stopped.')
+            remove_owned(base / 'vortex' / job)
+        for job in youtube_ids:
+            if not MEDIA_ID.fullmatch(job):
+                raise ValueError('A YouTube identifier is invalid; cleanup was stopped.')
+            for suffix in ('.json','.tmp'):
+                remove_owned(base / 'results' / (job+suffix))
+        remove_owned(self.sessions.venture.user_root(uid))
+        audit = self.app.config.get('AUDIT_LOGS')
+        if audit:
+            remove_owned(audit.directory / audit._filename(uid))
+
+    def erase_context(self, uid):
+        with self.context_db() as context:
+            if not context:
+                return
+            context.execute('BEGIN IMMEDIATE')
+            context.execute('DELETE FROM context_fts WHERE rowid IN (SELECT id FROM context_chunks WHERE owner=?)', (uid,))
+            for table in ('context_chunks','context_sources','context_cache','context_vectors',
+                          'context_heads','context_generations','context_jobs'):
+                context.execute('DELETE FROM '+table+' WHERE owner=?', (uid,))
+
+    def erase_database(self, uid, projects):
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            existing = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+            for pid in projects:
+                # No arbitrary, client-supplied IDs ever reach this method.
+                for table, col in (('run_events','run_id'),('run_artifacts','run_id'),
+                                   ('context_responses','run_id'),('context_uploads','run_id'),
+                                   ('venture_memory_indexed','run_id')):
+                    db.execute('DELETE FROM '+table+' WHERE '+col+' IN '
+                               '(SELECT id FROM project_runs WHERE project_id=?)', (pid,))
+                for table, col in (('local_transcriptions','project_id'),('uploaded_media','project_id'),
+                                   ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),
+                                   ('venture_search','cid'),('context_sync_jobs','project_id'),
+                                   ('project_runs','project_id')):
+                    if table in existing:
+                        db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (pid,))
+                db.execute('DELETE FROM venture_memory WHERE cid=?', (pid,))
+                db.execute('DELETE FROM venture_conversations WHERE id=? AND uid=?', (pid,uid))
+                db.execute('DELETE FROM projects WHERE id=? AND owner_uid=?', (pid,uid))
+            # Non-native Venture records can also exist, without owning their board project.
+            db.execute('DELETE FROM venture_memory WHERE uid=?', (uid,))
+            db.execute('DELETE FROM venture_conversations WHERE uid=?', (uid,))
+            for table, col in (('venture_preferences','uid'),('venture_workspace_preferences','uid'),
+                               ('venture_funding','uid'),('venture_calibrations','uid'),
+                               ('venture_ledger','uid'),('venture_container_costs','uid'),
+                               ('venture_dictation_requests','uid'),('account_credentials','uid'),
+                               ('gemini_access','uid'),('gemini_access_decisions','uid'),
+                               ('gemini_usage','uid'),('vortex_jobs','uid'),('responses','uid'),
+                               ('jobs','uid'),('audit_events','uid'),('audit_signins','uid'),
+                               ('audit_account_metadata','uid'),('audit_user_apps','uid'),
+                               ('audit_users','uid')):
+                if table in existing:
+                    db.execute('DELETE FROM '+table+' WHERE '+col+'=?', (uid,))
+            # Decisions performed by this former admin must not retain their identity.
+            if 'gemini_access_decisions' in existing:
+                db.execute('DELETE FROM gemini_access_decisions WHERE actor_uid=?', (uid,))
+            db.execute("""UPDATE account_deletions SET uid=NULL,email=NULL,state='complete',completed_at=?
+                          WHERE id=?""", (time.time(),public_id(uid)))
+
+    def delete(self, identifier, confirmation):
+        if not HASH_ID.fullmatch(identifier):
+            raise ValueError('Choose a valid account.')
+        with self.lock:
+            uid, email, state = self.identify(identifier)
+            if state == 'complete':
+                return {'deleted': True, 'pending': False}
+            if not uid or uid == g.uid or uid in self.administrators():
+                raise PermissionError('Owner and administrator accounts cannot be deleted here.')
+            if not email or confirmation != 'DELETE '+email:
+                raise ValueError('Type DELETE followed by the exact account email to confirm.')
+            from firebase_admin import auth
+            app = self.firebase()  # No tombstone or local changes unless admin credentials are ready.
+            projects, media_ids, uploads, vortex_ids, youtube_ids = self.owned(uid)
+            if self.active_requests.get(uid, 0):
+                raise BlockingIOError('An account request is still finishing. Try deletion again.')
+            if self.active_work(uid, projects):
+                raise BlockingIOError('This user still has running or queued work. Finish or cancel their jobs, then retry deletion.')
+            # Tombstone BEFORE revoking Firebase or removing files. A valid, already-
+            # issued JWT is otherwise usable for up to an hour after Firebase removal.
+            with self.db() as db:
+                db.execute("""INSERT OR IGNORE INTO account_deletions(id,uid,email,state,requested_at)
+                              VALUES(?,?,?,'pending',?)""", (identifier,uid,email,time.time()))
+            try:
+                auth.delete_user(uid.removeprefix('firebase:'), app=app)
+            except auth.UserNotFoundError:
+                pass  # Retry after an interrupted successful Firebase deletion.
+            # If the API or disk fails, the tombstone stays and another owner
+            # request can safely resume. Never report success for a partial purge.
+            if self.active_work(uid, projects):
+                raise BlockingIOError('Work is still stopping. This account is blocked; retry to finish removing its files.')
+            with self.sessions.venture.mirror_lock:
+                self.erase_files(uid, projects, media_ids, uploads, vortex_ids, youtube_ids)
+                self.erase_context(uid)
+                self.erase_database(uid, projects)
+            audit = self.app.config.get('AUDIT_LOGS')
+            if audit:
+                audit.seen = {key:val for key,val in audit.seen.items() if key[0] != uid}
+                audit._index()
+                audit.event(g.uid, 'account_deleted', outcome='complete')
+            return {'deleted': True, 'pending': False}
+
+    def register_routes(self):
+        def respond(value, status=200):
+            response = jsonify(value)
+            response.status_code = status
+            response.headers['Cache-Control'] = 'private, no-store'
+            return response
+
+        @self.app.get('/api/admin/accounts')
+        def admin_accounts():
+            if not self.owner():
+                return respond({'code':'ACTIVITY_FORBIDDEN','error':'Owner access required.'},403)
+            try:
+                accounts = self.directory(self.firebase_users())
+                return respond({'available':True,'users':accounts})
+            except Exception as error:
+                self.app.logger.warning('Firebase account directory unavailable (%s)',type(error).__name__)
+                return respond({'available':False,'users':[],
+                                'error':str(error) if isinstance(error,RuntimeError) else
+                                        'Firebase account directory is temporarily unavailable.'},503)
+
+        @self.app.post('/api/admin/accounts/delete')
+        def admin_account_delete():
+            if not self.owner():
+                return respond({'code':'ACTIVITY_FORBIDDEN','error':'Owner access required.'},403)
+            request.max_content_length=4096
+            body = request.get_json(silent=True)
+            if not isinstance(body,dict) or set(body)!={'userId','confirmation'}:
+                return respond({'error':'Select one account and confirm its email.'},400)
+            try:
+                result=self.delete(body['userId'],body['confirmation'])
+                return respond(result)
+            except (TypeError,ValueError,LookupError) as error:
+                return respond({'error':str(error)},404 if isinstance(error,LookupError) else 400)
+            except PermissionError as error:
+                return respond({'error':str(error)},403)
+            except BlockingIOError as error:
+                return respond({'error':str(error)},409)
+            except Exception as error:
+                # Never return raw SDK exceptions, file paths or credentials.
+                self.app.logger.error('Account deletion needs retry (%s)',type(error).__name__)
+                return respond({'error':'Account deletion could not finish. No success was reported. '
+                                        'If already started, the account remains blocked. '
+                                        'Check PC connectivity and retry.'},503)

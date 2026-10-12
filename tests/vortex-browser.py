@@ -34,7 +34,7 @@ FIREBASE = r'''
  window.addEventListener('storage',event=>{if(event.key==='__fixtureUID'){auth.currentUser=identity(event.newValue);listeners.forEach(fn=>fn(auth.currentUser));}});
  window.VisionFirebaseSDK={app:{getApps:()=>[],initializeApp:(config,name)=>{__firebaseCalls.push({config,name});return {name};}},auth:{
    getAuth:()=>{document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},initializeAuth:(_,options)=>{window.__authInitOptions=options;document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},browserPopupRedirectResolver:'POPUP',useDeviceLanguage:()=>{},onAuthStateChanged:(_,fn)=>{listeners.push(fn);return ()=>{};},
-   setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},browserLocalPersistence:'LOCAL',
+   setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},indexedDBLocalPersistence:'INDEXED',browserLocalPersistence:'LOCAL',
    GoogleAuthProvider:class{setCustomParameters(value){window.__providerOptions=value;localStorage.setItem('__fixtureProvider',JSON.stringify(value));}},
    signInWithPopup:login,signInWithEmailAndPassword:login,createUserWithEmailAndPassword:login,
    sendPasswordResetEmail:async()=>{},signOut:async()=>window.__switchUser(null)
@@ -484,7 +484,8 @@ def verify_login_gateway(browser):
         sign_in(page, method)
         assert page.locator('#authGate').is_hidden()
         assert not api.vision_calls, 'Vortex login opened Vision projects or preferences'
-        assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
+        assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+        assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
 
         # Returning to Vortex with a saved identity needs no login or gateway.
         visits = []
@@ -589,20 +590,21 @@ def run():
             sign_in(page)
             page.locator('#application').wait_for(state='visible')
             page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
-            assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
-            assert page.evaluate("JSON.parse(localStorage.getItem('__fixtureProvider')).prompt") == 'select_account'
+            assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+            assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
+            assert page.evaluate("localStorage.getItem('__fixtureProvider')") is None  # No forced account picker
             page.wait_for_function("document.querySelector('#profileImage').src.startsWith('blob:') && document.querySelector('#profileImage').naturalWidth > 0")
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
             # The menu reports the web release, not an assumed Windows version.
-            assert page.locator('#vortexVersion').text_content() == 'v1.0.2'
+            assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
             assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
             if width == 390:
                 api.server_version = '1.0.2'
                 refresh(page)
                 assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.2'
-                assert page.locator('#vortexVersion').text_content() == 'v1.0.2'
+                assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
                 # Missing versions on older servers and malformed data
                 # are neutral; they neither block history nor inject markup.
                 for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.1'}):
@@ -665,6 +667,15 @@ def run():
             inspected.update(status='complete', phase='Media ready', progress=None, media=VIDEO, results=[VIDEO])
             refresh(page)
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
+            page.locator('#moisesOpenButton').wait_for(state='visible')
+            page.wait_for_function("document.querySelector('#moisesOpenButton .moises-logo').naturalWidth > 0")
+            download_bounds = page.locator('#downloadButton').bounding_box()
+            moises_bounds = page.locator('#moisesOpenButton').bounding_box()
+            for dimension in ('x', 'width', 'height'):
+                assert abs(download_bounds[dimension] - moises_bounds[dimension]) < 1, f'Moises {dimension} differs from Download at {width}px'
+            gap = moises_bounds['y'] - download_bounds['y'] - download_bounds['height']
+            assert 8 <= gap <= 11, f'Moises must sit directly below Download at {width}px: {gap}'
+            assert page.locator('#moisesOpenButton').get_attribute('aria-label') == 'Open in Moises'
             for value in ('16:9', '3840 × 2160', '60 fps', 'H.264', 'AAC'):
                 assert value in page.locator('#mediaInfo').inner_text()
             assert page.locator('#processing').is_hidden()
@@ -769,6 +780,18 @@ def run():
                 page.locator('#downloadButton').click()
             assert retry_event.value.suggested_filename == 'Harbor.mp4'
             assert len(api.jobs['alice']) == before_manual, 'Saving again should not re-encode a ready file'
+            if width == 390:
+                # Mock the native boundary; this does not test the installed iOS app.
+                page.evaluate('''Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+                    Object.defineProperty(navigator,'share',{configurable:true,value:async value=>{window.__moisesShared={name:value.files[0].name,size:value.files[0].size,type:value.files[0].type,active:navigator.userActivation.isActive,keys:Object.keys(value)};}});''')
+                page.locator('#moisesOpenButton').click()
+                page.locator('#moisesStatus').get_by_text('Ready. Tap Open in Moises again', exact=False).wait_for()
+                assert not page.evaluate('!!window.__moisesShared'), 'Preparing must not open the OS share interface'
+                media_request = [call for call in api.calls if call['path'].endswith('/file') and call['token']][-1]
+                assert media_request['uid'] == 'alice' and media_request['token'] == 'Bearer fixture-alice'
+                page.locator('#moisesOpenButton').click()
+                assert page.evaluate('__moisesShared') == dict(name='Harbor.mp4', size=19, type='video/mp4', active=True, keys=['files'])
+                page.evaluate("Object.defineProperty(navigator,'canShare',{configurable:true,value:undefined}); Object.defineProperty(navigator,'share',{configurable:true,value:undefined});")
             page.locator('input[name=quality][value=max]').check()
             restore_max = next_job(page, api, queued_download['id'])
             restore_max.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
@@ -963,8 +986,8 @@ def run():
             assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             version = page.locator('#navigation #vortexVersion')
-            assert version.inner_text() == 'v1.0.2'
-            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.2'
+            assert version.inner_text() == 'v1.0.3'
+            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.3'
             name_box = page.locator('#navigation .nav-brand-name').bounding_box()
             version_box = version.bounding_box()
             links_box = page.locator('#navigation nav').bounding_box()
@@ -1070,3 +1093,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+
