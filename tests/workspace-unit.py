@@ -56,6 +56,8 @@ class ServiceTests(unittest.TestCase):
             if cid!='conversation-alice' or uid!='alice':raise Error('Unavailable',404)
             return {'id':cid}
         self.v=types.SimpleNamespace(app=self.app,db=db,Error=Error,account=lambda:self.uid,lookup=lookup,transcription=None)
+        preferences=types.SimpleNamespace(get=lambda uid:{'settings':{'model':'gpt-5.6-terra'}})
+        self.v.sessions=types.SimpleNamespace(local=types.SimpleNamespace(preferences=preferences))
         self.w=Workspace(self.v);self.w.initialize();self.d=Dictation(self.v);self.d.initialize()
         with db() as con:
             con.executescript('''CREATE TABLE project_runs(id TEXT PRIMARY KEY,project_id TEXT,inputs_json TEXT,created_at REAL);
