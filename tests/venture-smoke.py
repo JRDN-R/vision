@@ -19,7 +19,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-local.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
@@ -72,17 +72,18 @@ def run():
                 p.locator('[data-conversation="v-test-conversation-001"]').first.click();p.wait_for_timeout(200)
                 assert 'Your inspection report' in p.locator('#ventureTurns').inner_text()
                 assert p.evaluate('testState().board')=='Unchanged board'
-                assert p.evaluate('testState().settings.runOptions.webSearch') is True
+                # Opening history/settings must retain explicit saved opt-outs.
+                assert p.evaluate('testState().settings.runOptions.webSearch') is False
                 assert p.evaluate('testState().settings.runOptions.codeInterpreter') is True
-                assert p.evaluate('testState().settings.memoryEnabled') is True
+                assert p.evaluate('testState().settings.memoryEnabled') is False
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed automatically'
                 # The settings dialog should fit an actual mobile Safari viewport.
                 assert not p.locator('#ventureSettings').get_by_text('Set your course').count()
                 assert p.locator('.venture-feature-grid label').count()==3
-                assert p.evaluate('ventureSettings().memoryEnabled') is True
-                assert p.evaluate('ventureSettings().runOptions.webSearch') is True
+                assert p.evaluate('ventureSettings(venture.settings).memoryEnabled') is False
+                assert p.evaluate('ventureSettings(venture.settings).runOptions.webSearch') is False
                 assert p.evaluate('ventureSettings().runOptions.codeInterpreter') is True
                 if width<761:
                     p.set_viewport_size({'width':width,'height':640})

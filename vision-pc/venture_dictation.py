@@ -233,9 +233,13 @@ class Dictation:
             if request.method == 'GET':
                 return jsonify(self.capability())
             request.max_content_length = MAX_BYTES + 65536
-            if set(request.form) - {'requestId', 'provider'} or 'requestId' not in request.form or any(len(request.form.getlist(k)) != 1 for k in request.form) or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
+            if set(request.form) - {'requestId', 'provider', 'localOnly'} or 'requestId' not in request.form or any(len(request.form.getlist(k)) != 1 for k in request.form) or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
                 raise self.Error('Dictation accepts one microphone recording, its request ID and an optional provider only.')
             provider = request.form.get('provider', 'gemini')
+            if request.form.get('localOnly') == 'true' and provider != 'whisper':
+                raise self.Error('Local mode only permits PC Whisper dictation.')
+            if self.v.sessions.local.preferences.get(uid)['settings']['model'] == 'qwen3.8-local' and provider != 'whisper':
+                raise self.Error('Qwen local mode uses PC Whisper. Select a cloud model explicitly before cloud dictation.')
             if provider not in ('gemini', 'whisper'):
                 raise self.Error('Choose Gemini or PC Whisper for dictation.')
             client_id = request.form['requestId']

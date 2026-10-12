@@ -188,6 +188,11 @@ class ContextIntegration:
         return binding
 
     def budget(self, row):
+        if row['model'] == 'qwen3.8-local':
+            # Only a retrieval bound; the final rendered prompt is tokenized by llama.cpp.
+            profile=json.loads(row.get('local_profile_json') or '{}')
+            context=max(4096,min(16384,int(profile.get('contextTokens',self.sessions.local.context_tokens))))
+            return max(2000,min(16000,(context-row['max_tokens']-700)*2))
         from model_parameters import profile
         verified = profile(row['model']) or {}
         configured = max(8000, min(400000, int(self.settings.get('contextCharacters', 48000))))

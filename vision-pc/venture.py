@@ -224,7 +224,7 @@ class Venture:
 
     def metadata(self,row: dict) -> dict:
         return dict(id=row['id'],title=row['title'],graphic=row.get('graphic','conversation'),manualTitle=bool(row['manual_title']),
-                    boardProject=not bool(row['native']),settings=json.loads(row['settings_json']),
+                    boardProject=not bool(row['native']),settings=self.sessions.local.preferences.effective(row['uid'],json.loads(row['settings_json'])),
                     revision=row['revision'],createdAt=row['created_at'],updatedAt=row['updated_at'],
                     storageWarning=row.get('storage_warning'))
 
@@ -233,7 +233,7 @@ class Venture:
         if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled'}:
             raise self.Error('Invalid Venture settings.')
         model=value.get('model',DEFAULT_SETTINGS['model'])
-        limit=value.get('maxOutputTokens',16000)
+        limit=value.get('maxOutputTokens',2048 if model=='qwen3.8-local' else 16000)
         if not isinstance(model,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',model):
             raise self.Error('Enter a valid API model ID.')
         max_limit=model_output_token_limit(model)
@@ -400,7 +400,7 @@ class Venture:
                 cid=body.get('id')
                 if not isinstance(cid,str) or not CONVERSATION_ID.fullmatch(cid):
                     raise self.Error('A unique conversation ID is required.')
-                settings=self.settings(body.get('settings') or DEFAULT_SETTINGS)
+                settings=self.settings(self.sessions.local.preferences.effective(uid,body.get('settings') or DEFAULT_SETTINGS))
                 now=time.time()
                 with self.db() as db:
                     db.execute('BEGIN IMMEDIATE')
@@ -468,7 +468,7 @@ class Venture:
             except ValueError:raise self.Error('Invalid conversation cursor.')
             before=request.args.get('before')
             params=[cid];where='project_id=?'
-            if since:where+=' AND updated_at>=?';params.append(since)
+            if since:where+=" AND (updated_at>=? OR (provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving')))";params.append(since)
             if before:
                 try:when,rid=json.loads(before);when=float(when)
                 except (TypeError,ValueError):raise self.Error('Invalid message cursor.')
@@ -501,39 +501,39 @@ class Venture:
             uid=self.account()
             if request.method=='PUT':
                 request.max_content_length=16384
-                settings=self.settings(request.get_json(silent=True))
-                with self.db() as db:
-                    db.execute('INSERT INTO venture_preferences VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET settings_json=excluded.settings_json,updated_at=excluded.updated_at',
-                               (uid,json.dumps(settings),time.time()))
-            with self.db() as db:row=db.execute('SELECT settings_json FROM venture_preferences WHERE uid=?',(uid,)).fetchone()
-            return jsonify(settings=json.loads(row[0]) if row else DEFAULT_SETTINGS)
+                return jsonify(self.sessions.local.preferences.put(uid,request.get_json(silent=True)))
+            return jsonify(self.sessions.local.preferences.get(uid))
 
         @app.get('/api/venture/models')
         def venture_models():
             from sessions import OPENAI, unprotect_secret
             uid=self.account()
+            local_model=self.sessions.local.catalog()
+            if self.sessions.local.preferences.get(uid)['settings']['model']=='qwen3.8-local':
+                from model_parameters import REGISTRY
+                return jsonify(models=[local_model,*[dict(id=mid) for mid in REGISTRY['models'] if mid!='qwen3.8-local']],status='local-only')
             with self.db() as db:
                 saved=db.execute('SELECT openai_key_cipher FROM account_credentials WHERE uid=?',(uid,)).fetchone()
-            if not saved:return jsonify(models=[],status='no-key')
+            if not saved:return jsonify(models=[local_model],status='no-key')
             try:key=unprotect_secret(saved[0])
-            except Exception:raise self.Error('Save your API key again to load models.',503) from None
+            except Exception:return jsonify(models=[local_model],status='cloud-unavailable')
             cache_key=(uid,key_id(key));cached=self.model_cache.get(cache_key)
             if cached and time.monotonic()-cached[0]<300 and request.args.get('refresh')!='1':
-                return jsonify(models=cached[1],status='available')
+                return jsonify(models=[local_model,*cached[1]],status='available')
             try:
                 # Read-only discovery, never a model request or a billed probe.
                 with requests.get(OPENAI+'/models',headers={'Authorization':'Bearer '+key},timeout=(5,10)) as response:
-                    if response.status_code!=200:raise self.Error('OpenAI could not list models. Check this API key’s model permissions.',502)
+                    if response.status_code!=200:return jsonify(models=[local_model],status='cloud-unavailable')
                     payload=response.json()
                 items=payload.get('data')
                 if not isinstance(items,list):raise ValueError('Invalid model list')
                 ids={m['id'] for m in items if isinstance(m,dict) and isinstance(m.get('id'),str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',m['id'])}
                 models=[dict(id=id) for id in sorted(ids)]
             except (requests.RequestException,ValueError,AttributeError,TypeError):
-                raise self.Error('OpenAI’s model list is temporarily unavailable. Try refreshing it.',502) from None
+                return jsonify(models=[local_model],status='cloud-unavailable')
             if len(self.model_cache)>200:self.model_cache.clear()
             self.model_cache[cache_key]=(time.monotonic(),models)
-            return jsonify(models=models,status='available')
+            return jsonify(models=[local_model,*models],status='available')
 
         @app.route('/api/venture/funding',methods=['GET','POST'])
         def venture_funding():

@@ -139,7 +139,11 @@ class LivePriceTests(unittest.TestCase):
         for model in curated['models']:
             with self.subTest(model=model):
                 result=self.price(model)
-                self.assertGreater(result['micro'],0)
+                if model=='qwen3.8-local':
+                    self.assertEqual(result['micro'],0)
+                    self.assertEqual(result['usageKind'],'local-no-api-charge')
+                else:
+                    self.assertGreater(result['micro'],0)
                 self.assertEqual(result['problems'],[])
 
     def test_terra_long_context_and_tier_are_per_request(self):

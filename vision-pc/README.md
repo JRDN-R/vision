@@ -398,3 +398,15 @@ with video snapshots even when the original audio starts late or finishes early.
 The new Standard document installer prepares PDFs, Office files, spreadsheet data,
 image OCR and common text/archive formats on FUPCJ Server while you build a board.
 See [installation, storage and format coverage](DOCUMENTS.md). The larger Docling profile is optional.
+
+## Durable import ownership preview
+
+The opt-in Phase 1A retention implementation, diagnostics and outstanding release
+gates are documented in [Durable import ownership](../docs/durable-import-ownership.md).
+It is disabled by default, does not activate Qwen or change model preferences, and
+does not yet complete board attachment on the server.
+
+
+### Local Qwen and RAG preview
+
+The optional Qwen provider, durable local queue, versioned preferences, lossless RAG cache/export compression, and indexing progress are documented in [the implementation and installation guide](../docs/local-qwen-rag.md). Ordinary updates keep Qwen disabled and do not activate account defaults. Photo input, FUPCJ hardware validation, and streamed 400+ MB source ingestion remain pending.

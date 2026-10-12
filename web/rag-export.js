@@ -17,7 +17,13 @@ function ragExportPaint(){
  $('downloadRag').disabled=active;
  $('exportChoiceDialog').setAttribute('aria-busy',String(active));
  $('ragExportProgress').hidden=!active;
- $('cancelExportChoice').textContent=active?'Cancel preparation':'Cancel';
+ $('cancelExportChoice').textContent=active?'Stop waiting':'Cancel';
+}
+function ragExportProgress(status){
+ const bar=$('ragExportProgress'),p=status.progress;
+ if(p?.kind==='determinate'&&p.total>0){bar.max=p.total;bar.value=p.completed;}
+ else if(typeof bar.removeAttribute==='function')bar.removeAttribute('value');
+ if(p?.stage)$('ragExportStatus').textContent=p.stage+(p.total?' · '+p.completed+' of '+p.total:'')+'. FUPCJ keeps processing if you close this window.';
 }
 function ragExportCancel(){
  const job=ragExportJob;ragExportJob=null;ragExportPrepared=null;
@@ -67,7 +73,7 @@ async function downloadRagExport(){
   return;
  }
  const job={scope:ragExportScope(),controller:new AbortController(),reference:null,generation:null};
- ragExportJob=job;ragExportPaint();$('ragExportStatus').textContent='Saving the latest project to FUPCJ…';
+ ragExportJob=job;ragExportPaint();$('ragExportProgress').removeAttribute?.('value');$('ragExportStatus').textContent='Saving the latest project to FUPCJ…';
  const deadline=setTimeout(()=>{job.timedOut=true;job.controller.abort();},120000);
  try{
   if(projectIsTemporary())throw new Error('Save this project to a signed-in account before exporting RAG. ZIP is available for this session.');
@@ -87,6 +93,7 @@ async function downloadRagExport(){
   for(;;){
    $('ragExportStatus').textContent='Preparing searchable context on FUPCJ…';
    const status=await ragExportRequest(job,path+'?revision='+job.reference.revision);
+   ragExportProgress(status);
    if(status.revision!==job.reference.revision)throw new Error('FUPCJ returned a different project revision. Retry RAG.');
    if(status.ready!==true){
     if(!['queued','indexing','updating'].includes(status.status))throw new Error(status.warning||'The context index needs attention. Rebuild it in Venture, or choose ZIP.');
@@ -101,7 +108,13 @@ async function downloadRagExport(){
    if(result.manifest?.projectId!==job.reference.projectId||result.manifest?.revision!==job.reference.revision)throw new Error('FUPCJ returned context for a different project revision. No file was downloaded.');
    if(typeof result.text!=='string'||!result.text.trim()||!Array.isArray(result.items)||!result.items.some(item=>typeof item.text==='string'&&item.text.trim()))throw new Error('No readable context is ready for RAG. Finish document or transcript processing, or choose ZIP.');
    const limited=result.complete!==true||(result.warnings||[]).length>0;
-   const prepared={job,limited,blob:new Blob([ragExportText(result)],{type:'text/plain;charset=utf-8'}),name:(R.safeFilename(state.title)||'Vision-project')+'.rag.txt'};
+   const name=(R.safeFilename(state.title)||'Vision-project')+'.rag.txt',text=ragExportText(result);
+   let blob=new Blob([text],{type:'text/plain;charset=utf-8'}),downloadName=name;
+   if($('ragCompress')?.checked&&typeof CompressionStream==='function'){
+    $('ragExportStatus').textContent='Compressing the snapshot without changing its text…';
+    blob=await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob();downloadName=name+'.gz';ragExportCheck(job);
+   }
+   const prepared={job,limited,blob,name:downloadName};
    if(limited){
     ragExportPrepared=prepared;
     const warnings=(result.warnings||[]).filter(value=>typeof value==='string').join(' ');
@@ -110,7 +123,7 @@ async function downloadRagExport(){
    break;
   }
  }catch(error){
-  if(ragExportJob===job&&ragExportCurrent(job.scope))$('ragExportStatus').textContent=job.timedOut?'Context is still preparing or FUPCJ is unavailable. Try RAG again shortly, or choose ZIP.':error.name==='AbortError'?'Preparation cancelled.':error.message;
+  if(ragExportJob===job&&ragExportCurrent(job.scope))$('ragExportStatus').textContent=job.timedOut?'Context is still preparing on FUPCJ. Try RAG again shortly to reconnect; accepted indexing continues.':error.name==='AbortError'?'Stopped waiting. Accepted indexing continues on FUPCJ.':error.message;
  }finally{
   clearTimeout(deadline);
   if(ragExportJob===job){ragExportJob=null;ragExportPaint();}
@@ -120,6 +133,8 @@ function installRagExport(){
  const dialog=document.createElement('dialog');dialog.id='exportChoiceDialog';dialog.setAttribute('aria-labelledby','exportChoiceTitle');
  dialog.innerHTML='<div class="row spread"><h2 id="exportChoiceTitle">Export project</h2><button id="closeExportChoice" class="dialog-close" type="button" aria-label="Close export">×</button></div><p class="intro">Choose how to download your project.</p><div class="export-format-options"><button id="downloadRag" class="export-format-option export-format-rag" type="button"><span class="export-format-title">Download RAG <small>(recommended)</small></span><span class="export-format-description">Compact text context for AI, prepared on FUPCJ.</span></button><button id="chooseZipExport" class="export-format-option" type="button"><span class="export-format-title">Download ZIP</span><span class="export-format-description">Project instructions, screenshots, transcripts, and files.</span></button></div><p class="mini-note">RAG includes selected text. Choose ZIP when your task needs original images or files. Save project keeps an editable copy.</p><progress id="ragExportProgress" hidden aria-label="Preparing RAG context"></progress><p id="ragExportStatus" class="mini-note" role="status" aria-live="polite"></p><div class="dialog-actions"><button id="cancelExportChoice" type="button">Cancel</button></div>';
  document.body.appendChild(dialog);
+ const compression=document.createElement('label');compression.className='mini-note';compression.innerHTML='<input id="ragCompress" type="checkbox"> Compress download (.gz). Unzip before attaching it to an AI. The text stays exact.';
+ if(typeof CompressionStream==='function')$('ragExportProgress').before(compression);
  showExport=function(){
   if(!state.nodes.length||busy||ioBusy||dialog.open)return;
   ragExportCancel();$('ragExportStatus').textContent='';dialog.showModal();
