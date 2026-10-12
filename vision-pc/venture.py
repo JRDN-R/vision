@@ -496,6 +496,9 @@ class Venture:
             if index<0 or index>=len(files):raise self.Error('This attachment is unavailable.',404)
             file=files[index]
             if not Path(file['path']).is_file():raise self.Error('This attachment is missing on FUPCJ Server.',404)
+            if 'preview' in request.args:
+                from venture_images import preview
+                return preview(file, request.args['preview'], self.Error)
             return send_file(file['path'],as_attachment=True,download_name=disk_name(file['name']),mimetype=file['mime'],max_age=0)
 
         @app.route('/api/venture/preferences',methods=['GET','PUT'])

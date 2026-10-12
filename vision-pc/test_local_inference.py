@@ -95,6 +95,22 @@ class LocalInferenceTests(unittest.TestCase):
         self.assertEqual(result.status_code,409)
         self.assertEqual(result.json['code'],'local-disclosure-required')
 
+    def test_timing_estimates_only_use_this_accounts_completed_work(self):
+        import time
+        now=time.time()
+        for index in range(3):
+            rid=self.send(request_id='timing-alice-'+str(index)).json['runId']
+            self.s.update(rid,status='completed',local_started_at=now-120,local_finished_at=now)
+        self.new('local_bob_timing_chat',self.b)
+        self.client.post('/api/venture/local/disclosure',headers=self.b,json={'version':DISCLOSURE})
+        for index in range(3):
+            rid=self.send('local_bob_timing_chat',self.b,request_id='timing-bob-'+str(index)).json['runId']
+            self.s.update(rid,status='completed',local_started_at=now-3000,local_finished_at=now)
+        pending=self.send(request_id='timing-current').json
+        self.assertEqual(pending['localQueue']['estimateSamples'],3)
+        self.assertEqual(pending['localQueue']['estimatedRemainingSeconds'],120)
+        self.assertEqual(pending['localQueue']['estimateStatus'],'estimated')
+
     def test_files_work_with_code_disabled_and_no_cloud(self):
         options=dict(clientRequestId='local-file',model=MODEL,maxOutputTokens=1024,
                      message='What is the bore?',runOptions={'codeInterpreter':False})

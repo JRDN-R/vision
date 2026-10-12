@@ -91,10 +91,21 @@ class LocalInference:
                                ('local_llama_cpp', row['id'])).fetchone()[0]
         now = time.time()
         started, finished = row.get('local_started_at'), row.get('local_finished_at')
+        elapsed = max(0, (finished or now) - started) if started else 0
+        timing = dict(estimatedRemainingSeconds=None,estimatedRemainingRange=None,estimateStatus='complete',estimateSamples=0)
+        if row['status'] not in ('completed','incomplete','cancelled','error'):
+            from local_timing import estimate
+            # Only this owner's timing samples are used. No other user's prompts,
+            # filenames, identities or individual timings enter the response.
+            with self.db() as db:
+                history = db.execute('''SELECT r.* FROM project_runs r JOIN projects p ON p.id=r.project_id
+                    WHERE p.owner_uid=(SELECT owner_uid FROM projects WHERE id=?)
+                    AND r.provider='local_llama_cpp' AND r.status='completed' AND r.local_finished_at>?
+                    ORDER BY r.local_finished_at DESC LIMIT 60''', (row['project_id'],now-30*86400)).fetchall()
+            timing = estimate(row, [dict(item) for item in history], elapsed, ahead)
         return dict(provider='local_llama_cpp', requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
-                    processingSeconds=round(max(0, (finished or now) - started), 1) if started else 0,
-                    estimatedRemainingSeconds=None, estimateStatus='Not calibrated',
+                    processingSeconds=round(elapsed, 1), **timing,
                     progressKind='indeterminate', noApiTokenCharge=True,
                     metrics=json.loads(row.get('local_metrics_json') or '{}'))
 

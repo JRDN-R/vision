@@ -16,11 +16,14 @@ def main():
     parser.add_argument('--action',choices=['check','benchmark'],default='check')
     parser.add_argument('--gpu-layers',type=int,default=0)
     parser.add_argument('--context',type=int,choices=[4096,8192,16384],default=4096)
+    parser.add_argument('--threads',type=int,choices=range(1,17))
     parser.add_argument('--output',required=True)
     args=parser.parse_args()
     path=Path(args.config).resolve()
     config=json.loads(path.read_text(encoding='utf-8-sig'))
     settings=dict(config.get('localAI') or {},gpuLayers=args.gpu_layers,contextTokens=args.context)
+    if args.threads is not None:
+        settings['threads']=args.threads
     data=Path(config.get('dataDir') or 'data')
     if not data.is_absolute():data=path.parent/data
     report=dict(schema='vision-local-check-v1',time=time.time(),os=platform.platform(),

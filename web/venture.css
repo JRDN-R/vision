@@ -109,3 +109,35 @@
 .venture-model-subtitle { font-size:10px;line-height:1.2;font-weight:400;opacity:.72;white-space:normal; }
 .venture-local-image { max-width:min(92vw,1100px);max-height:92vh;padding:16px;border:1px solid #555;border-radius:12px;background:#15171b;color:#eee; }
 .venture-local-image img { display:block;max-width:100%;max-height:72vh;object-fit:contain;margin:12px auto; }
+.venture-activity.pending { flex-wrap:wrap;justify-content:flex-start; }
+.venture-activity.pending>span { flex-basis:100%;white-space:normal;overflow:visible; }
+.venture-image-row{display:flex;gap:10px;width:max-content;max-width:88%;margin:0 0 12px auto;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;padding:3px 1px 8px;scrollbar-width:thin;scrollbar-color:#63794b transparent}
+.venture-root .venture-photo{position:relative;flex:0 0 112px;width:112px;height:112px;border:1px solid #5e714c44;border-radius:13px;overflow:hidden;scroll-snap-align:end;padding:0;background:#293123;cursor:zoom-in}
+.venture-photo img{display:block;width:100%;height:100%;object-fit:cover;color:transparent}
+.venture-photo span{position:absolute;inset:auto 6px 6px;overflow:hidden;text-overflow:ellipsis;font-size:10px;white-space:nowrap;color:#b9c8ad}
+.venture-photo.ready span{display:none}.venture-photo:hover{border-color:#bfdc92}.venture-photo:focus-visible{outline:2px solid #c4ed9b;outline-offset:2px}
+dialog.venture-image-viewer{position:fixed;inset:0;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#fff;overflow:hidden;box-shadow:none}
+.venture-image-viewer::backdrop{background:#050806bd;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.venture-image-glow{position:absolute;inset:8%;background-position:center;background-size:cover;filter:blur(65px);opacity:.16;pointer-events:none}
+.venture-image-stage{position:absolute;inset:64px 0 110px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.venture-image-stage img{display:block;max-width:calc(100% - 100px);max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:16px;box-shadow:0 20px 100px #0005;touch-action:none;user-select:none;transform-origin:center}
+.venture-image-stage img:not([src]){visibility:hidden}
+.venture-image-toolbar{position:absolute;top:max(14px,env(safe-area-inset-top));right:max(20px,env(safe-area-inset-right));z-index:2}
+.venture-image-viewer button{display:inline-flex;align-items:center;justify-content:center;border:1px solid #ffffff20;border-radius:50%;background:#171d18aa;color:#dfe7da;width:42px;height:42px;padding:10px;cursor:pointer;backdrop-filter:blur(6px)}
+.venture-image-viewer button:hover{background:#35432bd9;color:#fff}.venture-image-viewer button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.venture-image-controls{position:absolute;bottom:max(45px,calc(env(safe-area-inset-bottom) + 35px));left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:2}
+.venture-image-controls [data-image-fit]{width:64px;border-radius:24px;font-size:12px}.venture-image-caption{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));left:20px;right:20px;margin:0;text-align:center;font-size:12px;color:#c0cbb8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
+@media(max-width:760px){.venture-image-row{max-width:92%;gap:8px}.venture-root .venture-photo{flex-basis:88px;width:88px;height:88px;border-radius:11px}.venture-image-stage{inset:64px 0 115px}.venture-image-stage img{max-width:calc(100% - 36px);border-radius:13px}}
+.venture-local-progress.is-active{padding:17px 18px;background:radial-gradient(ellipse at top left,#8caf5820,transparent 70%),#171e17;border-color:#708b4f55;gap:12px}
+.venture-progress-heading{display:flex;align-items:center;gap:11px}.venture-progress-heading strong{font-size:13px;line-height:1.5}
+.venture-thinking-orb{display:flex;align-items:center;gap:3px;flex:none;height:26px}.venture-thinking-orb i{display:block;width:5px;height:12px;border-radius:5px;background:#badd8c;animation:venture-pulse 1.3s ease-in-out infinite}.venture-thinking-orb i:nth-child(2){animation-delay:.18s}.venture-thinking-orb i:nth-child(3){animation-delay:.36s}
+.venture-progress-track{height:3px;background:#82996d22;overflow:hidden;border-radius:4px}.venture-progress-track span{display:block;width:35%;height:100%;background:linear-gradient(90deg,transparent,#bddd94,transparent);animation:venture-sweep 2.8s ease-in-out infinite}
+.venture-progress-estimate{font-size:11px;line-height:1.6;color:#bdcbaa}.venture-local-progress small{font-size:10px}.venture-local-progress.is-complete{padding:10px 14px;gap:5px;border-color:#60764933;background:#212a191f}
+@keyframes venture-pulse{0%,100%{transform:scaleY(.45);opacity:.5}50%{transform:scaleY(1.3);opacity:1}}@keyframes venture-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(390%)}}
+@media(prefers-reduced-motion:reduce){.venture-thinking-orb i,.venture-progress-track span{animation:none}.venture-progress-track span{width:100%;opacity:.5}}
+.venture-response-meta .venture-model-subtitle{display:inline-flex;align-items:center;gap:3px}
+.venture-root .venture-response-info{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-width:28px;height:24px;margin:-4px 0;padding:3px;border:0;border-radius:6px;background:transparent;color:#9aa994;opacity:.72;cursor:pointer}
+.venture-root .venture-response-info:hover,.venture-root .venture-response-info[aria-expanded=true]{opacity:1;color:#d1e6ba;background:#afc89212}
+.venture-response-info svg{width:24px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.venture-response-popover{position:fixed;inset:auto;margin:0;width:275px;max-width:calc(100vw - 24px);padding:13px 16px;border:1px solid #758e5455;border-radius:13px;background:#1b2419f5;color:#dce8d2;box-shadow:0 12px 38px #0005;z-index:10000;backdrop-filter:blur(14px);font:12px/1.6 system-ui,sans-serif}
+.venture-response-popover::backdrop{background:transparent}.venture-response-popover .venture-local-progress{border:0;background:transparent;padding:0;margin:0}.venture-response-popover .venture-progress-heading strong{font-size:11px}.venture-response-popover small{font-size:11px}
