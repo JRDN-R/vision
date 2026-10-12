@@ -57,6 +57,19 @@ def qwen_animation_script():
             manifest = json.loads(archive.read('manifest.json'))
             animation_id = manifest['activeAnimationId']
             animation = json.loads(archive.read(f'animations/{animation_id}.json'))
+            # Lottie Animator puts the first rotation's incoming easing handle
+            # on its destination keyframe. lottie-web needs both handles on
+            # the starting keyframe; otherwise its clock runs but rendering
+            # fails as soon as that rotation begins. Keep the source archives,
+            # angles, timing and easing values intact.
+            for layer in animation.get('layers', []):
+                rotation = layer.get('ks', {}).get('r', {})
+                if rotation.get('a') != 1:
+                    continue
+                keyframes = rotation['k']
+                for start, end in zip(keyframes, keyframes[1:]):
+                    if not start.get('h') and 'i' not in start:
+                        start['i'] = end['i']
             # These supplied archives include their PNGs as data URLs.
             if any(asset.get('p') and not asset['p'].startswith('data:')
                    for asset in animation.get('assets', [])):
