@@ -5,6 +5,7 @@ No source site, media service, or paid provider is contacted by these tests.
 from __future__ import annotations
 
 import json
+from html import unescape
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,7 @@ import time
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
@@ -152,9 +154,16 @@ class VortexAccountTests(unittest.TestCase):
         self.assertEqual(label.group(1), 'v' + vortex.VORTEX_VERSION)
         self.assertIn('aria-label="Vortex web app version ' + vortex.VORTEX_VERSION + '"', html)
         for asset in ('app.js', 'sidebar-brand.css', 'vortex.css'):
-            self.assertIn('../web/vortex/' + asset + '?v=' + vortex.VORTEX_VERSION + '"', html)
+            # A frontend-only revision can bust caches independently of the
+            # server release, while the v parameter must still match the label.
+            reference = re.search(r'(?:src|href)="(\.\./web/vortex/' + re.escape(asset) + r'\?[^\"]+)"', html)
+            self.assertIsNotNone(reference, asset)
+            query = parse_qs(urlsplit(unescape(reference.group(1))).query)
+            self.assertEqual(query.get('v'), [vortex.VORTEX_VERSION], asset)
         app = (Path(__file__).resolve().parents[1] / 'web' / 'vortex' / 'app.js').read_text(encoding='utf-8')
-        self.assertIn("from './auth.js?v=" + vortex.VORTEX_VERSION + "';", app)
+        auth = re.search(r"from '(\./auth\.js\?[^']+)';", app)
+        self.assertIsNotNone(auth)
+        self.assertEqual(parse_qs(urlsplit(auth.group(1)).query).get('v'), [vortex.VORTEX_VERSION])
 
     def test_authenticated_version_reporting_does_not_enqueue_work(self):
         for route in ('/api/vortex/jobs?kind=download', '/api/vortex/capabilities'):
@@ -511,3 +520,4 @@ class ProcessTreeCancellationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
