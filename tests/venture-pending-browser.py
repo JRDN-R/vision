@@ -86,7 +86,7 @@ with sync_playwright() as pw:
         page.reload()
         page.locator('#runProjectBtn').click()
         page.wait_for_function('venture.ready && !!venture.pending')
-        expect(page.locator('#ventureModelLabel')).to_contain_text('image check pending')
+        expect(page.locator('#ventureModelLabel .venture-model-subtitle')).to_have_text('9B Distill')
         page.locator('#ventureFileInput').set_input_files(str(photo))
         expect(page.locator('#ventureNotice')).to_contain_text('Start new venture')
         assert page.evaluate('uploadPosts.length') == 0
