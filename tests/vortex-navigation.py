@@ -50,6 +50,8 @@ def run():
             page.wait_for_timeout(350)
             link = page.locator('#workspaceVortexLink')
             assert link.is_visible()
+            assert link.locator('img.workspace-vortex-logo').count() == 1
+            assert link.locator('img.workspace-vortex-logo').evaluate("el => el.complete && el.naturalWidth > 0 && el.getAttribute('src').startsWith('data:image/png;base64,')")
             assert link.get_attribute('href') == fixture.URL + 'vortex/'
             assert link.evaluate("el=>el.previousElementSibling.textContent") == 'Help'
             assert link.evaluate("el=>el.previousElementSibling.previousElementSibling.textContent") == 'Processing activity'
@@ -82,6 +84,8 @@ def run():
             page.wait_for_timeout(250)
             venture = page.locator('#ventureVortexLink')
             assert venture.is_visible()
+            assert venture.locator('img.workspace-vortex-logo').count() == 1
+            assert venture.locator('img.workspace-vortex-logo').evaluate("el => el.complete && el.naturalWidth > 0 && el.getAttribute('src').startsWith('data:image/png;base64,')")
             assert venture.evaluate("el=>el.nextElementSibling.classList.contains('venture-sidebar-foot')")
             assert venture.evaluate("el=>!el.closest('#ventureHistory')")
             page.evaluate('''document.querySelector('#ventureHistory').innerHTML=Array.from({length:80},(_,i)=>'<div class="venture-history-row"><button class="venture-history-open">Conversation '+i+'</button></div>').join('')''')

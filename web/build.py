@@ -77,6 +77,11 @@ def build():
     if not isinstance(notes.get('title'), str) or not notes.get('items') or not all(isinstance(item, str) for item in notes['items']):
         raise ValueError('Release notes need a title and nonempty text bullet points')
     script = script.replace('/* VISION_RELEASE_NOTES */ {}', json.dumps(notes, separators=(',', ':')))
+    vortex_icon_marker = "/* VISION_VORTEX_MENU_ICON */ './vortex_menu_icon.png'"
+    if script.count(vortex_icon_marker) != 1:
+        raise ValueError('Expected one Vortex menu logo placeholder')
+    vortex_icon = 'data:image/png;base64,' + base64.b64encode((ROOT / 'vortex_menu_icon.png').read_bytes()).decode('ascii')
+    script = script.replace(vortex_icon_marker, '/* VISION_VORTEX_MENU_ICON */ ' + json.dumps(vortex_icon))
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:
