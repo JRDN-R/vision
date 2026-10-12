@@ -435,6 +435,7 @@ class Venture:
                 rows=db.execute('SELECT * FROM venture_conversations WHERE '+' AND '.join(clauses)+' ORDER BY updated_at DESC,id DESC LIMIT 51',params).fetchall()
             more=len(rows)>50;rows=rows[:50]
             return jsonify(conversations=[self.metadata(dict(r)) for r in rows],
+                           localModel=self.sessions.local.catalog(),
                            nextCursor=json.dumps([rows[-1]['updated_at'],rows[-1]['id']]) if more else None)
 
         @app.route('/api/venture/conversations/<cid>',methods=['GET','PATCH','DELETE'])
@@ -485,6 +486,7 @@ class Venture:
             runs=[{**self.sessions.snapshot(dict(r)),'retryOf':r['venture_retry_of']} for r in reversed(rows)]
             watermark=max([since]+[r['updated_at'] for r in rows])
             return jsonify(conversation=self.metadata(self.lookup(cid,uid)),runs=runs,cursor=watermark,
+                           localModel=self.sessions.local.catalog(),
                            nextCursor=json.dumps([rows[-1]['created_at'],rows[-1]['id']]) if more else None)
 
         @app.get('/api/venture/conversations/<cid>/uploads/<rid>/<int:index>')

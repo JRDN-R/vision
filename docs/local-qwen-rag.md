@@ -1,5 +1,10 @@
 # Qwen local answering and RAG compression preview
 
+**Update:** The combined visual integration is documented in
+[qwen-local-vision-integration.md](qwen-local-vision-integration.md). The text-only
+notes below describe the preceding release. Default migration now also requires
+the version-bound combined acceptance gate; installation alone is insufficient.
+
 This branch continues the retention work in PR #46 on top of main, including the Moises handoff changes from PR #47.
 It implements an optional **text and extracted-evidence** Qwen provider. It does
 not establish a completed multimodal rollout, and it does not update FUPCJ.

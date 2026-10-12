@@ -17,9 +17,15 @@ $ModelRoot = Join-Path $InstallRoot 'local-ai'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 function Save-Json([string]$Path, $Value) {
     $Temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-    [IO.File]::WriteAllText($Temporary, ($Value | ConvertTo-Json -Depth 30), $Utf8)
-    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, $null) }
-    else { [IO.File]::Move($Temporary, $Path) }
+    try {
+        [IO.File]::WriteAllText($Temporary, ($Value | ConvertTo-Json -Depth 30), $Utf8)
+        # Windows PowerShell 5.1 converts $null to an empty string for this
+        # .NET overload. NullString sends an actual null backup filename.
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, [System.Management.Automation.Language.NullString]::Value) }
+        else { [IO.File]::Move($Temporary, $Path) }
+    } finally {
+        if (Test-Path -LiteralPath $Temporary) { Remove-Item -LiteralPath $Temporary -Force }
+    }
 }
 function Set-LocalModelConfiguration($Config, [string]$RuntimePath, [string]$ModelPath, [string]$ManifestPath) {
     # Artifact paths must change when replacing the original 27B preview with 9B.

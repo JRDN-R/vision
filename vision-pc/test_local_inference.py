@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import server
 import test_firebase_auth
-from local_preferences import MODEL, EPOCH, local_settings
+from local_preferences import MODEL, EPOCH, DISCLOSURE, local_settings
 from owned_assets import exclusive_file
 import local_runtime
 
@@ -51,7 +51,7 @@ class LocalInferenceTests(unittest.TestCase):
                                    manifestPath=str(placeholder), contextTokens=4096, maxOutputTokens=2048)
         self.cid = 'local_conversation_0001'
         self.new(self.cid)
-        self.client.post('/api/venture/local/disclosure', headers=self.a, json={'version':'qwen-local-v1'})
+        self.client.post('/api/venture/local/disclosure', headers=self.a, json={'version':DISCLOSURE})
 
     def tearDown(self):
         self.local.runtime_factory = self.runtime
@@ -148,6 +148,8 @@ class LocalInferenceTests(unittest.TestCase):
         prefs=self.local.preferences
         rid=self.send().json['runId'];self.s.work_once()
         self.local.settings['defaultEpoch']=EPOCH
+        gate=patch.object(self.local, 'migration_eligible', return_value=True)
+        gate.start();self.addCleanup(gate.stop)
         first=prefs.get('firebase:alice')
         self.assertEqual(first['settings']['model'],MODEL)
         self.assertEqual(prefs.get('firebase:alice')['preferenceRevision'],first['preferenceRevision'])

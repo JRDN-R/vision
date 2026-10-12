@@ -40,6 +40,9 @@ def digest_file(path, cancelled=lambda: False):
 
 
 class LlamaRuntime:
+    alias = 'qwen3.8-local'
+    thinking = True
+
     def __init__(self, settings, cancelled, stage):
         self.settings, self.cancelled, self.stage = settings, cancelled, stage
         self.process = None
@@ -47,6 +50,8 @@ class LlamaRuntime:
         self.done = threading.Event()
         self.stop_reason = None
         self.peak_rss = 0
+        self.minimum_available_ram = None
+        self.cpu_seconds = 0
         self.http = requests.Session()
         self.http.trust_env = False  # A proxy must never receive prompts/internal credentials.
         self.token = secrets.token_urlsafe(32)
@@ -96,6 +101,19 @@ class LlamaRuntime:
             raise LocalFailure('Unexpected files in the private runtime directory.')
         return runtime, model
 
+    def model_bytes(self):
+        return MODEL_BYTES
+
+    def command(self, runtime, model):
+        return [str(runtime), '--model', str(model), '--alias', self.alias,
+                '--host', '127.0.0.1', '--port', str(self.port), '--parallel', '1',
+                '--ctx-size', str(int(self.settings.get('contextTokens', 4096))),
+                '--threads', str(max(1, min(16, int(self.settings.get('threads', 8))))),
+                '--batch-size', '256', '--ubatch-size', '64',
+                '--n-gpu-layers', str(max(0, min(99, int(self.settings.get('gpuLayers', 0))))),
+                '--api-key', self.token, '--jinja', '--reasoning-format', 'deepseek',
+                '--no-webui', '--no-context-shift']
+
     @staticmethod
     def stop_child(process):
         if process is not None and process.poll() is None:
@@ -111,11 +129,20 @@ class LlamaRuntime:
         deadline = time.monotonic() + max(60, min(7200, int(self.settings.get('maxRunSeconds', 1800))))
         while not self.done.wait(.25):
             try:
-                self.peak_rss = max(self.peak_rss, psutil.Process(self.process.pid).memory_info().rss)
-                if psutil.virtual_memory().available < max(8,float(self.settings.get('reserveRamGiB',10)))*1024**3:
+                process = psutil.Process(self.process.pid)
+                self.peak_rss = max(self.peak_rss, process.memory_info().rss)
+                cpu = process.cpu_times()
+                self.cpu_seconds = cpu.user + cpu.system
+                available = psutil.virtual_memory().available
+                self.minimum_available_ram = min(available, self.minimum_available_ram if self.minimum_available_ram is not None else available)
+                if self.peak_rss > float(self.settings.get('maxResidentGiB', 16)) * 1024**3:
+                    self.stop_reason = 'Qwen exceeded the configured resident-memory limit.'
+                if available < max(8,float(self.settings.get('reserveRamGiB',10)))*1024**3:
                     self.stop_reason = 'Qwen stopped to preserve the configured system memory reserve.'
             except psutil.NoSuchProcess:
                 return
+            except psutil.Error:
+                self.stop_reason = 'Local resource monitoring became unavailable.'
             if time.monotonic() > deadline:
                 self.stop_reason = 'Qwen reached the local processing time limit. Narrow the question or retry later.'
             if self.cancelled() or self.stop_reason:
@@ -128,21 +155,14 @@ class LlamaRuntime:
         runtime, model = self.verify()
         import psutil
         reserve = max(8, float(self.settings.get('reserveRamGiB', 10))) * 1024**3
-        if psutil.virtual_memory().available < reserve + MODEL_BYTES:
+        if psutil.virtual_memory().available < reserve + self.model_bytes():
             raise LocalFailure('Insufficient available RAM for Qwen plus the reserved system/livestream headroom.')
         with socket.socket() as probe:
             try:
                 probe.bind(('127.0.0.1', self.port))
             except OSError:
                 raise LocalFailure('The local inference port is already in use. No second model was started.') from None
-        args = [str(runtime), '--model', str(model), '--alias', 'qwen3.8-local',
-                '--host', '127.0.0.1', '--port', str(self.port), '--parallel', '1',
-                '--ctx-size', str(int(self.settings.get('contextTokens', 4096))),
-                '--threads', str(max(1, min(16, int(self.settings.get('threads', 8))))),
-                '--batch-size', '256', '--ubatch-size', '64',
-                '--n-gpu-layers', str(max(0, min(99, int(self.settings.get('gpuLayers', 0))))),
-                '--api-key', self.token, '--jinja', '--reasoning-format', 'deepseek',
-                '--no-webui', '--no-context-shift']
+        args = self.command(runtime, model)
         self.stage('Loading Qwen on FUPCJ')
         # Suspend first: assign the kill-on-close Job before any model can load.
         flags = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS | 0x00000004}
@@ -192,11 +212,11 @@ class LlamaRuntime:
         return len(tokens['tokens'])
 
     def generate(self, messages, max_tokens):
-        payload = dict(model='qwen3.8-local', messages=messages, stream=True,
+        payload = dict(model=self.alias, messages=messages, stream=True,
                        stream_options={'include_usage': True}, max_tokens=max_tokens,
                        temperature=0.6, top_p=.95, top_k=20, min_p=0.0,
                        presence_penalty=0.0, repeat_penalty=1.0,
-                       chat_template_kwargs={'enable_thinking': True}, cache_prompt=False, sse_ping_interval=5)
+                       chat_template_kwargs={'enable_thinking': self.thinking}, cache_prompt=False, sse_ping_interval=5)
         with self.request('/v1/chat/completions', payload, stream=True) as response:
             for line in response.iter_lines(chunk_size=512):
                 if self.cancelled():
