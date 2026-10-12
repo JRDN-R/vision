@@ -120,14 +120,17 @@ Download preserves model/base-model and runtime license notices. Its resumable
 `.part` download must match the exact length/hash. Runtime files, including DLLs,
 are verified against the pinned ZIP and on use. No weights are committed.
 
-Run from an **authorized Administrator Windows PowerShell** session. First use
-the reviewed normal updater with one full application commit SHA; this downloads
-these helper files too. Do not use a moving branch for production installation.
+Run from an **authorized Administrator Windows PowerShell** session during a
+maintenance window. Download the reviewed `Local-AI.ps1` to the current folder.
+Its `UpdateCode` action fetches the normal updater from the same immutable commit
+before running it, so even older installations receive the new processor-file
+inventory. The normal updater can stop/restart the application. Do not use a
+moving branch for production installation.
 
 ```powershell
 $Root = Join-Path $env:ProgramData 'VisionPC'
 # Replace REVIEWED_40_CHARACTER_SHA with the reviewed PR head, after its checks.
-& "$Root\Setup-Vision-PC.ps1" -Action Update -SourceRef REVIEWED_40_CHARACTER_SHA
+& .\Local-AI.ps1 -Action UpdateCode -SourceRef REVIEWED_40_CHARACTER_SHA
 & "$Root\Local-AI.ps1" -Action Inventory
 # Download is separate and explicit: approximately 8.49 GB of model weights.
 & "$Root\Local-AI.ps1" -Action Download

@@ -60,7 +60,19 @@ function Verify-RuntimeFiles([string]$Archive,[string]$Directory) {
 }
 if ($Action -eq 'UpdateCode') {
     if ($SourceRef -notmatch '^[a-fA-F0-9]{40}$') { throw 'Pass one reviewed application commit SHA with -SourceRef.' }
-    & (Join-Path $InstallRoot 'Setup-Vision-PC.ps1') -Action Update -SourceRef $SourceRef
+    if ([IO.Path]::GetFullPath($InstallRoot) -ne [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'VisionPC'))) {
+        throw 'The normal updater uses ProgramData\VisionPC. A custom installation needs its own reviewed maintenance procedure.'
+    }
+    # An older installed updater does not know the new processor-file inventory.
+    # Fetch the updater from the SAME immutable revision before invoking it.
+    $Updater = Join-Path ([IO.Path]::GetTempPath()) ('Vision-Updater-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri ('https://raw.githubusercontent.com/JRDN-R/vision/' + $SourceRef + '/vision-pc/Setup-Vision-PC.ps1') -OutFile $Updater -TimeoutSec 120
+        if ((Get-Item -LiteralPath $Updater).Length -eq 0) { throw 'The pinned updater download is empty.' }
+        & $Updater -Action Update -SourceRef $SourceRef
+    } finally {
+        if (Test-Path -LiteralPath $Updater) { Remove-Item -LiteralPath $Updater -Force }
+    }
     exit
 }
 if (-not (Test-Path -LiteralPath $ConfigPath)) { throw 'Install Vision PC before configuring the optional local model.' }
