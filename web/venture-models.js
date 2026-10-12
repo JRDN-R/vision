@@ -3,7 +3,7 @@
  */
 const VENTURE_MODEL_STARTERS = ['qwen3.8-local','gpt-6-astra','gpt-6.1-sol','gpt-6-sol','gpt-5.6-terra','gpt-6-luna','gpt-5.6-sol','gpt-5.6-luna','gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5.2','gpt-5.1','gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','gpt-4o','gpt-4o-mini','o3','o3-mini','o4-mini'];
 const VENTURE_MODEL_BRANDS = {
- 'qwen3.8-local': {name:'Qwen3.8 9B Distill',family:'qwen',icon:'qwen'},
+ 'qwen3.8-local': {name:'Qwen Local',family:'qwen',icon:'qwen'},
  'gpt-6-astra': {name:'Astra',family:'astra',icon:'orbit'},
  'gpt-6.1-sol': {name:'6.1 Sol',family:'sol',icon:'sunny'},
  'gpt-6-sol': {name:'Sol',family:'sol',icon:'sunny'},
@@ -23,7 +23,8 @@ function ventureModelIdentity(model, mode='auto') {
 }
 function ventureModelBadge(model,mode='auto') {
  const item=ventureModelIdentity(model,mode),symbol=VENTURE_MODEL_SYMBOLS[item.icon];
- return '<span class="venture-model-identity'+(item.family?' model-'+item.family:'')+'">'+(symbol?'<span class="venture-model-symbol" aria-hidden="true" style="--model-symbol:url(\'data:image/svg+xml,'+encodeURIComponent(symbol).replace(/'/g,'%27')+'\')"></span>':'')+'<span class="venture-model-name">'+escapeHTML(item.name)+'</span></span>';
+ const subtitle=item.family==='qwen'?'<small class="venture-model-subtitle">'+escapeHTML(typeof ventureLocalSubtitle==='function'?ventureLocalSubtitle():'9B Distill · vision not ready')+'</small>':'';
+ return '<span class="venture-model-identity'+(item.family?' model-'+item.family:'')+'">'+(symbol?'<span class="venture-model-symbol" aria-hidden="true" style="--model-symbol:url(\'data:image/svg+xml,'+encodeURIComponent(symbol).replace(/'/g,'%27')+'\')"></span>':'')+'<span class="venture-model-title"><span class="venture-model-name">'+escapeHTML(item.name)+'</span>'+subtitle+'</span></span>';
 }
 function ventureModelIsAstra(model=venture.settings.model){return ventureModelIdentity(model).family==='astra';}
 function ventureModelUsable(id){return id==='qwen3.8-local'||/^(?:gpt-[456](?:[.-]|$)|o[134](?:[.-]|$)|chat-latest$|chatgpt-4o-latest$|ft:)/.test(id)&&!/(?:audio|realtime|transcribe|tts|image|search-preview)/.test(id);}
@@ -59,8 +60,8 @@ async function ventureLoadModels(force=false) {
  try{const data=await ventureJSON('/venture/models'+(force?'?refresh=1':''));if(epoch!==venture.epoch||loadId!==venture.modelLoadId)return;
   venture.models=Array.isArray(data.models)?data.models.map(m=>m.id).filter(id=>typeof id==='string'&&/^[A-Za-z0-9_.:-]{1,100}$/.test(id)):null;
   venture.modelNotice=data.status==='no-key'?'Qwen does not need an API key. Cloud models require your own key.':data.status==='local-only'?'Local mode: cloud model names are from the bundled catalog; availability has not been checked.':data.status==='cloud-unavailable'?'Cloud catalog unavailable. Qwen remains listed.':'';
-  const local=data.models?.find(m=>m.id==='qwen3.8-local');if(local){venture.localCapability=local;const p=VENTURE_PARAMETER_REGISTRY.models?.['qwen3.8-local'];if(p){p.context=local.contextTokens;p.maxOutput=local.maxOutputTokens;}}
- }catch(error){if(epoch!==venture.epoch||loadId!==venture.modelLoadId)return;venture.modelNotice=error.status===404?'Update FUPCJ Server to load your available models.':'Could not refresh models. '+ventureError(error);}
+  const local=data.models?.find(m=>m.id==='qwen3.8-local');venture.localCapability=local||null;if(local){const p=VENTURE_PARAMETER_REGISTRY.models?.['qwen3.8-local'];if(p){p.context=local.contextTokens;p.maxOutput=local.maxOutputTokens;}}
+ }catch(error){if(epoch!==venture.epoch||loadId!==venture.modelLoadId)return;venture.localCapability=null;venture.modelNotice=error.status===404?'Update FUPCJ Server to load your available models.':'Could not refresh models. '+ventureError(error);}
  finally{if(epoch===venture.epoch&&loadId===venture.modelLoadId){venture.modelsLoading=false;venturePaintModelPicker();}}
 }
 function ventureModelPickerOpen(open) {

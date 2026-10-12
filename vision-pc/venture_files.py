@@ -54,12 +54,13 @@ def check_zip(path: Path):
 
 
 class Preparation:
-    def __init__(self,venture):
+    def __init__(self,venture,cancelled=None):
         self.venture,self.sessions,self.db=venture,venture.sessions,venture.db
+        self.cancelled = cancelled
 
     def alive(self,rid):
         row=self.sessions.row(rid)
-        if self.sessions.stop.is_set() or row['cancel_requested']:
+        if self.sessions.stop.is_set() or row['cancel_requested'] or (self.cancelled and self.cancelled()):
             raise InterruptedError('Preparation stopped; the original files remain saved.')
 
     def command(self,args,directory: Path,rid: str,timeout=1800,max_bytes=256*1024*1024):

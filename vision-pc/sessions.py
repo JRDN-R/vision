@@ -242,6 +242,7 @@ class Sessions:
                     responseId=value['response_id'], previousRunId=value['previous_id'], sequence=value['sequence'],
                     error=value['error'], createdAt=datetime.fromtimestamp(value['created_at'], timezone.utc).isoformat(),
                     updatedAt=datetime.fromtimestamp(value['updated_at'], timezone.utc).isoformat(),
+                    localVisualEvidence=json.loads(value.get('local_visual_json') or '[]'),
                     attachments=[{k: v[k] for k in ('name', 'mime', 'size')} for v in json.loads(value['inputs_json'])],
                     artifacts=[dict(id=f['id'], name=f['name'], mime=f['mime'], size=f['size'],
                                     ready=bool(f['path']), error=f['error']) for f in files])
@@ -516,7 +517,7 @@ class Sessions:
                         (run_id, project_id, client_id, message, model, limit, previous, cipher, json.dumps(inputs), str(options.get('projectPrompt') or '')[:250000], now, now))
                     db.execute('UPDATE project_runs SET run_options_json=?,venture_retry_of=?,venture_memory_enabled=?,board_context_json=? WHERE id=?', (json.dumps(run_options), retry_of, int(memory_enabled), json.dumps(board_context) if board_context else None, run_id))
                     if local:
-                        profile={k:v for k,v in self.local.settings.items() if k in ('runtimePath','modelPath','manifestPath','port','contextTokens','maxOutputTokens','threads','gpuLayers','reserveRamGiB','maxRunSeconds')}
+                        profile={k:v for k,v in self.local.settings.items() if k in ('runtimePath','modelPath','manifestPath','port','contextTokens','maxOutputTokens','threads','gpuLayers','reserveRamGiB','maxRunSeconds','maxResidentGiB','visualEnabled','visualManifestPath')}
                         db.execute("UPDATE project_runs SET provider='local_llama_cpp',local_profile_json=? WHERE id=?", (json.dumps(profile),run_id))
                     else:
                         self.venture.funding.bind(db, run_id, key)

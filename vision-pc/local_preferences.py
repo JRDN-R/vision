@@ -4,7 +4,7 @@ import time
 
 MODEL = 'qwen3.8-local'
 EPOCH = 'qwen3_8_local_v1'
-DISCLOSURE = 'qwen-local-v1'
+DISCLOSURE = 'qwen-local-vision-v2'
 
 
 def local_settings(settings, max_output=2048):
@@ -31,7 +31,7 @@ class LocalPreferences:
         meta = dict(db.execute('SELECT * FROM venture_selection WHERE uid=?', (uid,)).fetchone())
         row = db.execute('SELECT settings_json FROM venture_preferences WHERE uid=?', (uid,)).fetchone()
         settings = json.loads(row[0]) if row else dict(DEFAULT_SETTINGS)
-        if self.local.settings.get('defaultEpoch') == EPOCH and meta['epoch'] != EPOCH:
+        if self.local.settings.get('defaultEpoch') == EPOCH and meta['epoch'] != EPOCH and self.local.migration_eligible():
             profiles = json.loads(meta['profiles_json'])
             profiles[settings['model']] = settings
             settings = local_settings(settings, self.local.max_output)

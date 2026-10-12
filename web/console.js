@@ -37,6 +37,7 @@ function consoleChanged(persist=true){consoleSyncAliases();if(persist)markDirty(
 function consoleActivity(text,s=consoleLatest()){if(!s||!text)return;s.phase=String(text).slice(0,500);consoleChanged();}
 function consoleInlineMarkdown(value,run=null,index=-1){
  let s=escapeHTML(value),codes=[];s=s.replace(/`([^`]+)`/g,(_,v)=>'\u0001'+(codes.push('<code>'+v+'</code>')-1)+'\u0001');
+ s=s.replace(/\[([^\]]+)\]\((\/api\/projects\/[A-Za-z0-9_-]+\/runs\/[A-Za-z0-9_-]+\/local-visual\/\d+)\)/g,(_,label,url)=>typeof ventureLocalSourceLink==='function'?ventureLocalSourceLink(label,url,run):label+' (see inspected images)');
  s=s.replace(/\[([^\]]+)\]\((sandbox:[^\s)]+|\/mnt\/data\/[^\s)]+)\)/g,(_,label,url)=>{
   if(!run||typeof consoleArtifactLink!=='function')return label+' (see Files)';
   return consoleArtifactLink(label,url,run,index);

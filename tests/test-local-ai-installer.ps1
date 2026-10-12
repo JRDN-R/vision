@@ -28,3 +28,28 @@ $Fresh = [PSCustomObject]@{dataDir='existing-data'}
 Set-LocalModelConfiguration $Fresh 'runtime' 'model' 'manifest'
 if ($Fresh.localAI.enabled -or $Fresh.localAI.port -ne 8101 -or $Fresh.dataDir -ne 'existing-data') { throw 'Fresh optional installation failed.' }
 Write-Host 'Local model installation configuration tests passed.'
+
+# Exercise the production atomic writer under Windows PowerShell 5.1. In
+# particular, replacement must pass .NET a null backup name, not an empty one.
+$Save = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq 'Save-Json' }, $false)
+if (-not $Save) { throw 'Missing production JSON writer.' }
+. ([scriptblock]::Create($Save.Extent.Text))
+$Utf8 = New-Object Text.UTF8Encoding($false)
+$TestRoot = Join-Path ([IO.Path]::GetTempPath()) ('Qwen JSON with spaces ' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $TestRoot | Out-Null
+try {
+    $Target = Join-Path $TestRoot 'settings.json'
+    foreach ($Stage in @(1,2,3)) {
+        $Value = [PSCustomObject]@{stage=$Stage; nested=@{label=('caf' + [char]0x00e9); enabled=$false; items=@(1,2)}}
+        Save-Json $Target $Value
+        $Saved = [IO.File]::ReadAllText($Target,$Utf8) | ConvertFrom-Json
+        if ($Saved.stage -ne $Stage -or $Saved.nested.label -cne $Value.nested.label -or $Saved.nested.enabled -ne $false -or $Saved.nested.items.Count -ne 2) { throw 'JSON create/replace lost data.' }
+    }
+    $Before = [IO.File]::ReadAllText($Target,$Utf8)
+    $Handle = [IO.File]::Open($Target,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+    $Stopped = $false
+    try { Save-Json $Target @{stage=99} } catch { $Stopped = $true } finally { $Handle.Dispose() }
+    if (-not $Stopped -or [IO.File]::ReadAllText($Target,$Utf8) -cne $Before) { throw 'Failed replacement did not preserve the original and stop.' }
+    if (@(Get-ChildItem -LiteralPath $TestRoot -Filter '*.tmp').Count) { throw 'JSON writer left staging files.' }
+    Write-Host 'Production JSON writer passed create, repeat replacement, Unicode, nested data and locked-file failure checks.'
+} finally { Remove-Item -LiteralPath $TestRoot -Recurse -Force }

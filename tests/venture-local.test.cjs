@@ -28,3 +28,37 @@ test('preferences retain account revision, epoch, acknowledgement and provider p
  assert.equal(c.venture.profiles['gpt-6-astra'].maxOutputTokens,16000);
  assert.match(c.VENTURE_MODEL_SYMBOLS.qwen,/M23\.919 14\.545/);
 });
+test('combined identity advertises vision only on explicit backend confirmation',()=>{
+ const c=fixture();
+ assert.equal(c.ventureLocalVisionReady(),false);
+ assert.match(c.ventureLocalSubtitle(),/vision not ready/);
+ assert.match(c.ventureLocalDisclosure(),/not yet confirmed/);
+ c.venture.localCapability={capabilities:{vision:true}};
+ assert.equal(c.ventureLocalSubtitle(),'9B Distill + Vision');
+ assert.match(c.ventureLocalDisclosure(),/source-linked findings and timestamps/);
+ assert.match(c.ventureLocalDisclosure(),/run in sequence/);
+ assert.match(c.ventureLocalDisclosure(),/no automatic cloud fallback/);
+ c.venture.localCapability={capabilities:{vision:'true'}};
+ assert.equal(c.ventureLocalVisionReady(),false);
+});
+test('visual evidence uses escaped labels and indexed authenticated actions',()=>{
+ const c=fixture();
+ const html=c.ventureLocalEvidence({localVisualEvidence:[{name:'<script>',location:'Video 00:12',crop:'whole image',finding:'<img src=x>'}]});
+ assert.match(html,/data-v-action="local-visual"/);
+ assert.match(html,/data-index="0"/);
+ assert.match(html,/&lt;script&gt;/);
+ assert.doesNotMatch(html,/<script>|<img|https?:/);
+});
+test('citations only open recorded local sources, never model-supplied arbitrary paths',()=>{
+ const c=fixture(),url='/api/projects/project1/runs/run1/local-visual/0';
+ const run={localVisualEvidence:[{sourceURL:url}]};
+ assert.match(c.ventureLocalSourceLink('Photo',url,run),/data-index="0"/);
+ assert.doesNotMatch(c.ventureLocalSourceLink('Unknown',url.replace('project1','another-account'),run),/<button/);
+});
+test('a backend restart or lost connection removes visual advertising',()=>{
+ const c=fixture();c.venture.rendered=new Map([['a','cached']]);c.venturePaintModelPicker=()=>{};c.venturePaintTurns=()=>{};
+ c.venture.localCapability={capabilities:{vision:true}};
+ c.ventureAcceptLocalCapability({localModel:{capabilities:{vision:false}}});
+ assert.equal(c.ventureLocalVisionReady(),false);assert.equal(c.venture.rendered.size,0);
+ c.ventureAcceptLocalCapability({localModel:null});assert.match(c.ventureLocalSubtitle(),/not ready/);
+});

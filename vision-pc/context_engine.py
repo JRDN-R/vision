@@ -98,7 +98,7 @@ class ContextEngine:
                 if path.is_file() and path.suffix in ('.json','.txt','.safetensors') and path.name!='vision-context-model.json' and '.cache' not in path.parts:
                     stat = path.stat()
                     artifacts.append((str(path.relative_to(model)),stat.st_size,stat.st_mtime_ns))
-        return sha(canonical(dict(parser=PARSER_VERSION,engine=SCHEMA,settings=self.settings,modelArtifacts=artifacts)))
+        return sha(canonical(dict(parser=PARSER_VERSION,engine=SCHEMA,visualSourceMetadata=1,settings=self.settings,modelArtifacts=artifacts)))
 
     @contextmanager
     def db(self):
@@ -437,6 +437,7 @@ class ContextEngine:
                              kind='source',mime=str(attachment.get('mime') or 'application/octet-stream')[:120],
                              role=redact(str(attachment.get('role') or '')),timestamp=redact(str(attachment['timestamp'])) if attachment.get('timestamp') is not None else None,
                              transcriptOf=attachment.get('transcriptOf'),videoOf=attachment.get('videoOf'),
+                             ownedAssetId=attachment.get('ownedAssetId'),
                              sourceStatus=attachment.get('status'),metadataOnly=bool(attachment.get('metadataOnly')))
                 try:
                     if attachment.get('data'):
@@ -877,6 +878,26 @@ class ContextEngine:
 
     def source(self, owner, project, revision, source_id, budget=160000, offset=0):
         return self.prepare(owner,project,revision,'Retrieve complete original source evidence',budget,source_ids=[source_id],offset=offset)
+
+    def visual_sources(self, owner, project, revision):
+        """Internal inventory; callers must revalidate the pinned board binding.
+
+        No path or arbitrary URL from a board becomes filesystem authority.
+        Original bytes are resolved separately through original()/OwnedAssets.
+        """
+        self._identity(owner, project, revision)
+        with self.db() as db:
+            rows = db.execute('SELECT source,name,mime,metadata FROM context_sources '
+                              'WHERE owner=? AND project=? AND revision=? ORDER BY ordinal',
+                              (owner, project, revision)).fetchall()
+        result = []
+        for row in rows:
+            meta = json.loads(row['metadata'])
+            if (meta.get('visual') or str(row['mime']).startswith(('image/', 'video/')) or meta.get('ownedAssetId')):
+                result.append(dict(sourceId=row['source'], name=row['name'], mime=row['mime'],
+                                   timestamp=meta.get('timestamp'), videoOf=meta.get('videoOf'),
+                                   ownedAssetId=meta.get('ownedAssetId')))
+        return result
 
     def node(self, owner, project, revision, node_id, budget=48000):
         return self.prepare(owner,project,revision,'Retrieve complete connected node evidence',budget,node_ids=[node_id])
