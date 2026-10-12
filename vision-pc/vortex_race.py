@@ -18,6 +18,13 @@ import psutil
 from vortex_adapters import ADAPTERS
 
 PUBLIC_ERROR = 'Vortex could not retrieve this media with the available methods. Please try again.'
+PUBLIC_FAILURE_MESSAGES = {
+    'verification_required': 'The media website requires verification from this server before downloading. Use an original file or another source.',
+    'drm': 'A selected media stream is DRM-protected and could not be downloaded. Use an unprotected original file or another source.',
+    'access_denied': 'The media website denied this server access to the download. Use an original file or another source.',
+    'authentication': 'The media website requires sign-in for this request. Vortex downloads public media without source-account cookies.',
+    'rate_limited': 'The media website is limiting requests. Wait a few minutes before trying again.',
+}
 MAX_ENGINES = 12
 MAX_INSPECTIONS = 3
 MAX_DOWNLOADS = 2
@@ -26,7 +33,7 @@ MAX_EVENTS = 1024 * 1024
 WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
               'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit',
-              'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit', 'drm'}
+              'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit', 'drm', 'access_denied', 'verification_required'}
 SUPERVISOR_FAILURES = {'timeout', 'resource_limit', 'memory_limit', 'disk_limit', 'event_limit'}
 
 
@@ -326,6 +333,12 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                 ('timeout', 'This operation took too long. Try a shorter item or another source.')):
             if any(a.category == category for a in failures):
                 raise WorkerError(message, category=category)
+        # Prefer transfer failures, then retain explicit inspection restrictions
+        # when a generic page fallback also failed. Never expose upstream text.
+        for group in (failed_downloads, attempts):
+            for category, message in PUBLIC_FAILURE_MESSAGES.items():
+                if any(a.category == category for a in group):
+                    raise WorkerError(message, category=category)
         raise WorkerError(PUBLIC_ERROR)
     finally:
         for attempt in attempts:

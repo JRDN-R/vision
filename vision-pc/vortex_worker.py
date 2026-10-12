@@ -63,11 +63,13 @@ def error_category(error):
     if isinstance(error, OSError) and error.errno == 28:
         return 'disk_limit'
     detail = str(error).lower()
+    if any(s in detail for s in ("confirm you're not a bot", 'confirm you’re not a bot', 'confirm you are not a bot')): return 'verification_required'
     if 'different media' in detail or detail == 'identity_mismatch': return 'identity_mismatch'
     if 'drm-protected' in detail or 'drm protected' in detail: return 'drm'
     if 'duration limit' in detail: return 'duration_limit'
     if 'size limit' in detail or 'max-filesize' in detail or 'max_filesize' in detail: return 'file_size_limit'
-    if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401', 'http error 403', '403 forbidden')): return 'authentication'
+    if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401')): return 'authentication'
+    if any(s in detail for s in ('http error 403', '403 forbidden')): return 'access_denied'
     if 'not installed' in detail or 'ffmpeg is unavailable' in detail: return 'missing_dependency'
     if 'external streaming protocol' in detail: return 'unsupported'
     if 'limiting requests' in detail: return 'rate_limited'
@@ -552,7 +554,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
             try:
                 info = ydl.extract_info('https://player.vimeo.com/video/' + vimeo_id[1], download=False)
             except yt_dlp.utils.DownloadError as player_error:
-                raise SourceError(source_error_message(value, player_error), category=error_category(player_error)) from None
+                raise SourceError(source_error_message(value, player_error), category=error_category(player_error)) from player_error
         if not info:
             raise SourceError("No downloadable public media was found.")
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
@@ -1048,13 +1050,15 @@ def main():
                 emit(**run(request))
         return 0
     except WorkerError as exc:
-        from vortex_race import PUBLIC_ERROR
+        from vortex_race import PUBLIC_ERROR, PUBLIC_FAILURE_MESSAGES
         category = error_category(exc)
         # Surface bounded, actionable help for Instagram without exposing
         # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
         from vortex_urls import instagram_signed_source, platform
         input_value = (locals().get('request') or {}).get('input', '')
-        if args.adapter is None and category in ('file_size_limit', 'duration_limit', 'memory_limit', 'disk_limit', 'timeout'):
+        if args.adapter is None and category in PUBLIC_FAILURE_MESSAGES:
+            message = PUBLIC_FAILURE_MESSAGES[category]
+        elif args.adapter is None and category in ('file_size_limit', 'duration_limit', 'memory_limit', 'disk_limit', 'timeout'):
             message = str(exc)
         elif args.adapter is None and instagram_signed_source(input_value):
             message = 'This direct Instagram video could not be retrieved. Its download link may have expired; use a fresh link.'
