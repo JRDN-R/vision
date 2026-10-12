@@ -49,7 +49,7 @@ with sync_playwright() as pw:
         assert tile.locator('img').get_attribute('src').startswith('blob:')
         assert gallery.bounding_box()['y']<page.locator('.venture-user').bounding_box()['y']
         expect(page.locator('.venture-progress-estimate')).to_contain_text('About 45s–2m 30s remaining')
-        assert page.locator('[role=progressbar]').get_attribute('aria-valuenow') is None
+        assert page.get_by_role('progressbar',name='Local answer in progress').get_attribute('aria-valuenow') is None
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path=str(shots/f'venture-image-row-{width}.png'))
         tile.click();page.wait_for_function("document.querySelector('.venture-image-stage img').naturalWidth>0")

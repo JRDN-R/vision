@@ -3,7 +3,7 @@ const ventureImageState={cache:new Map(),queue:[],active:0,generation:0,observer
 function ventureIsImage(file){return /^image\/(jpeg|png|webp|gif|avif|bmp|tiff|heic|heif)$/i.test(file?.mime||'')||/\.(jpe?g|png|webp|gif|avif|bmp|tiff?|heic|heif)$/i.test(file?.name||'');}
 function ventureImagePath(run,index){return venturePath(run.ventureId||run.projectId)+'/uploads/'+encodeURIComponent(run.runId)+'/'+index;}
 function ventureImageStrip(run){
- const images=(run.attachments||[]).flatMap((file,index)=>ventureIsImage(file)?['<button class="venture-photo" data-v-action="image" data-file="'+index+'" aria-label="Open '+escapeHTML(file.name)+'"><img data-venture-thumb="'+index+'" alt="'+escapeHTML(file.name)+'" decoding="async"><span>'+escapeHTML(file.name)+'</span></button>']:[]);
+ const images=(run.attachments||[]).flatMap((file,index)=>{if(!ventureIsImage(file))return [];const url=ventureImageState.cache.get(ventureImagePath(run,index))?.url;return ['<button class="venture-photo'+(url?' ready':'')+'" data-v-action="image" data-file="'+index+'" aria-label="Open '+escapeHTML(file.name)+'"><img data-venture-thumb="'+index+'"'+(url?' src="'+escapeHTML(url)+'"':'')+' alt="'+escapeHTML(file.name)+'" decoding="async"><span>'+escapeHTML(file.name)+'</span></button>'];});
  return images.length?'<div class="venture-image-row" aria-label="Attached images. Scroll sideways for more.">'+images.join('')+'</div>':'';
 }
 function ventureImagesReset(){
@@ -30,7 +30,7 @@ async function ventureImagePump(){
   s.cache.set(key,{loading:true});
   const epoch=venture.epoch,generation=s.generation,controller=new AbortController();s.controllers.add(controller);s.active++;
   try{
-   const response=await ventureFetch(key+'?preview=thumb',{signal:controller.signal});const blob=await response.blob();
+   const response=await ventureFetch(key+'/preview/thumb',{signal:controller.signal});const blob=await response.blob();
    if(epoch!==venture.epoch||generation!==s.generation)continue;
    const url=URL.createObjectURL(blob);const old=s.cache.get(key);if(old?.url)URL.revokeObjectURL(old.url);s.cache.set(key,{url});
    document.querySelectorAll('#ventureTurns img[data-venture-thumb]').forEach(target=>{if(target.closest('[data-venture-run]')?.dataset.ventureRun===run.runId&&Number(target.dataset.ventureThumb)===index){target.src=url;target.closest('button').classList.add('ready');}});
@@ -62,6 +62,6 @@ async function ventureOpenImage(run,index){
  dialog.querySelector('[data-image-download]').onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{const response=await ventureFetch(path,{signal:controller.signal});const blob=await response.blob();if(epoch===venture.epoch&&dialog.open)download(blob,R.safeFilename(file.name));}catch(error){if(dialog.open)caption.textContent=ventureError(error);}finally{button.disabled=false;}};
  dialog.addEventListener('close',()=>{controller.abort();if(url)URL.revokeObjectURL(url);dialog.remove();},{once:true});
  document.body.appendChild(dialog);dialog.showModal();
- try{const response=await ventureFetch(path+'?preview=full',{signal:controller.signal});const blob=await response.blob();if(epoch!==venture.epoch||!dialog.open)return;url=URL.createObjectURL(blob);image.src=url;dialog.querySelector('.venture-image-glow').style.backgroundImage='url("'+url+'")';caption.textContent=file.name;}
+ try{const response=await ventureFetch(path+'/preview/full',{signal:controller.signal});const blob=await response.blob();if(epoch!==venture.epoch||!dialog.open)return;url=URL.createObjectURL(blob);image.src=url;dialog.querySelector('.venture-image-glow').style.backgroundImage='url("'+url+'")';caption.textContent=file.name;}
  catch(error){if(dialog.open)caption.textContent=ventureError(error);}
 }
