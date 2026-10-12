@@ -80,7 +80,7 @@ import vortex_worker as worker
 original_category = worker.error_category
 def categorize(error):
     category = original_category(error)
-    if category == 'unavailable':
+    if category in ('unavailable', 'authentication', 'drm'):
         names = {'WorkerError', 'SourceError', 'DownloadError', 'ExtractorError',
                  'KeyError', 'TypeError', 'AttributeError', 'ValueError',
                  'AssertionError', 'NameError', 'OSError', 'HTTPError'}
@@ -96,7 +96,10 @@ def categorize(error):
         detail = str(error).lower()
         reason = next((code for pattern, code in (
             ('initialization fragment found after media fragments', 'hls_initialization_layout'),
-            ('drm protected', 'drm'), ('downloaded file is empty', 'empty_transfer'),
+            ('drm protected', 'drm'), ('drm-protected', 'drm'),
+            ('http error 403', 'http_403'), ('403 forbidden', 'http_403'),
+            ('http error 401', 'http_401'), ('sign in to confirm', 'provider_sign_in'),
+            ('downloaded file is empty', 'empty_transfer'),
             ('did not get any data blocks', 'empty_transfer'),
             ('fragment', 'fragment_failure'), ('requested format', 'format_unavailable'))
             if pattern in detail), 'unclassified')
@@ -237,7 +240,7 @@ def main():
                 report['media'] = {k: final.get('media', {}).get(k) for k in ('duration', 'width', 'height', 'mediaType', 'ext')}
         if report['status'] == 'not_run':
             report['status'] = 'no_verified_download'
-        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') == 'unavailable'
+        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') in ('unavailable', 'authentication', 'drm')
                                           for a in report['attempts']):
             report['nativeDiagnostic'] = native_diagnostic(specification, root)
         if provider in ('twitter', 'instagram', 'youtube', 'generic'):
