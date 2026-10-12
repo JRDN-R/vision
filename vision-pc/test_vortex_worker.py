@@ -140,6 +140,8 @@ class VortexAdapterTests(unittest.TestCase):
         class FakeYoutubeDL:
             def __init__(self, options):
                 captured.update(options)
+            def build_format_selector(self, specification):
+                return lambda context: iter(context['formats'][-1:])
             def __enter__(self): return self
             def __exit__(self, *_unused): return False
             def extract_info(self, value, download=False):
@@ -227,7 +229,7 @@ class VortexAdapterTests(unittest.TestCase):
     def test_selected_long_media_still_obeys_duration_limit(self):
         with patch.object(worker, 'configure_ytdlp_safety'), patch.object(yt_dlp.YoutubeDL, 'extract_info',
                 return_value=dict(id='long', title='Long video', duration=28800)):
-            with self.assertRaisesRegex(worker.WorkerError, 'two-hour'):
+            with self.assertRaisesRegex(worker.WorkerError, 'duration limit'):
                 worker.run_ytdlp(self.request(kind='inspect'))
 
     def test_youtube_music_selection_preserves_music_url_and_best_audio(self):

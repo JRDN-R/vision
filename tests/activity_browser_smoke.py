@@ -67,6 +67,12 @@ with sync_playwright() as p:
  page.locator('#tab-logins').click();page.wait_for_timeout(150)
  assert 'Email / password' in page.locator('#accountDirectory').inner_text()
  assert 'Vortex' in page.locator('#accountDirectory').inner_text()
+ # An unavailable Firebase directory must not turn every observed login into an admin.
+ assert page.locator('#accountDirectory .account-delete').count()==2
+ assert page.locator('#accountDirectory .account-delete:disabled').count()==2
+ assert page.locator('#accountDirectory').get_by_text('Protected administrator').count()==0
+ assert 'Firebase Admin on the PC' in page.locator('#accountDirectory .account-delete').first.get_attribute('title')
+ print('PASS fallback accounts are not mislabeled protected administrators')
  assert page.locator('.event').count()==1
  page.locator('#tab-transcriptions').click();page.wait_for_timeout(150)
  assert page.locator('.event').count()==0

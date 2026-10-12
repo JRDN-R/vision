@@ -30,3 +30,60 @@ python tests/activity_browser_smoke.py
 ```
 
 Browser checks use mocked Firebase and HTTP responses; backend tests use SQLite and locally signed test tokens. They do not verify a live PC rollout or make real media downloads.
+
+## Owner account management (Firebase + local PC)
+
+The Logins tab now lists all Firebase Authentication users, including people
+who registered but have not sent a job to the PC. Names come from Firebase display
+names or the observed identity, split into first/last fields. Missing names remain
+"Not provided"; names are never invented from email addresses.
+
+The directory and destructive action use separate, owner-only endpoints:
+
+- GET /api/admin/accounts: lists registered Firebase users and aggregate
+  Vision project, Venture conversation and Vortex job counts. Raw Firebase UIDs
+  and service-account credentials are never returned.
+- POST /api/admin/accounts/delete: accepts only a SHA-256 account identifier and
+  the exact typed phrase "DELETE user@example.com". It refuses owner or
+  administrator identities, and active jobs must be finished/cancelled first.
+
+### Required private setup before enabling Delete
+
+The normal PC updater deploys the new code, but deletion remains disabled
+until the administrator configures Firebase's server-side Admin SDK:
+
+1. In the Firebase Console for the same project used by Vision, generate a
+   service-account credential authorized to list and delete Firebase Auth users.
+2. Save its JSON file only on the Windows PC, e.g.
+   C:\ProgramData\VisionPC\firebase-admin.json, protected so ordinary users
+   cannot read it. Never commit it to GitHub, embed it in HTML, or expose it in
+   browser storage.
+3. Add the private config.json entry:
+   "firebaseAdminServiceAccount": "C:\\ProgramData\\VisionPC\\firebase-admin.json"
+   and restart the Vision PC service after updating. The path is validated
+   against the Firebase project's ID.
+4. Sign in to Vision Status with the Google account listed in the PC's
+   activity-admins.json; open Logins and review the account before
+   choosing Delete, then type the exact confirmation phrase.
+
+Deletion invalidates the Firebase Authentication user, erases the account's
+Vision project rows and files, Venture conversations, memory, profile, credentials,
+usage data, local context index, Vortex jobs and download files, and its activity
+records stored on the PC. A tombstone blocks already-issued tokens; when complete
+it retains only a one-way hashed account identifier, not a name, email or raw UID.
+If Firebase or disk operations fail, deletion reports an error and can be retried;
+it never claims success with pending cleanup.
+
+This deletes PC-managed account data. It cannot remove files the user
+previously downloaded to their own device, offline browser-local copies, or data
+held by unrelated/external services. If an older separate Vision Cloud deployment
+is still in use, its Firestore/Cloud Storage records require an additional,
+deployment-specific deletion procedure; this endpoint must not be represented
+as deleting those external resources.
+
+### Test
+
+python -m unittest discover -s vision-pc -p test_account_administration.py -v
+
+The tests mock Firebase Admin operations and use temporary account-owned
+files. They do not delete live users.

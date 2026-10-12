@@ -25,14 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Vendor Firebase login runtime
-        run: |
-          if [ ! -s web/vendor/firebase.js ]; then
-            mkdir -p web/vendor
-            npm install --prefix /tmp/vision-deps --no-audit --no-fund firebase@12.19.0 esbuild@0.25.10
-            printf "import * as app from 'firebase/app'; import * as auth from 'firebase/auth'; window.VisionFirebaseSDK={app,auth};\n" > /tmp/vision-deps/firebase-entry.js
-            /tmp/vision-deps/node_modules/.bin/esbuild /tmp/vision-deps/firebase-entry.js --bundle --format=iife --minify --legal-comments=inline --outfile=web/vendor/firebase.js
-          fi
+      - name: Build pinned Firebase login runtime
+        run: bash web/vendor/build-firebase.sh
       - name: Rebuild the portable app from source
         run: python3 web/build.py
       - name: Package reproducible source

@@ -33,7 +33,7 @@ def run():
             for width in [int(value) for value in os.environ.get('VISION_TEST_WIDTHS', '390,1280').split(',')]:
                 conversations=[dict(id='v-test-conversation-001',title='Cowling inspection report',settings=settings,revision=1,createdAt=1791320000,updatedAt=1791320000,boardProject=False)]
                 runs=[dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create an inspection report and save the HTML.',text='## Your inspection report\n\nThe measurements are organized by panel and location.\n\n[Download the report](sandbox:/mnt/data/report.html)',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)]
-                funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[])
+                funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[],liveMeterVersion=1)
                 submitted=[];funding_posts=[];conversation_posts=[]
                 def api(url,method,raw):
                     if url.endswith('/artifacts/a-001'):
@@ -135,6 +135,18 @@ def run():
                 p.locator('#ventureAvatar').click();assert 'Estimated API balance' in p.locator('#ventureAccount').inner_text()
                 assert '$' not in p.locator('#ventureAccount').inner_text()
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='76'
+                assert p.locator('#ventureFundingPercent').inner_text()=='76.0% remaining'
+                # Change the server fixture while the menu stays open. No user
+                # click, conversation update or completed response triggers this.
+                funding.update(fraction=.975,activeRuns=1,usage=dict(inputTokens=1234,outputTokens=567,models=['gpt-5.6-terra'],scope='active',kind='live-estimate'))
+                p.wait_for_function("document.getElementById('ventureFundingPercent').textContent==='97.5% remaining'")
+                assert p.locator('#ventureFundingStatus').inner_text()=='Live estimate'
+                assert 'Terra' in p.locator('#ventureFundingUsage').inner_text()
+                funding['fraction']=.97499
+                p.wait_for_function("document.getElementById('ventureFundingPercent').textContent==='97.499% remaining'")
+                assert abs(float(p.locator('#ventureBattery').get_attribute('aria-valuenow'))-97.499)<.00001
+                p.screenshot(path=str(shots/f'venture-live-funding-{width}.png'))
+                funding.update(activeRuns=0,usage=None)
                 p.locator('#ventureCalibrate').click();p.locator('#ventureBalanceAmount').fill('25');p.locator('#ventureBalanceForm [type=submit]').click();p.wait_for_timeout(200)
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='100',p.locator('#ventureBalanceStatus').inner_text()
                 assert funding_posts[-1]['kind']=='set'

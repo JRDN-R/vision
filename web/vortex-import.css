@@ -1,0 +1,18 @@
+@property --vision-vortex-angle{syntax:"<angle>";inherits:false;initial-value:0deg}
+#vortexImportDialog{width:min(680px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px}
+#vortexImportDialog h2{color:#eac3b3}
+#vortexImportSelection{padding:16px;border:1px solid #684139;border-radius:12px;margin:20px 0;background:#241c1b;overflow-wrap:anywhere}
+#vortexImportSelection strong,#vortexImportSelection span{display:block}
+#vortexImportSelection span{font-size:12px;color:var(--muted);margin-top:7px}
+#vortexImportControls{margin-top:16px}
+#vortexImportApply{background:#eac3b3;color:#3d1614;border-color:#eac3b3;min-width:100px}
+.vortex-import-orbit{position:relative;isolation:isolate;border-radius:999px;padding:2px;margin:12px 0 22px;background:#751e18;box-shadow:0 0 23px #751e1838}
+.vortex-import-orbit:before,.vortex-import-orbit:after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:conic-gradient(from var(--vision-vortex-angle),#3d1818,#e58a60 21%,#ffd39f 26%,#311518 52%,#eb986e 77%,#461918);animation:vision-vortex-orbit 20s linear infinite}
+.vortex-import-orbit:after{inset:-6px;filter:blur(12px);opacity:.55;animation-direction:reverse;animation-duration:27s}
+#vortexImportFindForm{position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin:0;padding:6px 7px 6px 18px;background:#000;border:1px solid #c3745740;border-radius:inherit;min-height:56px}
+#vortexImportURL{flex:1;min-width:0;border:0;background:transparent;margin:0;padding:8px 0;font-size:16px;color:#f2f0eb;outline:none}
+#vortexImportFindForm:focus-within{outline:2px solid #eac3b3;outline-offset:3px}
+#vortexImportFind{border-radius:999px;background:#751e18;color:#f2f0eb;border-color:#965248;min-height:44px;padding:8px 18px;flex:none}
+@keyframes vision-vortex-orbit{to{--vision-vortex-angle:360deg}}
+@media(prefers-reduced-motion:reduce){.vortex-import-orbit:before,.vortex-import-orbit:after{animation:none}}
+@media(max-width:560px){#vortexImportDialog{padding:20px 17px}.vortex-import-orbit{margin-top:14px}#vortexImportFind{padding:8px 14px}}

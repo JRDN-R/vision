@@ -1,28 +1,133 @@
 {
   "schema": "vision-venture-pricing-v1",
-  "version": "2026-10-06",
-  "verifiedAt": "2026-10-06T22:00:00Z",
-  "reviewAfter": "2026-11-06T00:00:00Z",
+  "version": "2026-10-10",
+  "verifiedAt": "2026-10-10T15:00:00Z",
+  "reviewAfter": "2026-11-10T00:00:00Z",
   "sources": [
     "https://developers.openai.com/api/docs/pricing",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",
     "https://developers.openai.com/api/docs/guides/prompt-caching",
-    "https://developers.openai.com/api/docs/guides/reasoning"
+    "https://developers.openai.com/api/docs/guides/reasoning",
+    "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "https://developers.openai.com/api/docs/models/gpt-6-luna",
+    "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    "https://developers.openai.com/api/docs/models/gpt-6-sol",
+    "https://developers.openai.com/api/docs/models/gpt-4.1",
+    "https://developers.openai.com/api/docs/models/gpt-4o",
+    "https://developers.openai.com/api/docs/models/o3",
+    "https://developers.openai.com/api/docs/guides/token-counting"
   ],
   "currency": "USD",
   "perMillionTokens": true,
   "models": {
-    "gpt-6-astra": {"input": "10", "cached": "1", "write": "12.5", "output": "50", "longThreshold": 272000, "longInputFactor": "2", "longOutputFactor": "1.5"},
-    "gpt-6.1-sol": {"input": "2", "cached": "0.1", "write": "2.5", "output": "10", "longThreshold": 272000, "longInputFactor": "2", "longOutputFactor": "1.5"},
-    "gpt-6-luna": {"input": "0.1", "cached": "0.01", "write": "0.125", "output": "0.5", "longThreshold": 272000, "longInputFactor": "2", "longOutputFactor": "1.5"},
-    "gpt-5.6-sol": {"input": "4", "cached": "0.4", "write": "5", "output": "20", "longThreshold": 272000, "longInputFactor": "2", "longOutputFactor": "1.5", "reviewAfter": "2026-11-21T00:00:00Z"}
+    "gpt-6-astra": {
+      "input": "10",
+      "cached": "1",
+      "write": "12.5",
+      "output": "50",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5"
+    },
+    "gpt-6.1-sol": {
+      "input": "2",
+      "cached": "0.1",
+      "write": "2.5",
+      "output": "10",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5"
+    },
+    "gpt-6-luna": {
+      "input": "0.1",
+      "cached": "0.01",
+      "write": "0.125",
+      "output": "0.5",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5"
+    },
+    "gpt-5.6-sol": {
+      "input": "4",
+      "cached": "0.4",
+      "write": "5",
+      "output": "20",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5",
+      "reviewAfter": "2026-11-21T00:00:00Z"
+    },
+    "gpt-5.6-terra": {
+      "input": "2",
+      "cached": "0.2",
+      "write": "2.5",
+      "output": "12",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5"
+    },
+    "gpt-6-sol": {
+      "input": "2",
+      "cached": "0.2",
+      "write": "2.5",
+      "output": "10",
+      "longThreshold": 272000,
+      "longInputFactor": "2",
+      "longOutputFactor": "1.5"
+    },
+    "gpt-4.1": {
+      "input": "2",
+      "cached": "0.5",
+      "output": "8",
+      "cacheWriteUsageRequired": false,
+      "inheritSnapshots": false,
+      "tierMultipliers": {
+        "default": "1",
+        "standard": "1"
+      }
+    },
+    "gpt-4o": {
+      "input": "2.5",
+      "cached": "1.25",
+      "output": "10",
+      "cacheWriteUsageRequired": false,
+      "inheritSnapshots": false,
+      "tierMultipliers": {
+        "default": "1",
+        "standard": "1"
+      }
+    },
+    "o3": {
+      "input": "2",
+      "cached": "0.5",
+      "output": "8",
+      "cacheWriteUsageRequired": false,
+      "inheritSnapshots": false,
+      "tierMultipliers": {
+        "default": "1",
+        "standard": "1"
+      }
+    }
   },
-  "tierMultipliers": {"default": "1", "standard": "1", "flex": "0.5", "priority": "2", "fast": "2", "ultrafast": "6"},
-  "tools": {"webSearchCall": "0.01", "container1gSession": "0.03", "containerSessionSeconds": 1200},
+  "tierMultipliers": {
+    "default": "1",
+    "standard": "1",
+    "flex": "0.5",
+    "priority": "2",
+    "fast": "2",
+    "ultrafast": "6"
+  },
+  "tools": {
+    "webSearchCall": "0.01",
+    "container1gSession": "0.03",
+    "containerSessionSeconds": 1200
+  },
   "notes": [
     "Estimates, not a connection to the OpenAI billing balance. Prices are reviewed and shipped with server updates, never guessed from model names.",
     "Cache writes and cached reads are subsets of input tokens. Reasoning tokens are a subset of output tokens. Pro mode has no additional multiplier: use returned aggregated usage.",
     "Container sessions are estimated from observed activity. Eligible per-minute billing, hidden tool activity, organization discounts and external usage can make the estimate differ.",
-    "Unknown models, usage, tiers or charge categories mark coverage incomplete. No paid title, embedding or transcription API is called by Venture preparation."
+    "Unknown models, usage, tiers or charge categories mark coverage incomplete. No paid title, embedding or transcription API is called by Venture preparation.",
+    "Live counted input includes prepared context, attachments, tools and reasoning/text settings. Streamed text is provisional; max output is a limit, not a charge. Hidden reasoning and cache allocations reconcile to reported usage. Historical ledger entries retain their original pricing snapshot."
   ]
 }

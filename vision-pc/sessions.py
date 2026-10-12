@@ -565,7 +565,8 @@ class Sessions:
 
     def call(self, key, method, path, **kwargs):
         try:
-            result = requests.request(method, OPENAI+path, headers={'Authorization': 'Bearer '+key}, timeout=(15, 60), **kwargs)
+            kwargs.setdefault('timeout', (15, 60))
+            result = requests.request(method, OPENAI+path, headers={'Authorization': 'Bearer '+key}, **kwargs)
         except requests.RequestException:
             raise UpstreamFailure('OpenAI could not be reached. FUPCJ Server will reconnect.')
         if result.status_code >= 400:
@@ -735,6 +736,10 @@ class Sessions:
         rid = response.get('id')
         if rid and ID.fullmatch(str(rid)):
             fields['response_id'] = rid
+            try:
+                self.venture.funding.observe_live(self.row(run_id), response)
+            except Exception:
+                self.app.logger.warning('Live funding telemetry is temporarily unavailable.')
             if self.row(run_id).get('context_pending_parent') and rid != self.row(run_id)['context_pending_parent']:
                 fields['context_pending_parent'] = None
         text = []
@@ -899,6 +904,10 @@ class Sessions:
             elif row['status'] == 'queued':
                 self.update(run_id, status='preparing', phase='Preparing project files')
                 payload = self.prepare_payload(row, key)
+                try:
+                    self.venture.funding.prepare_live(self.row(run_id), key, payload)
+                except Exception:
+                    self.app.logger.warning('Live funding preparation is temporarily unavailable.')
                 if self.row(run_id)['cancel_requested']:
                     self.update(run_id, status='cancelled', phase='Cancelled', key_cipher=None)
                     return True
@@ -932,6 +941,10 @@ class Sessions:
                                 error='Additional evidence was requested after the retrieval safeguard was reached. Coverage is incomplete. Continue the conversation or explicitly use full-source context.')
                     return True
                 if followup is not None:
+                    try:
+                        self.venture.funding.prepare_live(self.row(run_id), key, followup)
+                    except Exception:
+                        self.app.logger.warning('Live funding preparation is temporarily unavailable.')
                     if self.row(run_id)['cancel_requested']:
                         self.update(run_id,status='cancelled',phase='Cancelled before further retrieval response',key_cipher=None)
                         return True

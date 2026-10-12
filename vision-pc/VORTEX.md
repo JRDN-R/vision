@@ -1,21 +1,51 @@
 # Vortex
 
 Vortex runs at `https://jrdn-r.github.io/vision/vortex/`. Its page and modules are
-independent of the Vision board and Venture conversation interface. The only
-changes to those interfaces are their two Vortex links and release notes.
+independent of the Vision board and Venture conversation interface. Vision also offers Vortex imports in Add to board and the module Files tab.
 Opening Vortex in the same tab saves pending board changes first.
+
+## Import into Vision
+
+Choose **Vortex** in **Add to board**, or **+ Vortex** in a selected module's
+**Files** tab. Paste a video/audio URL, choose **Find**, then **Apply**. The red
+orbital URL field matches Vortex. Controls retain the current transcription
+provider and sound-effects preference, and let a Files import create a new module.
+There is no download or video/audio format chooser in this dialog.
+
+The server prefers 320–480p video where the source offers it, falls back to a
+small available stream, and converts processing audio to 16 kHz mono at 32 kbps.
+Video produces timestamped snapshots and a transcript. Audio-only links,
+including YouTube Music and individual Spotify tracks, produce a transcript.
+Spotify uses the existing metadata/matched-public-audio workflow. Source
+availability, DRM, sign-in requirements and the four-hour media duration limit applies (a reviewed increase from two hours).
+
+After Apply is accepted, download, snapshots and transcription run durably on
+FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
+the saved Vision project to receive the result. Completed import receipts remain
+available for 24 hours to cover delayed project saves. Original media is not embedded
+in Vision or its ZIP/RAG exports; the small processing copy is deleted once
+snapshots and the durable transcription receipt are saved.
+
+A separate account-owned **Balanced MP4** video or default **M4A** audio download
+is silently queued in Vortex history. It uses the usual five-day retention,
+account ownership, queue and disk limits. A full queue/storage retries the
+history handoff without blocking the Vision result or creating duplicate copies.
+History download failures remain visible in Vortex, without a Vision notification.
+
+**This integration requires a PC update.** Run the latest installer with
+`-Action Update` using the command below. An existing Vortex installation does
+not need its engines or Docker services reinstalled. The updater includes
+`vortex_imports.py`; the UI detects older processors and asks for the update.
 
 ## Version
 
-Current release: **v1.0.1**. This patch fixes successful normalized URL lookups
-being silently discarded by the webpage and adds visible feedback when an
-inspection receipt is no longer available. The active job retains its original
-submitted text so shared/short URLs can match the server's canonical response
-without allowing late results to overwrite a genuinely edited input.
-The fix is in the webpage and works with the existing backend; no engine or
-Docker reinstall is required. Updating the Windows processor is only needed
-to advance its separately reported version. This does not make unavailable
-provider media accessible or bypass authentication requirements.
+Current proposed release: **v1.0.3**. This update builds on v1.0.2
+and adds a guarded fallback for direct, time-limited Instagram CDN MP4s and
+explicitly supplied VideoDropper download links. It does not send regular
+Instagram post or Reel links to VideoDropper, does not require source-account
+cookies, and does not guarantee that every Instagram original URL can be
+resolved. The backend must be updated on FUPCJ for the new adapter to work.
+No new download packages or Docker service are required.
 
 Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
 version. Open the side menu to see the web version directly beneath the Vortex
@@ -115,6 +145,29 @@ the file and tapping Share are separate steps so iOS receives a fresh user
 gesture. Save file uses a short-lived URL and the browser's download/Save to
 Files workflow, without holding a large video in page memory.
 
+The selected audio/video panel also offers **Open in Moises** directly below
+Download, with the same responsive width and 44 px height and the supplied Moises
+artwork. Its first tap reuses Vortex's export queue or retrieves the completed
+file with the current account's authentication. A Moises-only export does not
+also start a browser download; tapping Download still requests the normal save.
+Sharing is opt-in and limited to 32 MiB, checked against both job metadata and
+the received bytes. MP4/MOV and M4A/MP3/WAV use explicit media MIME types.
+Changing accounts, media, quality or format, deleting/expiring a result, and
+leaving the page discard the prepared handoff. Selection changes abort pending
+file retrieval; late responses cannot populate another selection or account.
+
+Once prepared, a fresh tap opens the native Share Sheet with the **file**, not
+its ticket URL. Select Moises if the installed app offers itself for that file,
+then complete its import options. Web Share cannot choose a specific app or
+start Moises's upload/separation automatically. If Moises is absent, sharing
+is unsupported, or the file exceeds the browser limit, save to Files and import
+inside Moises. Cancelling the Share Sheet preserves the prepared file for retry.
+Expired delivery tickets can still be prepared while the underlying job remains
+available, because this retrieval uses authenticated `/file` rather than a ticket.
+See [WebKit's user activation guidance](https://webkit.org/blog/13862/the-user-activation-api/),
+the [Web Share standard](https://www.w3.org/TR/web-share/), and
+[Moises's import instructions](https://help.moises.ai/hc/en-us/articles/8583454469276-How-to-Upload-and-Edit-your-track-using-Moises).
+
 ## Parallel extraction and engine availability
 
 A user action still creates exactly one SQLite job and one history row. Within
@@ -147,6 +200,7 @@ No engine configuration comes from a browser request.
 | --- | --- |
 | yt-dlp | Native public video/audio inspection and download; compatible providers and existing YouTube search/pagination. Installed by Update/InstallVortexTools. |
 | gallery-dl | Native public gallery/video extraction; now races yt-dlp for X, Instagram and Reddit. X candidates must match the requested tweet ID; quotes, replies and previews are excluded. Installed by InstallVortexTools. |
+| Instagram signed MP4 | New local adapter accepts a pasted direct HTTPS Instagram CDN MP4 or an explicit `dl.videodropper.app/?url=...` download link **only when it wraps one Instagram CDN MP4**. Attempts the CDN first, then the user-supplied relay if needed, with standard size limits, local FFmpeg conversion and full-file verification. Never sends ordinary Instagram links to VideoDropper automatically; signed URLs expire. |
 | spotDL | Existing official Spotify metadata and public YouTube/YouTube Music audio matching. Only compatible Spotify work is dispatched here. Installed by InstallVortexTools. |
 | FFmpeg/FFprobe | Existing Windows tools; shared local conversion plus mandatory final file verification. |
 | Cobalt | Implemented opt-in API adapter and pinned self-hosted Linux-container provisioning. The local service must pass health checks; unsupported services, picker responses and unavailable streams fail only this adapter. It is not enabled by a normal Update. |
@@ -478,3 +532,4 @@ Use the existing updater's `Rollback` action and selected backup directory to
 restore the previous processor if activation fails. Vortex tables are additive;
 do not remove the shared database or other Vision data during rollback. Revert
 the Vortex change in GitHub to remove its page and navigation additions.
+

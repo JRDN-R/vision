@@ -31,14 +31,14 @@ from flask import g, jsonify, request, send_file
 from uploaded_media import WindowsJob
 from vortex_network import engine_for, validate_input
 
-VORTEX_VERSION = '1.0.2'
+VORTEX_VERSION = '1.0.3'
 RETENTION_SECONDS = 5 * 86400
 MAX_BYTES = 2 * 1024**3
 ACCOUNT_BYTES = 10 * 1024**3
 GLOBAL_BYTES = 40 * 1024**3
 DISK_RESERVE = 2 * 1024**3
 MAX_ITEMS = 50
-MAX_DURATION = 7200
+MAX_DURATION = 4 * 3600
 MAX_ACTIVE = 3
 MAX_GLOBAL_ACTIVE = 20
 MAX_HISTORY = 500
@@ -79,7 +79,9 @@ class VortexJobs:
             # Additive migration: existing jobs and five-day download tickets survive updates.
             columns = {row['name'] for row in db.execute('PRAGMA table_info(vortex_jobs)')}
             for name, definition in (('options_json', "TEXT NOT NULL DEFAULT '{}'"),
-                                     ('search_next_page', 'INTEGER')):
+                                     ('search_next_page', 'INTEGER'),
+                                     ('purpose', "TEXT NOT NULL DEFAULT ''"),
+                                     ('history_id', 'TEXT')):
                 if name not in columns:
                     db.execute(f'ALTER TABLE vortex_jobs ADD COLUMN {name} {definition}')
 
@@ -89,13 +91,16 @@ class VortexJobs:
             return ((packages and importlib.machinery.PathFinder.find_spec(module, [packages]) is not None)
                     or importlib.util.find_spec(module) is not None)
         engines = {name: bool(available(module)) for name, module in
-                   (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'), ('spotdl', 'spotdl'))}
+                   (('yt-dlp', 'yt_dlp'), ('gallery-dl', 'gallery_dl'),
+                    ('instaloader', 'instaloader'), ('spotdl', 'spotdl'))}
+        # Guarded built-in adapters work without optional native packages.
+        engines.update({'page-media': True, 'instagram-direct': True})
         ffmpeg = Path(self.app.config.get('FFMPEG', ''))
-        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and any(engines.values()) and ffmpeg.is_file()
+        ready = bool(self.app.config.get('FIREBASE_IDENTITY')) and ffmpeg.is_file()
         return dict(ready=ready, vortexVersion=VORTEX_VERSION, engines=engines, retentionDays=5, maxFileBytes=MAX_BYTES,
                     maxItems=MAX_ITEMS, maxDuration=MAX_DURATION, persistentJobs=True,
                     firebaseRequired=True, videoFormats=['mp4', 'mov'], audioFormats=['m4a', 'mp3', 'wav'],
-                    searchPagination=True, spotifyNote='Spotify supplies track metadata; audio is matched from another public service, not downloaded from Spotify.')
+                    searchPagination=True, visionImport=True, spotifyNote='Spotify supplies track metadata; audio is matched from another public service, not downloaded from Spotify.')
 
     def _uid(self):
         uid = getattr(g, 'uid', '')
@@ -131,12 +136,12 @@ class VortexJobs:
                     resultReady=status == 'complete' and bool(value.get('filename')))
 
     def _capacity(self, db, uid, kind):
-        rows = db.execute('SELECT uid,status,kind,output_size,delete_requested FROM vortex_jobs').fetchall()
+        rows = db.execute('SELECT uid,status,kind,output_size,delete_requested,purpose FROM vortex_jobs').fetchall()
         if sum(r['status'] in ACTIVE for r in rows if r['uid'] == uid) >= MAX_ACTIVE:
             raise self.Error('Three Vortex operations are already active. Wait for one to finish.', 429)
         if sum(r['status'] in ACTIVE for r in rows) >= MAX_GLOBAL_ACTIVE:
             raise self.Error('The Vortex queue is full. Try again shortly.', 429)
-        if sum(r['uid'] == uid and not r['delete_requested'] for r in rows) >= MAX_HISTORY:
+        if sum(r['uid'] == uid and not r['delete_requested'] and not r['purpose'] for r in rows) >= MAX_HISTORY:
             raise self.Error('Your Vortex history is full. Remove older entries to continue.', 429)
         if kind == 'download':
             def reserved(row):
@@ -149,7 +154,9 @@ class VortexJobs:
             if shutil.disk_usage(self.root).free < DISK_RESERVE + pending + 3 * MAX_BYTES:
                 raise self.Error('FUPCJ Server needs more free space before accepting another download.', 507)
 
-    def enqueue(self, data, uid):
+    def enqueue(self, data, uid, *, purpose=''):
+        if purpose not in ('', 'vision'):
+            raise ValueError('Invalid internal media purpose')
         if not isinstance(data, dict):
             raise self.Error('Send a media link or search as JSON.')
         kind, quality = data.get('kind', 'download'), data.get('quality', 'max')
@@ -180,7 +187,7 @@ class VortexJobs:
         with self.db() as db:
             old = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND request_id=?', (uid, request_id)).fetchone()
         if old:
-            if old['input'] != value or old['kind'] != kind or old['quality'] != quality or not same_options(old):
+            if old['input'] != value or old['kind'] != kind or old['quality'] != quality or old['purpose'] != purpose or not same_options(old):
                 raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
             if old['delete_requested']:
                 raise self.Error('This Vortex request has been removed.', 410)
@@ -206,7 +213,11 @@ class VortexJobs:
                     service_ready = True
                 except (ValueError, TypeError):
                     pass
-        if not service_ready and not any(capability['engines'].get(a.name) for a in compatible):
+        installed = capability['engines']
+        if not service_ready and not any(
+                installed.get(a.name) or
+                (a.name.startswith('yt-dlp-twitter-') and installed.get('yt-dlp'))
+                for a in compatible):
             raise self.Error('This source is unavailable on FUPCJ Server. Run Setup-Vision-PC.ps1 -Action InstallVortexTools.', 503)
         now, job_id = time.time(), secrets.token_hex(12)
         with self.db() as db:
@@ -214,17 +225,32 @@ class VortexJobs:
             # A second tab may have accepted the same request during DNS resolution.
             old = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND request_id=?', (uid, request_id)).fetchone()
             if old:
-                if (old['input'], old['kind'], old['quality']) != (value, kind, quality) or not same_options(old):
+                if (old['input'], old['kind'], old['quality'], old['purpose']) != (value, kind, quality, purpose) or not same_options(old):
                     raise self.Error('That request identifier belongs to a different Vortex operation.', 409)
                 if old['delete_requested']:
                     raise self.Error('This Vortex request has been removed.', 410)
                 return self.snapshot(dict(old))
             self._capacity(db, uid, kind)
-            db.execute('''INSERT INTO vortex_jobs(id,uid,request_id,input,kind,quality,engine,options_json,status,phase,created_at,updated_at)
-                          VALUES(?,?,?,?,?,?,?,?,'queued','Waiting for FUPCJ Server',?,?)''',
-                       (job_id, uid, request_id, value, kind, quality, engine, options_json, now, now))
+            db.execute('''INSERT INTO vortex_jobs(id,uid,request_id,input,kind,quality,engine,options_json,purpose,status,phase,created_at,updated_at)
+                          VALUES(?,?,?,?,?,?,?,?,?,'queued','Waiting for FUPCJ Server',?,?)''',
+                       (job_id, uid, request_id, value, kind, quality, engine, options_json, purpose, now, now))
         self.wake.set()
         return self.snapshot(self.row(job_id, uid))
+
+    def queue_vision_history(self):
+        """Retry a quiet, idempotent normal-quality copy independently of Vision."""
+        with self.db() as db:
+            rows = [dict(row) for row in db.execute("SELECT * FROM vortex_jobs WHERE purpose='vision' AND status IN ('complete','expired') AND media_json IS NOT NULL AND history_id IS NULL AND delete_requested=0")]
+        for row in rows:
+            media = json.loads(row['media_json'] or '{}')
+            try:
+                history = self.enqueue(dict(input=row['input'], kind='download', quality='balanced',
+                    downloadMode='audio' if media.get('mediaType') == 'audio' else 'video',
+                    videoFormat='mp4', audioFormat='m4a', requestId='vision-history-' + row['id']), row['uid'])
+            except self.Error:
+                continue  # Capacity/offline checks are retried by the durable worker.
+            with self.db() as db:
+                db.execute('UPDATE vortex_jobs SET history_id=? WHERE id=?', (history['id'], row['id']))
 
     def register_routes(self):
         app = self.app
@@ -252,7 +278,7 @@ class VortexJobs:
                 clause += ' AND (created_at<? OR (created_at=? AND id<?))'
                 args += [prior['created_at'], prior['created_at'], prior['id']]
             with self.db() as db:
-                rows = db.execute('SELECT * FROM vortex_jobs WHERE uid=? AND delete_requested=0' + clause +
+                rows = db.execute("SELECT * FROM vortex_jobs WHERE uid=? AND delete_requested=0 AND purpose=''" + clause +
                                   ' ORDER BY created_at DESC,id DESC LIMIT 101', args).fetchall()
             return jsonify(jobs=[self.snapshot(dict(row)) for row in rows[:100]],
                            nextCursor=rows[99]['id'] if len(rows) > 100 else None, serverTime=time.time(),
@@ -451,6 +477,7 @@ class VortexJobs:
         while not self.stop.is_set():
             try:
                 if time.monotonic() - last_sweep >= 30:
+                    self.queue_vision_history()
                     self.sweep()
                     last_sweep = time.monotonic()
                 with self.db() as db:
@@ -524,6 +551,8 @@ class VortexJobs:
                        ('Ready to save' if filename else 'Media identified', filename, size, now,
                         now + RETENTION_SECONDS if filename else None, now, job_id))
         audit = self.app.config.get('AUDIT_LOGS')
+        if row.get('purpose') == 'vision':
+            self.queue_vision_history()
         if audit:
             audit.event(row['uid'], 'vortex_finished', app='vortex', jobType=row['kind'],
                         outcome='complete', outputBytes=size)
@@ -570,6 +599,7 @@ class VortexJobs:
                              directory=str(directory.resolve()), ffmpeg=self.app.config['FFMPEG'],
                              deno=self.app.config.get('DENO'), maxBytes=MAX_BYTES, maxItems=MAX_ITEMS,
                              maxDuration=MAX_DURATION, packagesPath=self.app.config.get('VORTEX_PACKAGES'))
+        specification['processingProfile'] = 'vision' if row.get('purpose') == 'vision' else ''
         specification['services'] = self.app.config.get('VORTEX_SERVICES') or {}
         specification.update(json.loads(row.get('options_json') or '{}'))
         request_path = directory / 'request.json'

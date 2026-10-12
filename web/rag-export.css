@@ -1,0 +1,9 @@
+#exportChoiceDialog{width:480px;max-height:calc(100dvh - 32px);overflow-y:auto}
+.export-format-options{display:grid;gap:12px;margin:18px 0}
+.export-format-option{display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;padding:18px;text-align:left;white-space:normal;border-radius:12px}
+.export-format-rag{border-color:var(--accent);background:#27342b}
+.export-format-title{font-size:16px;font-weight:650;line-height:1.5}
+.export-format-title small{font-size:11px;font-weight:400;white-space:nowrap;color:#b9d7ae}
+.export-format-description{font-size:12px;font-weight:400;line-height:1.6;color:#bac5bd}
+#ragExportStatus{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
+@media(max-width:480px){#exportChoiceDialog{padding:22px}.export-format-option{padding:15px}.export-format-title{font-size:15px}}

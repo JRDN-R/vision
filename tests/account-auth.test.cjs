@@ -37,5 +37,45 @@ function fixture(){
  assert.ok(!Array.from(second.storage.values()).join('').includes('B-private-api-key'),'no API key in local project storage');
  // Refresh ID tokens on demand and reject an identity change during the refresh.
  second.context.tokenGate=deferred();second.run('accountFirebase={currentUser:{uid:"user-b",getIdToken:()=>tokenGate.promise}}');const token=second.run('accountIdToken()');await second.run('accountSetUser({uid:"user-c",email:"c@example.com"})');second.context.tokenGate.resolve('old-user-token');await assert.rejects(token,/account changed/);
- console.log('Account boundaries, recovery scopes, cross-device discovery, token-refresh isolation, key restore race and serialized key deletion passed.');
+ // A returning Home Screen account restores from durable storage without opening
+ // a second Google window or changing the persistence selected by Firebase.
+ const remembered=fixture(),storedUser={uid:'persistent-user',email:'saved@example.test',providerData:[]};
+ let restoreOptions,popupCalls=0;
+ const savedAuth={currentUser:storedUser,authStateReady:async()=>{}};
+ remembered.context.window.VisionFirebaseSDK={app:{initializeApp:()=>({})},auth:{
+  indexedDBLocalPersistence:'INDEXED',browserLocalPersistence:'LOCAL',browserSessionPersistence:'SESSION',
+  initializeAuth:(_,opts)=>{restoreOptions=opts;return savedAuth;},
+  useDeviceLanguage(){},onAuthStateChanged(){return ()=>{};},
+  setPersistence(){throw new Error('Do not downgrade durable persistence on startup');},
+  GoogleAuthProvider:class{setCustomParameters(){throw new Error('Do not force an account chooser');}},
+  browserPopupRedirectResolver:'POPUP',
+  signInWithPopup:async()=>{popupCalls++;return{user:storedUser};}
+ }};
+ remembered.context.openProjectsMenu=()=>{};
+ await remembered.run('accountLoad()');
+ assert.deepEqual(Array.from(restoreOptions.persistence),['INDEXED','LOCAL']);
+ assert.equal(remembered.run('accountSignedIn()'),true);
+ await remembered.run('accountGoogleSignIn()');
+ assert.equal(popupCalls,0,'restored Google sessions must not open another popup');
+ assert.equal(remembered.run('accountSignedIn()'),true);
+
+ // First-time Google login still uses an explicit popup and retains the UID.
+ const first=fixture(),emptyAuth={currentUser:null,authStateReady:async()=>{}};
+ let firstPopups=0,providerForced=false;
+ first.context.window.VisionFirebaseSDK={app:{initializeApp:()=>({})},auth:{
+  indexedDBLocalPersistence:'INDEXED',browserLocalPersistence:'LOCAL',
+  initializeAuth:()=>emptyAuth,useDeviceLanguage(){},onAuthStateChanged(){return ()=>{};},
+  setPersistence(){throw new Error('No forced persistence migration');},
+  GoogleAuthProvider:class{setCustomParameters(){providerForced=true;}},
+  browserPopupRedirectResolver:'POPUP',
+  signInWithPopup:async(_auth,_provider,resolver)=>{assert.equal(resolver,'POPUP');firstPopups++;emptyAuth.currentUser=storedUser;return{user:storedUser};}
+ }};
+ first.context.openProjectsMenu=()=>{};
+ await first.run('accountLoad()');
+ await first.run('accountGoogleSignIn()');
+ assert.equal(firstPopups,1);
+ assert.equal(providerForced,false,'stop forcing account selection after a restored login');
+ assert.equal(first.run('accountSignedIn()'),true);
+ assert.equal(first.run('accountBusy'),false);
+ console.log('Account boundaries, session restoration, durable persistence, Google popup recovery and account isolation passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
