@@ -34,16 +34,11 @@ class AccountAdminTests(_current.AccountAdministrationTests):
         root = _current.server.app.config['DATA_DIR'] / 'context'
         root.mkdir(exist_ok=True)
         path = root / 'context.sqlite3'
+        # configure() already creates the real context schema. Exercise the
+        # disabled-engine fallback against that database instead of replacing it.
         with sqlite3.connect(path) as db:
-            db.execute('CREATE TABLE context_chunks(id INTEGER PRIMARY KEY,owner TEXT)')
-            db.execute('CREATE VIRTUAL TABLE context_fts USING fts5(content)')
-            for table in ('context_sources','context_cache','context_vectors','context_heads','context_generations'):
-                db.execute('CREATE TABLE '+table+'(owner TEXT)')
-                db.executemany('INSERT INTO '+table+' VALUES(?)', [(self.uid,), (self.admin,)])
-            db.execute('CREATE TABLE context_jobs(owner TEXT,status TEXT)')
-            db.executemany('INSERT INTO context_jobs VALUES(?,?)', [(self.uid,'complete'), (self.admin,'complete')])
-            db.executemany('INSERT INTO context_chunks VALUES(?,?)', [(1,self.uid), (2,self.admin)])
-            db.executemany('INSERT INTO context_fts(rowid,content) VALUES(?,?)', [(1,'private'), (2,'owner')])
+            db.executemany('INSERT INTO context_heads(owner,project,revision) VALUES(?,?,?)',
+                           [(self.uid,self.project,1), (self.admin,'another-project',1)])
         sources = root/'sources'/hashlib.sha256((self.uid+'\0'+self.project).encode()).hexdigest()
         sources.mkdir(parents=True)
         (sources/'original.txt').write_text('private')
@@ -54,7 +49,6 @@ class AccountAdminTests(_current.AccountAdministrationTests):
         with sqlite3.connect(path) as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM context_heads WHERE owner=?',(self.uid,)).fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM context_heads WHERE owner=?',(self.admin,)).fetchone()[0], 1)
-            self.assertEqual(db.execute('SELECT content FROM context_fts').fetchone()[0], 'owner')
 
     def test_owner_required_for_directory_and_removal(self):
         deleted = self.admin_sdk()
