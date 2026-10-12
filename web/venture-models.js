@@ -3,7 +3,7 @@
  */
 const VENTURE_MODEL_STARTERS = ['qwen3.8-local','gpt-6-astra','gpt-6.1-sol','gpt-6-sol','gpt-5.6-terra','gpt-6-luna','gpt-5.6-sol','gpt-5.6-luna','gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5.2','gpt-5.1','gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','gpt-4o','gpt-4o-mini','o3','o3-mini','o4-mini'];
 const VENTURE_MODEL_BRANDS = {
- 'qwen3.8-local': {name:'Qwen3.8 Local',family:'qwen',icon:'qwen'},
+ 'qwen3.8-local': {name:'Qwen3.8 9B Distill',family:'qwen',icon:'qwen'},
  'gpt-6-astra': {name:'Astra',family:'astra',icon:'orbit'},
  'gpt-6.1-sol': {name:'6.1 Sol',family:'sol',icon:'sunny'},
  'gpt-6-sol': {name:'Sol',family:'sol',icon:'sunny'},

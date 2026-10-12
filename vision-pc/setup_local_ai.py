@@ -31,6 +31,8 @@ def main():
     with exclusive_file(data/'local-inference.lock'):
         runtime=LlamaRuntime(settings,lambda:False,stage)
         executable,_=runtime.verify()
+        manifest=json.loads(Path(settings['manifestPath']).read_text(encoding='utf-8'))
+        report['model']={key:manifest[key] for key in ('modelRepository','modelRevision','modelFile','modelBytes','modelSha256')}
         help_text=subprocess.run([str(executable),'--help'],capture_output=True,text=True,timeout=30,check=True)
         available=help_text.stdout+help_text.stderr
         required=['--parallel','--ctx-size','--api-key','--no-webui','--reasoning-format','--no-context-shift']

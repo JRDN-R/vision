@@ -6,12 +6,14 @@ import unittest
 import subprocess
 import sys
 import os
+import tempfile
 from unittest.mock import patch
 
 import server
 import test_firebase_auth
 from local_preferences import MODEL, EPOCH, local_settings
 from owned_assets import exclusive_file
+import local_runtime
 
 
 class FakeRuntime:
@@ -218,6 +220,60 @@ class LocalInferenceTests(unittest.TestCase):
         response=self.client.get('/api/venture/conversations/local_conversation_0002?since=9999999999',headers=self.a)
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.json['runs'][0]['localQueue']['requestsAhead'],0)
+
+
+class LocalModelContractTests(unittest.TestCase):
+    def test_manifest_matches_reviewed_runtime_and_publisher_sampling(self):
+        manifest = json.loads(Path(__file__).with_name('local-model-manifest.json').read_text())
+        for key, expected in [('modelBytes', local_runtime.MODEL_BYTES),
+                              ('modelSha256', local_runtime.MODEL_SHA),
+                              ('modelRevision', local_runtime.MODEL_REVISION),
+                              ('modelRepository', local_runtime.MODEL_REPOSITORY),
+                              ('modelFile', local_runtime.MODEL_FILE),
+                              ('runtimeCommit', local_runtime.RUNTIME_COMMIT)]:
+            self.assertEqual(manifest[key], expected)
+        # Exercise the wire payload rather than merely checking source constants.
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def iter_lines(self, **kwargs): return iter([b'data: [DONE]'])
+        runtime = local_runtime.LlamaRuntime({}, lambda: False, lambda value: None)
+        try:
+            with patch.object(runtime, 'request', return_value=Response()) as request:
+                self.assertEqual(list(runtime.generate([{'role':'user','content':'Hello'}], 1024)), [])
+            payload = request.call_args.args[1]
+            self.assertEqual(payload['temperature'], manifest['sampling']['temperature'])
+            self.assertEqual(payload['top_p'], manifest['sampling']['topP'])
+            self.assertEqual(payload['top_k'], manifest['sampling']['topK'])
+            self.assertEqual(payload['max_tokens'], 1024)
+        finally:
+            runtime.http.close()
+
+    def test_previous_model_and_modified_weights_cannot_pass_integrity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            model = root / 'fixture.gguf'; model.write_bytes(b'fixture')
+            executable = root / 'llama-server.exe'; executable.write_bytes(b'runtime fixture')
+            manifest = json.loads(Path(__file__).with_name('local-model-manifest.json').read_text())
+            manifest_path = root / 'manifest.json'
+            settings = dict(runtimePath=str(executable), modelPath=str(model), manifestPath=str(manifest_path))
+            runtime = local_runtime.LlamaRuntime(settings, lambda: False, lambda value: None)
+            try:
+                with patch.object(local_runtime, 'MODEL_BYTES', len(b'fixture')):
+                    manifest['modelBytes'] = len(b'fixture')
+                    # A stale 27B provenance record must fail before hashing/loading.
+                    manifest['modelRevision'] = '6374af6aaa473b4f3b5387db526ee533c709c6af'
+                    manifest_path.write_text(json.dumps(manifest))
+                    with patch.object(local_runtime, 'digest_file') as digest:
+                        with self.assertRaisesRegex(local_runtime.LocalFailure, 'provenance'):
+                            runtime.verify()
+                        digest.assert_not_called()
+                    manifest['modelRevision'] = local_runtime.MODEL_REVISION
+                    manifest_path.write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(local_runtime.LocalFailure, 'integrity'):
+                        runtime.verify()
+            finally:
+                runtime.http.close()
 
 
 if __name__=='__main__':

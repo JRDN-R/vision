@@ -127,7 +127,7 @@
         "codeInterpreter": false
       },
       "localProfile": true,
-      "source": "https://huggingface.co/guideboardlabs/Qwen3.8-27B-Q3-DOWN-XS-GGUF/tree/6374af6aaa473b4f3b5387db526ee533c709c6af"
+      "source": "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/tree/760121cd70bb4c36b2b5ec58eb765e0df5987efe"
     }
   }
 }

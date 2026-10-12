@@ -17,9 +17,11 @@ import time
 
 import requests
 
-MODEL_BYTES = 8491269152
-MODEL_SHA = 'f1e75d0145ee32c3f216b336c2efa4ac8b2ff9249449159b1414187f966cc9cd'
-MODEL_REVISION = '6374af6aaa473b4f3b5387db526ee533c709c6af'
+MODEL_BYTES = 5780090176
+MODEL_SHA = 'df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a'
+MODEL_REVISION = '760121cd70bb4c36b2b5ec58eb765e0df5987efe'
+MODEL_REPOSITORY = 'empero-ai/Qwen3.8-9B-Distill-GGUF'
+MODEL_FILE = 'Qwen3.8-9B-Q4_K_M.gguf'
 RUNTIME_COMMIT = 'f2cc7282ce0042641df55e0e563b75e824e2b647'
 
 
@@ -75,6 +77,8 @@ class LlamaRuntime:
         manifest = json.loads(Path(self.settings['manifestPath']).read_text(encoding='utf-8'))
         if (not runtime.is_absolute() or not model.is_absolute() or runtime.is_symlink() or model.is_symlink() or
                 model.stat().st_size != MODEL_BYTES or manifest.get('modelSha256') != MODEL_SHA or
+                manifest.get('modelBytes') != MODEL_BYTES or manifest.get('modelRepository') != MODEL_REPOSITORY or
+                manifest.get('modelFile') != MODEL_FILE or
                 manifest.get('modelRevision') != MODEL_REVISION or manifest.get('runtimeCommit') != RUNTIME_COMMIT):
             raise LocalFailure('Local model provenance does not match the reviewed installation.')
         self.stage('Verifying installed model')
@@ -190,7 +194,7 @@ class LlamaRuntime:
     def generate(self, messages, max_tokens):
         payload = dict(model='qwen3.8-local', messages=messages, stream=True,
                        stream_options={'include_usage': True}, max_tokens=max_tokens,
-                       temperature=1.0, top_p=.95, top_k=20, min_p=0.0,
+                       temperature=0.6, top_p=.95, top_k=20, min_p=0.0,
                        presence_penalty=0.0, repeat_penalty=1.0,
                        chat_template_kwargs={'enable_thinking': True}, cache_prompt=False, sse_ping_interval=5)
         with self.request('/v1/chat/completions', payload, stream=True) as response:

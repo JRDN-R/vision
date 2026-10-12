@@ -1,6 +1,6 @@
 # Qwen local answering and RAG compression preview
 
-This branch continues the retention work in PR #46 on top of main `16b714b`.
+This branch continues the retention work in PR #46 on top of main, including the Moises handoff changes from PR #47.
 It implements an optional **text and extracted-evidence** Qwen provider. It does
 not establish a completed multimodal rollout, and it does not update FUPCJ.
 
@@ -103,20 +103,41 @@ useful capacity while retaining administrator-configured resource limits.
 
 ## Pinned installation and operator commands
 
-The model is the requested mixed-quantization recipe, not a substituted Qwen:
+The installer now uses the requested **Empero Qwen3.8-9B-Distill**, in the same
+publisher's Q4_K_M GGUF format. This is a community distillation into Alibaba
+Qwen3.5-9B's hybrid Gated DeltaNet/full-attention architecture. It replaces the
+earlier 27B preview; the stable application ID remains `qwen3.8-local` so saved
+model choices continue to work. The model picker identifies it as 9B Distill.
+The 5.78 GB download is about 2.71 GB (32%) smaller than the old 8.49 GB weights.
+Speed and answer quality still need measurement on FUPCJ.
+
+Publisher provenance: [source model](https://huggingface.co/empero-ai/Qwen3.8-9B-Distill/tree/0934f3d2327ff2df2197495278c4c46ae5a56bd9),
+[quantization and checksums](https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/tree/760121cd70bb4c36b2b5ec58eb765e0df5987efe).
+The source repository does not include a separate license file; its model card
+declares Apache-2.0, and the installer preserves that card and the pinned
+Qwen3.5-9B base license. No vision projector is included.
+
+The pinned llama.cpp source contains `LLM_ARCH_QWEN35` support. Sampling uses the
+publisher's temperature 0.6, top-p 0.95, top-k 20. The conservative 4,096/2,048
+context/output profile is retained; thinking shares the output budget. A long
+reasoning attempt can therefore finish incomplete rather than producing an
+answer. It must pass the real model benchmark before Enable.
+
 
 | Artifact | Pin |
 | --- | --- |
-| Repository | `guideboardlabs/Qwen3.8-27B-Q3-DOWN-XS-GGUF` |
-| Model revision | `6374af6aaa473b4f3b5387db526ee533c709c6af` |
-| Model file | `Qwen3.8-27B-Q3-DOWN-XS.gguf` |
-| Bytes | `8491269152` |
-| SHA-256 | `f1e75d0145ee32c3f216b336c2efa4ac8b2ff9249449159b1414187f966cc9cd` |
+| Repository | `empero-ai/Qwen3.8-9B-Distill-GGUF` |
+| Model revision | `760121cd70bb4c36b2b5ec58eb765e0df5987efe` |
+| Model file | `Qwen3.8-9B-Q4_K_M.gguf` |
+| Bytes | `5780090176` |
+| SHA-256 | `df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a` |
 | llama.cpp | `b11559`, commit `f2cc7282ce0042641df55e0e563b75e824e2b647` |
 | Windows Vulkan ZIP SHA-256 | `bf2fb2a7fc5d7669ccabbb6de3f6dd6b54058f213b32e731abc62b590f8566dc` |
 
 `local-model-manifest.json` records these pins and the base-model revision.
-Download preserves model/base-model and runtime license notices. Its resumable
+The installer requires **16 GiB free** for staging/runtime/headroom, plus space
+for any separately required backups and retained sources. Download preserves the
+quantization/source cards, publisher checksums, base-model and runtime notices. Its resumable
 `.part` download must match the exact length/hash. Runtime files, including DLLs,
 are verified against the pinned ZIP and on use. No weights are committed.
 
@@ -132,7 +153,7 @@ $Root = Join-Path $env:ProgramData 'VisionPC'
 # Replace REVIEWED_40_CHARACTER_SHA with the reviewed PR head, after its checks.
 & .\Local-AI.ps1 -Action UpdateCode -SourceRef REVIEWED_40_CHARACTER_SHA
 & "$Root\Local-AI.ps1" -Action Inventory
-# Download is separate and explicit: approximately 8.49 GB of model weights.
+# Download is separate and explicit: approximately 5.78 GB of model weights.
 & "$Root\Local-AI.ps1" -Action Download
 & "$Root\Local-AI.ps1" -Action Check
 & "$Root\Local-AI.ps1" -Action Benchmark -GpuLayers 0 -ContextTokens 4096
@@ -154,6 +175,28 @@ the prior Phase 1A backup helper does not cover all of that automatically.
 
 `Local-AI.txt` is byte-identical to `Local-AI.ps1` for transfer. `UpdateCode` is a
 wrapper around the existing updater and requires `-SourceRef` to be a full SHA.
+Download always returns local answering to the CPU diagnostic profile, disabled,
+with no default epoch. It updates all model/runtime/manifest paths, preserves
+unrelated settings, any custom loopback port, and higher existing RAM reserves, and keeps earlier weights and
+provenance files for recovery. An enabled installation must first be disabled and
+restarted during maintenance. Existing benchmark reports cannot enable the new
+model: both the manifest hash and GPU/context/thread/output profile must match.
+
+To avoid multiline paste reordering in Windows PowerShell, bootstrap the updater
+with this **single line**, after replacing the SHA placeholder with the reviewed
+commit. This downloads the helper and updates PC application code; it can restart
+Vision but does not download weights or enable answering:
+
+```powershell
+& { $ErrorActionPreference = 'Stop'; $visionRef = 'REVIEWED_40_CHARACTER_SHA'; if ($visionRef -notmatch '^[a-fA-F0-9]{40}$') { throw 'Enter the reviewed full commit SHA first.' }; $visionScript = Join-Path $env:TEMP 'Vision-Local-AI.ps1'; Invoke-WebRequest -UseBasicParsing -Uri ('https://raw.githubusercontent.com/JRDN-R/vision/' + $visionRef + '/vision-pc/Local-AI.ps1') -OutFile $visionScript; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $visionScript -Action UpdateCode -SourceRef $visionRef; if ($LASTEXITCODE -ne 0) { throw 'Vision code update failed.' } }
+```
+
+Then run Download separately (this is the 5.78 GB model install):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\VisionPC\Local-AI.ps1" -Action Download
+```
+
 Do not run Download until an appropriate storage/maintenance window is approved.
 
 ## Rollback and remaining gates
@@ -166,8 +209,13 @@ Do **not** overwrite a live database with a pre-deployment backup. The helper's
 Derived compressed caches are new-format data: when reverting the context engine,
 remove/rebuild only derived `context_cache` rows, never originals or user projects.
 
-Still pending: actual FUPCJ OS/driver/task inventory, Vulkan allocation and VRAM
-headroom, model load/latency/quality tests, real workload coexistence, verified
+Operator inventory received October 11, 2026: Windows 10 Pro build 19045, Ryzen
+9 5950X (16 cores/32 threads), Radeon RX 5700 XT driver 32.0.12019.1028, about
+47.9 GiB usable RAM / 31.1 GiB available, and 82.7 GiB free on C:. The existing
+Vision Private PC task was running. This meets the download-space check; it is
+not a Vulkan allocation or safe livestream-load measurement.
+
+Still pending: Vulkan allocation and VRAM headroom, model load/latency/quality tests, real workload coexistence, verified
 photo input/projector or sequential visual worker, calibrated ETA, warm runtime
 reuse, bounded additional-evidence tool loop, large streamed source ingestion,
 complete durable server-side board attachment, >120-frame asset references,

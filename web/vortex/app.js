@@ -1,4 +1,4 @@
-import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.3';
+import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.3&rev=moises.1';
 
 const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);
@@ -8,6 +8,9 @@ Object.assign(state, {profile:null, avatarURL:'', profileLoading:false, selected
 Object.assign(state, {downloadMode:'video', videoFormat:'mp4', audioFormat:'m4a', searchQuery:'', searchNextPage:null, searchSeen:new Set(), searchBusy:false, appendSearch:false, searchFailed:false, lookupGeneration:0});
 Object.assign(state, {queuedDownload:null, submittingDownload:null, autoSaveJobs:new Map(), readyDownload:null, downloadError:''});
 Object.assign(state, {sessionJobs:new Set(), deletedIds:new Set(), historyLoaded:false, visitEpoch:0});
+Object.assign(state, {moisesContext:null, moisesPrepared:null, moisesPreparing:null, moisesSharing:null});
+const MOISES_SHARE_LIMIT = 32 * 1024 * 1024;
+const MOISES_MIME_TYPES = Object.freeze({mp4:'video/mp4', mov:'video/quicktime', m4a:'audio/mp4', mp3:'audio/mpeg', wav:'audio/wav'});
 const searchObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
   if (entries.some(entry => entry.isIntersecting) && !state.searchFailed) void loadMoreResults();
 }, {rootMargin:'240px'}) : null;
@@ -45,6 +48,7 @@ function settleAuth(identity) {
   $('application').removeAttribute('aria-busy');
 }
 function accountChanged(identity) {
+  resetMoisesHandoff();
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
   state.jobs = []; state.selected = null; state.inspectId = ''; state.inspectInput = ''; state.appliedInspect = ''; state.actionId = ''; state.actionEpoch++; state.share = null; state.ticket = null; state.terminal = ''; state.pending = false; state.failures = 0; state.requestIds.clear();
@@ -202,7 +206,7 @@ async function inspect(input = $('sourceInput').value.trim(), {background = fals
   state.appendSearch = append;
   $('sourceSubmit').disabled = true; $('searchResults').hidden = !append;
   if (background) { state.qualityRefreshing = true; $('selection').setAttribute('aria-busy', 'true'); renderDownloadStatus(); }
-  else if (!append) { clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
+  else if (!append) { resetMoisesHandoff(); clearTimeout(state.qualityTimer); state.qualityRefreshing = false; state.selected = null; $('selection').removeAttribute('aria-busy'); $('selection').hidden = true; notice('Sending to FUPCJ Server…'); }
   if (append) { state.searchBusy = true; state.searchFailed = false; renderSearchFooter(); }
   try {
     // Replaced lookups no longer need a queue slot. Download jobs are untouched.
@@ -311,7 +315,7 @@ function codec(value) { if (!value || value === 'none' || value === 'unknown') r
 function selectMedia(media) {
   finishQualityRefresh(); state.selectedQuality = state.quality;
   const sameMedia = state.selected?.url === media.url;
-  if (!sameMedia) state.downloadMode = media.mediaType === 'audio' ? 'audio' : 'video';
+  if (!sameMedia) { resetMoisesHandoff(); state.downloadMode = media.mediaType === 'audio' ? 'audio' : 'video'; }
   state.selected = media; $('selection').hidden = false; $('searchResults').hidden = true;
   $('selectionTitle').textContent = media.title || 'Selected media'; $('selectionSource').textContent = [sourceLabel(media), durationLabel(media.duration)].filter(Boolean).join(' · '); imageSource($('selectionImage'), media.thumbnail);
   sourceLink($('selectionSourceLink'), media.url, media.title);
@@ -359,6 +363,7 @@ function currentDownloadKey() {
 }
 function qualityLabel(value) { return {small:'Small', balanced:'Balanced', max:'Max'}[value] || value; }
 function discardQueuedDownload() {
+  resetMoisesHandoff();
   if (state.queuedDownload && !state.queuedDownload.fromRetry) state.queuedDownload = null;
   state.downloadError = '';
 }
@@ -377,10 +382,10 @@ function renderDownloadStatus() {
   } else if (running) {
     const job = getJob(running[0]);
     const progress = Number.isFinite(Number(job?.progress)) && job?.progress != null ? ' · ' + Math.round(job.progress) + '%' : '';
-    message = running[1].delivering ? 'File ready · Preparing secure download…' : (job?.phase || (job?.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress + ' · Saving automatically when ready';
+    message = running[1].delivering ? 'File ready · Preparing secure download…' : (job?.phase || (job?.status === 'queued' ? 'Queued on FUPCJ Server' : 'Processing on FUPCJ Server')) + progress + (running[1].delivery === 'moises' ? ' · Preparing for Moises' : ' · Saving automatically when ready');
     working = true;
   } else if (ready) {
-    message = 'File ready. Download started automatically where supported. You can also save it below.';
+    message = ready.delivery === 'moises' ? 'File ready. Tap Open in Moises to prepare it for sharing, or save it below.' : 'File ready. Download started automatically where supported. You can also save it below.';
   } else if (state.downloadError && input) {
     message = state.downloadError;
   } else if (state.qualityRefreshing && input) {
@@ -395,6 +400,7 @@ function renderDownloadStatus() {
   fallback.hidden = !ready;
   if (ready) { fallback.href = ready.url; fallback.download = ready.filename; }
   else { fallback.removeAttribute('href'); fallback.removeAttribute('download'); }
+  renderMoisesControl();
 }
 function triggerBrowserSave(url, filename) {
   // The backend sets Content-Disposition: attachment. Cross-origin download
@@ -425,10 +431,10 @@ async function flushDownloadQueue() {
     const job = await submitJob('download', intent.input, intent.quality, intent.options);
     if (epoch !== accountEpoch()) return;
     state.autoSaveJobs.set(job.id, {...intent, delivering:false});
-    notice('Download accepted. Keep Vortex open to save automatically when the file is ready; it will also remain in Download history.');
+    notice(intent.delivery === 'moises' ? 'Preparing your file. Keep Vortex open, then tap Open in Moises when it is ready.' : 'Download accepted. Keep Vortex open to save automatically when the file is ready; it will also remain in Download history.');
     renderJobs(); renderProcessing(); checkAutoSaves(); renderDownloadStatus(); scheduleRefresh(500);
   } catch (error) {
-    if (epoch === accountEpoch()) { state.downloadError = error.message; notice(error.message, true); renderDownloadStatus(); scheduleRefresh(1000); }
+    if (epoch === accountEpoch()) { state.downloadError = error.message; notice(error.message, true); if (intent.delivery === 'moises' && currentDownloadKey() === intent.key) moisesNotice(error.message, true); renderDownloadStatus(); scheduleRefresh(1000); }
   } finally {
     if (epoch === accountEpoch()) {
       state.pending = false;
@@ -437,20 +443,20 @@ async function flushDownloadQueue() {
     }
   }
 }
-function downloadSelected(input = state.selected?.url, quality = state.quality, options = null) {
+function downloadSelected(input = state.selected?.url, quality = state.quality, options = null, delivery = 'save') {
   if (!input || !user()) return;
   const fromRetry = options !== null;
   const chosen = options || downloadOptions(), effectiveQuality = chosen.downloadMode === 'audio' ? 'max' : quality;
   const key = downloadKey(input, effectiveQuality, chosen);
   if (!fromRetry && state.readyDownload?.key === key && seconds(state.readyDownload.expiresAt) > Date.now() + 5000) {
-    triggerBrowserSave(state.readyDownload.url, state.readyDownload.filename);
+    if (delivery === 'save') triggerBrowserSave(state.readyDownload.url, state.readyDownload.filename);
     return;
   }
   // Repeated taps must not create duplicate server jobs or duplicate downloads.
-  if (state.queuedDownload?.key === key || state.submittingDownload?.key === key ||
-      [...state.autoSaveJobs.values()].some(intent => intent.key === key)) { renderDownloadStatus(); return; }
+  const existing = [state.queuedDownload, state.submittingDownload, ...state.autoSaveJobs.values()].find(intent => intent?.key === key);
+  if (existing) { if (delivery === 'save') existing.delivery = 'save'; renderDownloadStatus(); return; }
   state.downloadError = '';
-  state.queuedDownload = {key, input, quality:effectiveQuality, options:chosen, fromRetry};
+  state.queuedDownload = {key, input, quality:effectiveQuality, options:chosen, fromRetry, delivery};
   renderDownloadStatus(); void flushDownloadQueue();
 }
 function validateTicketURL(job, ticket) {
@@ -474,15 +480,20 @@ function checkAutoSaves() {
           const ticket = await request(jobPath(id) + '/ticket', {method:'POST'});
           if (epoch !== accountEpoch() || state.autoSaveJobs.get(id) !== intent) return;
           const url = validateTicketURL(job, ticket);
-          state.readyDownload = {key:intent.key, input:intent.input, filename:job.filename || 'media', url:url.href, expiresAt:ticket.expiresAt};
+          state.readyDownload = {key:intent.key, input:intent.input, filename:job.filename || 'media', url:url.href, expiresAt:ticket.expiresAt, delivery:intent.delivery || 'save'};
           state.autoSaveJobs.delete(id); renderDownloadStatus();
-          triggerBrowserSave(url.href, job.filename || 'media');
-          notice('Your file is ready. The download should start automatically. If your browser blocks it, tap Save file below or use Download history.');
+          if (intent.delivery === 'moises') {
+            if (currentDownloadKey() === intent.key) moisesNotice('File ready. Tap Open in Moises to prepare it for sharing.');
+          } else {
+            triggerBrowserSave(url.href, job.filename || 'media');
+            notice('Your file is ready. The download should start automatically. If your browser blocks it, tap Save file below or use Download history.');
+          }
         } catch (error) {
           if (epoch === accountEpoch() && state.autoSaveJobs.get(id) === intent) {
             state.autoSaveJobs.delete(id);
             state.downloadError = 'File is ready, but automatic saving failed. Open Download history to save it.';
             notice('Automatic download could not start: ' + error.message + '. Use Download history to save the file.', true);
+            if (intent.delivery === 'moises' && currentDownloadKey() === intent.key) moisesNotice('Could not prepare the file. Use Download history to save it, then import inside Moises.', true);
             renderDownloadStatus();
           }
         }
@@ -491,8 +502,111 @@ function checkAutoSaves() {
       state.autoSaveJobs.delete(id);
       state.downloadError = job.error || (job.status === 'complete' ? 'File was not available to save.' : 'Download ' + job.status + '.');
       notice('Automatic download was not started: ' + state.downloadError, true);
+      if (intent.delivery === 'moises' && currentDownloadKey() === intent.key) moisesNotice(state.downloadError, true);
       renderDownloadStatus();
     }
+  }
+}
+
+function moisesNotice(message = '', error = false) {
+  const status = $('moisesStatus');
+  status.textContent = message; status.hidden = !message; status.classList.toggle('error', error);
+}
+function moisesEligibleMedia() { return ['audio', 'video'].includes(state.selected?.mediaType); }
+function resetMoisesHandoff() {
+  state.moisesPreparing?.controller.abort();
+  state.moisesContext = null; state.moisesPrepared = null; state.moisesPreparing = null; state.moisesSharing = null;
+  $('moisesOpenButton').disabled = false; $('moisesOpenButton').removeAttribute('aria-busy');
+  moisesNotice();
+}
+function moisesContextCurrent(context) {
+  if (!context || context.epoch !== accountEpoch() || context.uid !== user()?.uid || context.key !== currentDownloadKey() || !moisesEligibleMedia()) return false;
+  if (!context.jobId) return true;
+  const job = getJob(context.jobId), ready = state.readyDownload;
+  return ready?.key === context.key && ready.url === context.url && job?.kind === 'download' && job.status === 'complete' && job.resultReady &&
+    Number(job.size) > 0 && Number(job.size) <= MOISES_SHARE_LIMIT && (!job.expiresAt || seconds(job.expiresAt) > Date.now() + 5000);
+}
+function renderMoisesControl() {
+  if (state.moisesContext && !moisesContextCurrent(state.moisesContext)) resetMoisesHandoff();
+  const button = $('moisesOpenButton');
+  button.hidden = !moisesEligibleMedia();
+  button.disabled = !!(state.moisesPreparing || state.moisesSharing);
+  if (button.disabled) button.setAttribute('aria-busy', 'true'); else button.removeAttribute('aria-busy');
+}
+async function openInMoises() {
+  renderMoisesControl();
+  const identity = user(), key = currentDownloadKey();
+  if (!identity || !key || !moisesEligibleMedia()) { moisesNotice('Select an audio or video first.', true); return; }
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
+    moisesNotice('File sharing is unavailable in this browser. Save to Files, then import the file inside Moises.', true); return;
+  }
+  if (state.moisesPreparing || state.moisesSharing) return;
+  const prepared = state.moisesPrepared;
+  if (prepared && moisesContextCurrent(prepared)) {
+    state.moisesSharing = prepared; renderMoisesControl();
+    moisesNotice('Select Moises in the Share Sheet if available, or save to Files and import inside Moises.');
+    try {
+      // Call share directly from this fresh tap. A fetch here would lose iOS activation.
+      // Web Share cannot select Moises or control its import/upload screens.
+      await navigator.share({files:[prepared.file]});
+      if (state.moisesSharing === prepared && moisesContextCurrent(prepared)) {
+        state.moisesPrepared = null;
+        moisesNotice('File handed to the selected app. Finish importing inside Moises.');
+      }
+    } catch (error) {
+      if (state.moisesSharing === prepared && moisesContextCurrent(prepared)) {
+        if (error.name === 'AbortError') moisesNotice('Ready. Tap Open in Moises again and select Moises if available.');
+        else moisesNotice('Could not open the Share Sheet. Try again, or save to Files and import inside Moises.', true);
+      }
+    } finally {
+      if (state.moisesSharing === prepared) { state.moisesSharing = null; renderMoisesControl(); }
+    }
+    return;
+  }
+  const context = {uid:identity.uid, epoch:accountEpoch(), key};
+  state.moisesContext = context;
+  const ready = state.readyDownload;
+  if (!ready || ready.key !== key) {
+    // Reuse the idempotent export queue, without starting a separate browser save.
+    downloadSelected(undefined, undefined, null, 'moises');
+    moisesNotice('Preparing your file. Tap Open in Moises again when it is ready.'); return;
+  }
+  let job;
+  try {
+    const url = new URL(ready.url, BACKEND), match = url.pathname.match(/^\/api\/vortex\/jobs\/([\w-]{1,120})\/file$/);
+    if (!match) throw new Error('Invalid secure media link.');
+    job = getJob(match[1]);
+    if (!job) throw new Error('The media file is not ready. Refresh Vortex, then try again.');
+    validateTicketURL(job, ready);
+  } catch {
+    moisesNotice('Invalid or unavailable secure media link. Refresh Vortex, then try again.', true); return;
+  }
+  if (job.kind !== 'download' || job.status !== 'complete' || !job.resultReady || (job.expiresAt && seconds(job.expiresAt) <= Date.now() + 5000)) {
+    moisesNotice('The media file is no longer ready. Tap Download to prepare it again.', true); return;
+  }
+  const size = Number(job.size);
+  if (!(size > 0) || size > MOISES_SHARE_LIMIT) {
+    moisesNotice('This file exceeds Vortex’s 32 MB sharing limit or has no reported size. Save to Files, then import it inside Moises.', true); return;
+  }
+  Object.assign(context, {jobId:job.id, url:ready.url, controller:new AbortController()});
+  state.moisesPreparing = context; renderMoisesControl(); moisesNotice('Preparing file for Moises…');
+  try {
+    // An expired delivery ticket is harmless here: this fetch uses the current
+    // account’s Authorization header, and no secure URL/token is shared with apps.
+    const blob = await request(jobPath(job.id) + '/file', {binary:true, timeout:90000, signal:context.controller.signal});
+    if (state.moisesPreparing !== context || !moisesContextCurrent(context)) return;
+    if (!blob.size || blob.size > MOISES_SHARE_LIMIT) throw new Error('This file cannot be shared within Vortex’s 32 MB limit. Save to Files and import inside Moises.');
+    const filename = job.filename || ready.filename || 'media.' + (state.downloadMode === 'audio' ? state.audioFormat : state.videoFormat);
+    const mime = MOISES_MIME_TYPES[String(filename).split('.').pop().toLowerCase()];
+    if (!mime) throw new Error('Share MP4/MOV video or M4A/MP3/WAV audio. Save other formats to Files and import inside Moises.');
+    const file = new File([blob], filename, {type:mime});
+    if (!navigator.canShare({files:[file]})) throw new Error('This browser cannot share this file. Save to Files and import inside Moises.');
+    state.moisesPrepared = {...context, file};
+    moisesNotice('Ready. Tap Open in Moises again, then select Moises in the Share Sheet if available.');
+  } catch (error) {
+    if (state.moisesPreparing === context && moisesContextCurrent(context)) moisesNotice(error.message, true);
+  } finally {
+    if (state.moisesPreparing === context) { state.moisesPreparing = null; renderMoisesControl(); }
   }
 }
 
@@ -759,6 +873,7 @@ for (const radio of document.querySelectorAll('input[name=quality]')) radio.onch
 for (const radio of document.querySelectorAll('input[name=downloadMode]')) radio.onchange = () => { discardQueuedDownload(); state.downloadMode = radio.value; renderOutputControls(); };
 $('outputFormat').onchange = () => { discardQueuedDownload(); state[state.downloadMode === 'audio' ? 'audioFormat' : 'videoFormat'] = $('outputFormat').value; renderDownloadStatus(); };
 $('downloadButton').onclick = () => downloadSelected(); $('refreshButton').onclick = () => void refresh();
+$('moisesOpenButton').onclick = () => void openInMoises();
 $('downloadFallback').onclick = event => { if (!state.readyDownload || seconds(state.readyDownload.expiresAt) <= Date.now() + 5000) { event.preventDefault(); notice('This secure save link expired. Open Download history and choose Download to get a new link.', true); renderDownloadStatus(); } };
 $('loadOlder').onclick = () => void loadOlder();
 $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () => void cancelAction(); $('deleteJob').onclick = () => void deleteAction();
@@ -766,8 +881,9 @@ $('retryJob').onclick = toggleReexport;
 $('reexportMode').onchange = () => { const job = getJob(state.actionId); if (job) updateReexportOptions(job); };
 $('reexportSubmit').onclick = submitReexport;
 $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
-window.addEventListener('pagehide', () => { state.visitEpoch++; state.sessionJobs.clear(); renderJobs(); renderProcessing(); });
+window.addEventListener('pagehide', () => { resetMoisesHandoff(); state.visitEpoch++; state.sessionJobs.clear(); renderJobs(); renderProcessing(); });
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { showServerVersion(); $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { checkAutoSaves(); void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { checkAutoSaves(); void refresh(); void loadProfile(); } });
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { settleAuth(null); $('authStatus').textContent = authError(error); });
+

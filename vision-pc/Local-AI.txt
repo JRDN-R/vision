@@ -21,6 +21,18 @@ function Save-Json([string]$Path, $Value) {
     if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, $null) }
     else { [IO.File]::Move($Temporary, $Path) }
 }
+function Set-LocalModelConfiguration($Config, [string]$RuntimePath, [string]$ModelPath, [string]$ManifestPath) {
+    # Artifact paths must change when replacing the original 27B preview with 9B.
+    # Keep old files/manifests for recovery and preserve unrelated PC settings.
+    if (-not $Config.localAI) { $Config | Add-Member -NotePropertyName localAI -NotePropertyValue ([PSCustomObject]@{}) }
+    $Local = $Config.localAI
+    if ($Local.enabled -eq $true) { throw 'Disable local answering and restart Vision during maintenance before downloading a replacement model.' }
+    $ReserveRamGiB = [Math]::Max(10, [double]$Local.reserveRamGiB)
+    foreach ($Pair in @{runtimePath=$RuntimePath;modelPath=$ModelPath;manifestPath=$ManifestPath;enabled=$false;defaultEpoch='';gpuLayers=0;contextTokens=4096;maxOutputTokens=2048;threads=8;reserveRamGiB=$ReserveRamGiB}.GetEnumerator()) {
+        $Local | Add-Member -NotePropertyName $Pair.Key -NotePropertyValue $Pair.Value -Force
+    }
+    if (-not $Local.PSObject.Properties['port']) { $Local | Add-Member -NotePropertyName port -NotePropertyValue 8101 }
+}
 function Verified-Download([string]$Url,[string]$Path,[long]$Size,[string]$Hash) {
     if (Test-Path -LiteralPath $Path) {
         if ((Get-Item -LiteralPath $Path).Length -eq $Size -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -eq $Hash) { return }
@@ -93,10 +105,11 @@ if ($Action -eq 'Rollback') {
     throw 'Use Disable to stop accepting local jobs, then the reviewed normal updater rollback under a maintenance boundary. Never restore a stale database over newer conversations. See docs/local-qwen-rag.md.'
 }
 if ($Action -eq 'Download') {
+    if ($Config.localAI.enabled -eq $true) { throw 'Disable local answering and restart Vision during maintenance before downloading a replacement model.' }
     $Manifest = Get-Content -LiteralPath (Join-Path $InstallRoot 'local-model-manifest.json') -Raw | ConvertFrom-Json
     New-Item -ItemType Directory -Force -Path $ModelRoot | Out-Null
     $Drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($ModelRoot).TrimEnd('\').TrimEnd(':'))
-    if ($Drive.Free -lt 22GB) { throw 'Keep at least 22 GiB free for model staging, runtime, and operating headroom. Permanent sources will not be removed.' }
+    if ($Drive.Free -lt ($Manifest.minimumFreeDiskGiB * 1GB)) { throw ('Keep at least ' + $Manifest.minimumFreeDiskGiB + ' GiB free for model staging, runtime, and operating headroom. Permanent sources will not be removed.') }
     $Archive = Join-Path $ModelRoot ($Manifest.runtimeTag + '-windows-vulkan.zip')
     Verified-Download $Manifest.runtimeUrl $Archive $Manifest.runtimeArchiveBytes $Manifest.runtimeArchiveSha256
     $RuntimeDirectory = Join-Path $ModelRoot $Manifest.runtimeTag
@@ -112,22 +125,21 @@ if ($Action -eq 'Download') {
     $ModelPath = Join-Path $ModelRoot $Manifest.modelFile
     $Base = 'https://huggingface.co/' + $Manifest.modelRepository + '/resolve/' + $Manifest.modelRevision + '/'
     Verified-Download ($Base + $Manifest.modelFile) $ModelPath $Manifest.modelBytes $Manifest.modelSha256
-    Invoke-WebRequest -UseBasicParsing -Uri ($Base + 'README.md') -OutFile (Join-Path $ModelRoot 'MODEL-CARD.md')
-    Invoke-WebRequest -UseBasicParsing -Uri ('https://raw.githubusercontent.com/ggml-org/llama.cpp/' + $Manifest.runtimeCommit + '/LICENSE') -OutFile (Join-Path $ModelRoot 'LLAMA-LICENSE.txt')
-    Invoke-WebRequest -UseBasicParsing -Uri ('https://huggingface.co/Qwen/Qwen3.8-27B/resolve/' + $Manifest.baseModelRevision + '/LICENSE') -OutFile (Join-Path $ModelRoot 'MODEL-LICENSE.txt')
+    $ProvenanceRoot = Join-Path $ModelRoot $Manifest.modelRevision
+    New-Item -ItemType Directory -Force -Path $ProvenanceRoot | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri ($Base + 'README.md') -OutFile (Join-Path $ProvenanceRoot 'MODEL-CARD.md')
+    Invoke-WebRequest -UseBasicParsing -Uri ($Base + 'SHA256SUMS') -OutFile (Join-Path $ProvenanceRoot 'PUBLISHER-SHA256SUMS.txt')
+    Invoke-WebRequest -UseBasicParsing -Uri ('https://huggingface.co/' + $Manifest.sourceModel + '/resolve/' + $Manifest.sourceModelRevision + '/README.md') -OutFile (Join-Path $ProvenanceRoot 'SOURCE-MODEL-CARD.md')
+    Invoke-WebRequest -UseBasicParsing -Uri ('https://raw.githubusercontent.com/ggml-org/llama.cpp/' + $Manifest.runtimeCommit + '/LICENSE') -OutFile (Join-Path $ProvenanceRoot 'LLAMA-LICENSE.txt')
+    Invoke-WebRequest -UseBasicParsing -Uri ('https://huggingface.co/' + $Manifest.baseModel + '/resolve/' + $Manifest.baseModelRevision + '/LICENSE') -OutFile (Join-Path $ProvenanceRoot 'MODEL-LICENSE.txt')
     $Manifest | Add-Member -NotePropertyName runtimeRoot -NotePropertyValue $RuntimeDirectory -Force
     $Manifest | Add-Member -NotePropertyName runtimeFiles -NotePropertyValue $RuntimeHashes -Force
     $Manifest | Add-Member -NotePropertyName runtimeSha256 -NotePropertyValue ((Get-FileHash -LiteralPath $Executable[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()) -Force
-    $InstalledManifest = Join-Path $ModelRoot 'installed-manifest.json'
+    $InstalledManifest = Join-Path $ProvenanceRoot 'installed-manifest.json'
     Save-Json $InstalledManifest $Manifest
-    if (-not $Config.localAI) { $Config | Add-Member -NotePropertyName localAI -NotePropertyValue ([PSCustomObject]@{}) }
-    $Local = $Config.localAI
-    foreach ($Pair in @{runtimePath=$Executable[0].FullName;modelPath=$ModelPath;manifestPath=$InstalledManifest;port=8101;contextTokens=4096;maxOutputTokens=2048;threads=8;gpuLayers=0;reserveRamGiB=10}.GetEnumerator()) {
-        if (-not $Local.PSObject.Properties[$Pair.Key]) { $Local | Add-Member -NotePropertyName $Pair.Key -NotePropertyValue $Pair.Value }
-    }
-    if (-not $Local.PSObject.Properties['enabled']) { $Local | Add-Member -NotePropertyName enabled -NotePropertyValue $false }
+    Set-LocalModelConfiguration $Config $Executable[0].FullName $ModelPath $InstalledManifest
     Save-Json $ConfigPath $Config
-    Write-Host 'Pinned files installed. Qwen and account-default migration remain disabled. Run Check, then Benchmark.'
+    Write-Host 'Qwen3.8 9B Distill Q4_K_M and the pinned Vulkan runtime are installed. Local answering and account-default migration remain disabled. Run Check, then Benchmark again for this model.'
     exit
 }
 if ($Action -in @('Check','Benchmark')) {
@@ -145,6 +157,9 @@ if ($Action -eq 'Enable') {
     $Passed = Get-Content -LiteralPath $Report -Raw | ConvertFrom-Json
     if (-not $Passed.checks.integrity -or -not $Passed.checks.syntheticAnswer) { throw 'Run a successful Benchmark for this exact profile first.' }
     if ((Get-FileHash -LiteralPath $Config.localAI.manifestPath -Algorithm SHA256).Hash -ne $Passed.manifestSha256) { throw 'The installed manifest changed after the benchmark. Check and benchmark again.' }
+    foreach ($Pair in @{gpuLayers=$GpuLayers;contextTokens=$ContextTokens;threads=$Config.localAI.threads;maxOutputTokens=$Config.localAI.maxOutputTokens}.GetEnumerator()) {
+        if ($Passed.profile.($Pair.Key) -ne $Pair.Value) { throw 'The benchmark profile does not match these settings. Benchmark this exact profile again.' }
+    }
     $Config.localAI.gpuLayers = $GpuLayers
     $Config.localAI.contextTokens = $ContextTokens
 }

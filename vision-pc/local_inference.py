@@ -52,7 +52,7 @@ class LocalInference:
         installed = all(Path(self.settings.get(k) or '__missing__').is_file()
                         for k in ('runtimePath', 'modelPath', 'manifestPath'))
         enabled = self.settings.get('enabled') is True
-        return dict(id=MODEL, name='Qwen3.8 Local', provider='local_llama_cpp',
+        return dict(id=MODEL, name='Qwen3.8 9B Distill', provider='local_llama_cpp',
                     status='installed' if installed and enabled else 'disabled' if installed else 'not-installed',
                     enabled=enabled and installed, contextTokens=self.context_tokens,
                     maxOutputTokens=self.max_output, noApiTokenCharge=True,

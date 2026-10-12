@@ -1,7 +1,7 @@
 {
   "title": "Local Qwen and RAG preview",
   "items": [
-    "Qwen3.8 Local appears first in the model picker. It requires a separate, verified FUPCJ runtime installation and enable step.",
+    "Qwen3.8 9B Distill appears first in the model picker. It requires a separate, verified FUPCJ runtime installation and enable step.",
     "Local text and extracted-file requests use the saved server queue, with no API key or token charge. Queue position and elapsed time appear with the response.",
     "RAG shows actual indexing stages and source counts. Reusable extraction caches are compressed without changing the evidence; an optional gzip snapshot download is available.",
     "The local model and all-user default migration remain off in ordinary updates. Photo input, measured completion estimates, and large streamed source ingestion are still pending.",

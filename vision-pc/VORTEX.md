@@ -145,6 +145,29 @@ the file and tapping Share are separate steps so iOS receives a fresh user
 gesture. Save file uses a short-lived URL and the browser's download/Save to
 Files workflow, without holding a large video in page memory.
 
+The selected audio/video panel also offers **Open in Moises** directly below
+Download, with the same responsive width and 44 px height and the supplied Moises
+artwork. Its first tap reuses Vortex's export queue or retrieves the completed
+file with the current account's authentication. A Moises-only export does not
+also start a browser download; tapping Download still requests the normal save.
+Sharing is opt-in and limited to 32 MiB, checked against both job metadata and
+the received bytes. MP4/MOV and M4A/MP3/WAV use explicit media MIME types.
+Changing accounts, media, quality or format, deleting/expiring a result, and
+leaving the page discard the prepared handoff. Selection changes abort pending
+file retrieval; late responses cannot populate another selection or account.
+
+Once prepared, a fresh tap opens the native Share Sheet with the **file**, not
+its ticket URL. Select Moises if the installed app offers itself for that file,
+then complete its import options. Web Share cannot choose a specific app or
+start Moises's upload/separation automatically. If Moises is absent, sharing
+is unsupported, or the file exceeds the browser limit, save to Files and import
+inside Moises. Cancelling the Share Sheet preserves the prepared file for retry.
+Expired delivery tickets can still be prepared while the underlying job remains
+available, because this retrieval uses authenticated `/file` rather than a ticket.
+See [WebKit's user activation guidance](https://webkit.org/blog/13862/the-user-activation-api/),
+the [Web Share standard](https://www.w3.org/TR/web-share/), and
+[Moises's import instructions](https://help.moises.ai/hc/en-us/articles/8583454469276-How-to-Upload-and-Edit-your-track-using-Moises).
+
 ## Parallel extraction and engine availability
 
 A user action still creates exactly one SQLite job and one history row. Within

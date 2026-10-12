@@ -103,6 +103,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Moises authenticated file handoff regression checks
+        run: node --test tests/vortex-moises.test.cjs
       - run: python -m pip install playwright
       - run: python -m playwright install --with-deps chromium
       - run: bash web/vendor/build-firebase.sh
@@ -121,3 +123,4 @@ jobs:
             .qa/vortex/
             .qa/vortex-import/
           retention-days: 7
+
