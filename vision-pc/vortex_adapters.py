@@ -86,7 +86,8 @@ class Adapter:
                     'The provider rejected the request; a signed-in session may be needed.' if status in (401, 403) else
                     'The provider connection failed.' if status and status >= 500 else
                     'The provider did not return this media.')
-            raise worker.SourceError(safe) from None
+            category = 'access_denied' if status == 403 else 'authentication' if status == 401 else None
+            raise worker.SourceError(safe, category=category) from None
         except (requests.RequestException, TimeoutError, ConnectionError):
             raise worker.SourceError('The provider connection failed.') from None
         except ValueError as error:

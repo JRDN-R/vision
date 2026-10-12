@@ -140,9 +140,22 @@ class LimitsTests(unittest.TestCase):
                     patch.object(yt_dlp.YoutubeDL, 'extract_info', side_effect=secret_error):
                 with self.assertRaises(worker.SourceError) as failure:
                     worker.run_ytdlp(dict(input=value, directory=directory, kind='inspect'))
-            self.assertEqual(worker.error_category(failure.exception), 'authentication')
+            self.assertEqual(worker.error_category(failure.exception), 'access_denied')
             self.assertNotIn('token', str(failure.exception))
             self.assertNotIn('cdn.example.com', str(failure.exception))
+
+    def test_forbidden_does_not_claim_that_login_will_fix_it(self):
+        self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('HTTP Error 403: Forbidden')), 'access_denied')
+        self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('Sign in to confirm you are not a bot')), 'authentication')
+        self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('HTTP Error 401: Unauthorized')), 'authentication')
+        import requests
+        response = requests.Response()
+        response.status_code = 403
+        with patch.object(adapters, 'run_page_media', side_effect=requests.HTTPError('secret URL', response=response)):
+            with self.assertRaises(worker.SourceError) as failure:
+                next(a for a in adapters.ADAPTERS if a.name == 'page-media').run({'input': 'https://example.com/video'})
+        self.assertEqual(worker.error_category(failure.exception), 'access_denied')
+        self.assertNotIn('secret', str(failure.exception))
 
 
 if __name__ == '__main__':

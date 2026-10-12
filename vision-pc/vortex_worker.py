@@ -67,7 +67,8 @@ def error_category(error):
     if 'drm-protected' in detail or 'drm protected' in detail: return 'drm'
     if 'duration limit' in detail: return 'duration_limit'
     if 'size limit' in detail or 'max-filesize' in detail or 'max_filesize' in detail: return 'file_size_limit'
-    if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401', 'http error 403', '403 forbidden')): return 'authentication'
+    if any(s in detail for s in ('signed-in', 'sign in', 'login', 'http error 401')): return 'authentication'
+    if any(s in detail for s in ('http error 403', '403 forbidden')): return 'access_denied'
     if 'not installed' in detail or 'ffmpeg is unavailable' in detail: return 'missing_dependency'
     if 'external streaming protocol' in detail: return 'unsupported'
     if 'limiting requests' in detail: return 'rate_limited'
@@ -552,7 +553,7 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
             try:
                 info = ydl.extract_info('https://player.vimeo.com/video/' + vimeo_id[1], download=False)
             except yt_dlp.utils.DownloadError as player_error:
-                raise SourceError(source_error_message(value, player_error), category=error_category(player_error)) from None
+                raise SourceError(source_error_message(value, player_error), category=error_category(player_error)) from player_error
         if not info:
             raise SourceError("No downloadable public media was found.")
         if info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:

@@ -70,17 +70,17 @@ print(json.dumps(report))
 '''
 
 # A failed native transfer can be a programming defect rather than a provider
-# restriction. Reproduce only unclassified failures with the actual guarded
+# restriction. Reproduce failed transfers with the actual guarded
 # adapter, recording code locations and fixed exception names, never messages.
 NATIVE_DIAGNOSTIC = r'''
-import sys
+import re, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv.pop(1))
 import vortex_worker as worker
 original_category = worker.error_category
 def categorize(error):
     category = original_category(error)
-    if category == 'unavailable':
+    if category in ('unavailable', 'authentication', 'access_denied', 'drm', 'network', 'unsupported'):
         names = {'WorkerError', 'SourceError', 'DownloadError', 'ExtractorError',
                  'KeyError', 'TypeError', 'AttributeError', 'ValueError',
                  'AssertionError', 'NameError', 'OSError', 'HTTPError'}
@@ -93,8 +93,16 @@ def categorize(error):
                 frames.append(filename + ':' + str(trace.tb_lineno))
             trace = trace.tb_next
         name = type(error).__name__
-        detail = str(error).lower()
+        chain, current = [], error
+        while current is not None and len(chain) < 5:
+            chain.append(str(current).lower())
+            current = current.__cause__
+        detail = ' '.join(chain)
         reason = next((code for pattern, code in (
+            ('confirm you’re not a bot', 'bot_challenge'), ('confirm you are not a bot', 'bot_challenge'),
+            ("confirm you're not a bot", 'bot_challenge'),
+            ('http error 403', 'http_403'), ('403 forbidden', 'http_403'),
+            ('http error 401', 'http_401'), ('http error 429', 'http_429'),
             ('initialization fragment found after media fragments', 'hls_initialization_layout'),
             ('drm protected', 'drm'), ('downloaded file is empty', 'empty_transfer'),
             ('did not get any data blocks', 'empty_transfer'),
@@ -104,6 +112,19 @@ def categorize(error):
                                   'frames': frames[-6:], 'reason': reason})
     return category
 worker.error_category = categorize
+# Record only fixed DRM signals, never playlist/key URLs or response bodies.
+from yt_dlp.downloader.hls import HlsFD
+original_drm = HlsFD._has_drm
+def observe_drm(manifest):
+    result = original_drm(manifest)
+    if result:
+        signals = [code for marker, code in (
+            ('skd://', 'fairplay'), ('com.apple.streamingkeydelivery', 'fairplay'),
+            ('com.microsoft.playready', 'playready'), ('#EXT-X-FAXS-CM:', 'adobe'))
+            if marker in manifest]
+        worker.emit(probeFailure={'reason': 'hls_drm_signaling', 'signals': sorted(set(signals))})
+    return result
+HlsFD._has_drm = staticmethod(observe_drm)
 raise SystemExit(worker.main())
 '''
 
@@ -237,7 +258,7 @@ def main():
                 report['media'] = {k: final.get('media', {}).get(k) for k in ('duration', 'width', 'height', 'mediaType', 'ext')}
         if report['status'] == 'not_run':
             report['status'] = 'no_verified_download'
-        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') == 'unavailable'
+        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') in ('unavailable', 'authentication', 'access_denied', 'drm', 'network', 'unsupported')
                                           for a in report['attempts']):
             report['nativeDiagnostic'] = native_diagnostic(specification, root)
         if provider in ('twitter', 'instagram', 'youtube', 'generic'):
