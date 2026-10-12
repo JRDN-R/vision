@@ -490,15 +490,16 @@ class Venture:
                            nextCursor=json.dumps([rows[-1]['created_at'],rows[-1]['id']]) if more else None)
 
         @app.get('/api/venture/conversations/<cid>/uploads/<rid>/<int:index>')
-        def venture_original(cid,rid,index):
+        @app.get('/api/venture/conversations/<cid>/uploads/<rid>/<int:index>/preview/<size>')
+        def venture_original(cid,rid,index,size=None):
             uid=self.account();self.lookup(cid,uid)
             row=self.sessions.row(rid,cid);files=json.loads(row['inputs_json'])
             if index<0 or index>=len(files):raise self.Error('This attachment is unavailable.',404)
             file=files[index]
             if not Path(file['path']).is_file():raise self.Error('This attachment is missing on FUPCJ Server.',404)
-            if 'preview' in request.args:
+            if size is not None:
                 from venture_images import preview
-                return preview(file, request.args['preview'], self.Error)
+                return preview(file, size, self.Error)
             return send_file(file['path'],as_attachment=True,download_name=disk_name(file['name']),mimetype=file['mime'],max_age=0)
 
         @app.route('/api/venture/preferences',methods=['GET','PUT'])

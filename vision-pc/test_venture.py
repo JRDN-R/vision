@@ -79,19 +79,19 @@ class VentureTests(unittest.TestCase):
         self.assertEqual(accepted.status_code,202,accepted.json)
         url=self.path+'/uploads/'+accepted.json['runId']+'/0'
         for size,dimensions in [('thumb',(320,320)),('full',(360,120))]:
-            response=self.client.get(url+'?preview='+size,headers=self.a)
+            response=self.client.get(url+'/preview/'+size,headers=self.a)
             self.assertEqual(response.status_code,200)
             self.assertEqual(response.mimetype,'image/jpeg')
             self.assertIn('no-store',response.headers['Cache-Control'])
             with Image.open(io.BytesIO(response.data)) as image:self.assertEqual(image.size,dimensions)
-            self.assertEqual(self.client.get(url+'?preview='+size,headers=self.b).status_code,404)
-        self.assertEqual(self.client.get(url,headers=self.a).data,raw)
-        self.assertEqual(self.client.get(url+'?preview=unbounded',headers=self.a).status_code,400)
+            self.assertEqual(self.client.get(url+'/preview/'+size,headers=self.b).status_code,404)
+        with self.client.get(url,headers=self.a) as original:self.assertEqual(original.data,raw)
+        self.assertEqual(self.client.get(url+'/preview/unbounded',headers=self.a).status_code,400)
         row=self.service.row(accepted.json['runId']);path=Path(json.loads(row['inputs_json'])[0]['path'])
         path.write_bytes(b'This is not a PNG')
-        self.assertEqual(self.client.get(url+'?preview=thumb',headers=self.a).status_code,415)
+        self.assertEqual(self.client.get(url+'/preview/thumb',headers=self.a).status_code,415)
         path.write_bytes(b'0'*(16*1024*1024+1))
-        self.assertEqual(self.client.get(url+'?preview=full',headers=self.a).status_code,413)
+        self.assertEqual(self.client.get(url+'/preview/full',headers=self.a).status_code,413)
 
     def test_rename_revision_and_local_title_preservation(self):
         renamed = self.client.patch(self.path, headers=self.a, json={'title': 'My custom adventure', 'revision': 1})
