@@ -28,6 +28,14 @@
 .download-fallback{display:block;color:var(--beige);font-size:11px;text-align:center;text-decoration:underline;text-underline-offset:3px;padding:4px 0;min-height:26px}
 @keyframes vortex-download-spin{to{transform:rotate(360deg)}}
 @media(max-width:380px){.download-status,.download-fallback{grid-column:1/-1}}
+/* Both actions inherit the same Download dimensions and responsive column. */
+.moises-button{height:44px;flex-shrink:0;background:#00d3e0;border-color:#00d3e0;color:#000;white-space:nowrap}
+.moises-button:hover{background:#23e0ea;border-color:#23e0ea}
+.moises-button .moises-logo{display:block;flex:none;width:92px;height:auto;object-fit:contain}
+.moises-button .moises-arrow{flex:none;width:18px;height:18px}
+.moises-status.error{color:var(--danger)}
+@media(max-width:600px){.moises-button{gap:7px;padding-left:10px;padding-right:10px}.moises-button .moises-logo{width:62px}.moises-button .moises-arrow{width:16px;height:16px}}
+@media(max-width:380px){.moises-button{gap:3px;padding-left:5px;padding-right:5px;font-size:11px}.moises-button .moises-logo{width:34px}.moises-button .moises-arrow{width:13px;height:13px}}
 
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.progress-track.indeterminate>span{width:100%;opacity:.5}}
 
@@ -210,3 +218,4 @@ body::before {
     .source-orbit .orbit-flare { offset-path: inset(22px round 999px); }
   }
 }
+

@@ -667,6 +667,15 @@ def run():
             inspected.update(status='complete', phase='Media ready', progress=None, media=VIDEO, results=[VIDEO])
             refresh(page)
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
+            page.locator('#moisesOpenButton').wait_for(state='visible')
+            page.wait_for_function("document.querySelector('#moisesOpenButton .moises-logo').naturalWidth > 0")
+            download_bounds = page.locator('#downloadButton').bounding_box()
+            moises_bounds = page.locator('#moisesOpenButton').bounding_box()
+            for dimension in ('x', 'width', 'height'):
+                assert abs(download_bounds[dimension] - moises_bounds[dimension]) < 1, f'Moises {dimension} differs from Download at {width}px'
+            gap = moises_bounds['y'] - download_bounds['y'] - download_bounds['height']
+            assert 8 <= gap <= 11, f'Moises must sit directly below Download at {width}px: {gap}'
+            assert page.locator('#moisesOpenButton').get_attribute('aria-label') == 'Open in Moises'
             for value in ('16:9', '3840 × 2160', '60 fps', 'H.264', 'AAC'):
                 assert value in page.locator('#mediaInfo').inner_text()
             assert page.locator('#processing').is_hidden()
@@ -771,6 +780,18 @@ def run():
                 page.locator('#downloadButton').click()
             assert retry_event.value.suggested_filename == 'Harbor.mp4'
             assert len(api.jobs['alice']) == before_manual, 'Saving again should not re-encode a ready file'
+            if width == 390:
+                # Mock the native boundary; this does not test the installed iOS app.
+                page.evaluate('''Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+                    Object.defineProperty(navigator,'share',{configurable:true,value:async value=>{window.__moisesShared={name:value.files[0].name,size:value.files[0].size,type:value.files[0].type,active:navigator.userActivation.isActive,keys:Object.keys(value)};}});''')
+                page.locator('#moisesOpenButton').click()
+                page.locator('#moisesStatus').get_by_text('Ready. Tap Open in Moises again', exact=False).wait_for()
+                assert not page.evaluate('!!window.__moisesShared'), 'Preparing must not open the OS share interface'
+                media_request = [call for call in api.calls if call['path'].endswith('/file') and call['token']][-1]
+                assert media_request['uid'] == 'alice' and media_request['token'] == 'Bearer fixture-alice'
+                page.locator('#moisesOpenButton').click()
+                assert page.evaluate('__moisesShared') == dict(name='Harbor.mp4', size=19, type='video/mp4', active=True, keys=['files'])
+                page.evaluate("Object.defineProperty(navigator,'canShare',{configurable:true,value:undefined}); Object.defineProperty(navigator,'share',{configurable:true,value:undefined});")
             page.locator('input[name=quality][value=max]').check()
             restore_max = next_job(page, api, queued_download['id'])
             restore_max.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
@@ -1072,3 +1093,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+
