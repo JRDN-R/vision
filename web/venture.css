@@ -87,7 +87,7 @@
 /* Qwen symbol stays white; its solid blue name gets a calm orbiting halo. */
 .model-qwen .venture-model-symbol{background:#fff;filter:drop-shadow(0 0 3px #182bff55)}
 .model-qwen .venture-model-name{
- color:#526aff;
+ color:#487dff;
  text-shadow:0 0 6px rgba(110,141,255,.5),0 0 11px rgba(24,43,255,.24);
  animation:qwen-name-halo 7.2s ease-in-out infinite;
 }
