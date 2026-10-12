@@ -40,7 +40,7 @@ with sync_playwright() as pw:
         page.locator('#runProjectBtn').click()
         page.wait_for_function("venture.models?.includes('qwen3.8-local')")
         page.evaluate('venturePaintModelPicker()')
-        assert page.locator('#ventureModel').inner_text().startswith('Qwen Local')
+        assert page.locator('#ventureModel').inner_text().startswith('Qwen3.8 Local')
         assert 'vision not ready' in page.locator('#ventureModel').inner_text()
         state['vision'] = True
         page.evaluate('ventureLoadModels(true)')

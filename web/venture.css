@@ -84,13 +84,21 @@
 .venture-battery>div{transition:width .25s linear,background .25s}
 .venture-battery.partial{border-style:dashed}
 @media(prefers-reduced-motion:reduce){.venture-battery>div{transition:none}}
-/* Qwen symbol stays white; its solid blue name gets a calm orbiting halo. */
+/* Preserve the static fallback until both Qwen animation clips are ready. */
 .model-qwen .venture-model-symbol{background:#fff;filter:drop-shadow(0 0 3px #182bff55)}
+venture-qwen-symbol{position:relative}
+.model-qwen venture-qwen-symbol[data-ready]{background:transparent;mask:none;-webkit-mask:none}
+.venture-qwen-frame{position:absolute;inset:0;visibility:hidden}
+venture-qwen-symbol[data-ready] .venture-qwen-frame{visibility:visible}
+.venture-qwen-frame[hidden]{display:none}
+.model-qwen .venture-qwen-frame svg{display:block;width:100%;height:100%}
 .model-qwen .venture-model-name{
  color:#487dff;
+ -webkit-text-stroke:.3px #0008;paint-order:stroke fill;
  text-shadow:0 0 6px rgba(110,141,255,.5),0 0 11px rgba(24,43,255,.24);
  animation:qwen-name-halo 7.2s ease-in-out infinite;
 }
+.model-qwen .venture-model-local{color:#c4892c;font-weight:400;font-style:italic}
 @keyframes qwen-name-halo{
  0%,100%{text-shadow:-2px 0 5px rgba(110,141,255,.6),0 0 11px rgba(24,43,255,.22)}
  25%{text-shadow:0 -2px 5px rgba(110,141,255,.68),0 0 11px rgba(24,43,255,.24)}
