@@ -32,6 +32,15 @@ window.boardSubmissionSetup=()=>{
  venture.files=[new File(['Extra message attachment.'],'extra.txt',{type:'text/plain'})];
  venturePaintAttachments();venturePaintStatus();
  cloudFetch=async(path,options={})=>{
+  // Send now flushes account preferences before accepting a request. Exercise
+  // that real path instead of treating its required write as a network error.
+  if(path==='/venture/preferences'&&options.method==='PUT'){
+   const body=JSON.parse(options.body);return Response.json({settings:body.settings||body});
+  }
+  if(path==='/venture/conversations/board-conversation'&&options.method==='PATCH'){
+   const body=JSON.parse(options.body);return Response.json({conversation:{
+    id:'board-conversation',title:'Board test',settings:body.settings,revision:body.revision+1}});
+  }
   if(path==='/venture/conversations'&&options.method==='POST')return Response.json({conversation:{
    id:'board-conversation',title:'Board test',settings:venture.settings,revision:1}});
   if(path==='/projects/board-conversation/runs'&&options.method==='POST'){
