@@ -142,6 +142,9 @@ if spec.get('child') and kind=='inspect':
  child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
  (d.parent.parent/(a.adapter+'.pid')).write_text(str(child.pid))
 time.sleep(spec.get(kind+'Delay',0.05))
+if spec.get(kind+'Category'):
+ print(json.dumps({'error':'secret upstream text', 'category':spec[kind+'Category']}),flush=True)
+ raise SystemExit(1)
 if spec.get(kind+'Fail'):raise SystemExit(1)
 media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter,'transferBytes':spec.get('bytes',1000)}
 result={'complete':True,'media':media,'results':[media]}
@@ -208,6 +211,25 @@ class RaceTests(unittest.TestCase):
             self.run_race({'one': {'inspectFail': True}, 'two': {'downloadFail': True}})
         self.assertFalse((self.root / 'race').exists())
         self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_provider_failure_is_actionable_and_cleans_up(self):
+        for category, message in race.PUBLIC_FAILURE_MESSAGES.items():
+            with self.subTest(category=category), self.assertRaises(worker.WorkerError) as failure:
+                self.run_race({'native': {'downloadCategory': category}, 'fallback': {'downloadFail': True}})
+            self.assertEqual(failure.exception.category, category)
+            self.assertEqual(str(failure.exception), message)
+            self.assertNotIn('secret', str(failure.exception))
+            self.assertFalse((self.root / 'race').exists())
+            self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_verification_during_inspection_survives_generic_fallback_failure(self):
+        with self.assertRaises(worker.WorkerError) as failure:
+            self.run_race({'native': {'inspectCategory': 'verification_required'}, 'fallback': {'downloadFail': True}})
+        self.assertEqual(failure.exception.category, 'verification_required')
+
+    def test_provider_restriction_still_allows_a_working_alternative(self):
+        result = self.run_race({'blocked': {'downloadCategory': 'access_denied'}, 'working': {'downloadDelay': .2}})
+        self.assertEqual(result['media']['title'], 'working')
 
     def test_inspection_cancels_losing_worker_and_descendant(self):
         self.run_race({'slow': {'inspectDelay': 30, 'child': True}, 'fast': {'inspectDelay': .3}}, kind='inspect')

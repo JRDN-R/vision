@@ -146,7 +146,7 @@ class LimitsTests(unittest.TestCase):
 
     def test_forbidden_does_not_claim_that_login_will_fix_it(self):
         self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('HTTP Error 403: Forbidden')), 'access_denied')
-        self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('Sign in to confirm you are not a bot')), 'authentication')
+        self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('Sign in to confirm you are not a bot')), 'verification_required')
         self.assertEqual(worker.error_category(yt_dlp.utils.DownloadError('HTTP Error 401: Unauthorized')), 'authentication')
         import requests
         response = requests.Response()

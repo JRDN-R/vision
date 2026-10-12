@@ -63,6 +63,7 @@ def error_category(error):
     if isinstance(error, OSError) and error.errno == 28:
         return 'disk_limit'
     detail = str(error).lower()
+    if any(s in detail for s in ("confirm you're not a bot", 'confirm you’re not a bot', 'confirm you are not a bot')): return 'verification_required'
     if 'different media' in detail or detail == 'identity_mismatch': return 'identity_mismatch'
     if 'drm-protected' in detail or 'drm protected' in detail: return 'drm'
     if 'duration limit' in detail: return 'duration_limit'
@@ -1049,13 +1050,15 @@ def main():
                 emit(**run(request))
         return 0
     except WorkerError as exc:
-        from vortex_race import PUBLIC_ERROR
+        from vortex_race import PUBLIC_ERROR, PUBLIC_FAILURE_MESSAGES
         category = error_category(exc)
         # Surface bounded, actionable help for Instagram without exposing
         # signed CDN URLs, raw extractor exceptions, cookies or adapter names.
         from vortex_urls import instagram_signed_source, platform
         input_value = (locals().get('request') or {}).get('input', '')
-        if args.adapter is None and category in ('file_size_limit', 'duration_limit', 'memory_limit', 'disk_limit', 'timeout'):
+        if args.adapter is None and category in PUBLIC_FAILURE_MESSAGES:
+            message = PUBLIC_FAILURE_MESSAGES[category]
+        elif args.adapter is None and category in ('file_size_limit', 'duration_limit', 'memory_limit', 'disk_limit', 'timeout'):
             message = str(exc)
         elif args.adapter is None and instagram_signed_source(input_value):
             message = 'This direct Instagram video could not be retrieved. Its download link may have expired; use a fresh link.'

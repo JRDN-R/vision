@@ -80,7 +80,7 @@ import vortex_worker as worker
 original_category = worker.error_category
 def categorize(error):
     category = original_category(error)
-    if category in ('unavailable', 'authentication', 'access_denied', 'drm', 'network', 'unsupported'):
+    if category in ('unavailable', 'authentication', 'access_denied', 'verification_required', 'drm', 'network', 'unsupported'):
         names = {'WorkerError', 'SourceError', 'DownloadError', 'ExtractorError',
                  'KeyError', 'TypeError', 'AttributeError', 'ValueError',
                  'AssertionError', 'NameError', 'OSError', 'HTTPError'}
@@ -258,7 +258,7 @@ def main():
                 report['media'] = {k: final.get('media', {}).get(k) for k in ('duration', 'width', 'height', 'mediaType', 'ext')}
         if report['status'] == 'not_run':
             report['status'] = 'no_verified_download'
-        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') in ('unavailable', 'authentication', 'access_denied', 'drm', 'network', 'unsupported')
+        if not report['verified'] and any(a.get('engine') == 'yt-dlp' and a.get('category') in ('unavailable', 'authentication', 'access_denied', 'verification_required', 'drm', 'network', 'unsupported')
                                           for a in report['attempts']):
             report['nativeDiagnostic'] = native_diagnostic(specification, root)
         if provider in ('twitter', 'instagram', 'youtube', 'generic'):
