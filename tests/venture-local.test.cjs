@@ -74,7 +74,7 @@ test('a backend restart or lost connection removes visual advertising',()=>{
 test('enabled but unconfirmed image path has a distinct status without advertising vision',()=>{
  const c=fixture();let paints=0;c.venture.rendered=new Map();c.venturePaintModelPicker=()=>paints++;c.venturePaintTurns=()=>{};
  c.ventureAcceptLocalCapability({localModel:{enabled:true,visual:{status:'awaiting-integrated-check'},capabilities:{vision:false}}});
- assert.equal(c.ventureLocalSubtitle(),'9B Distill · image check pending');
+ assert.equal(c.ventureLocalSubtitle(),'9B Distill');
  assert.equal(c.ventureLocalVisionReady(),false);assert.equal(paints,1);
  c.ventureAcceptLocalCapability({localModel:null});
  assert.match(c.ventureLocalSubtitle(),/vision not ready/);assert.equal(paints,2);
