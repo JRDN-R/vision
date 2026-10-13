@@ -136,13 +136,33 @@ dialog.venture-image-viewer{position:fixed;inset:0;width:100vw;max-width:100vw;h
 .venture-image-controls{position:absolute;bottom:max(45px,calc(env(safe-area-inset-bottom) + 35px));left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:2}
 .venture-image-controls [data-image-fit]{width:64px;border-radius:24px;font-size:12px}.venture-image-caption{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));left:20px;right:20px;margin:0;text-align:center;font-size:12px;color:#c0cbb8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 @media(max-width:760px){.venture-image-row{max-width:92%;gap:8px}.venture-root .venture-photo{flex-basis:88px;width:88px;height:88px;border-radius:11px}.venture-image-stage{inset:64px 0 115px}.venture-image-stage img{max-width:calc(100% - 36px);border-radius:13px}}
-.venture-local-progress.is-active{padding:17px 18px;background:radial-gradient(ellipse at top left,#8caf5820,transparent 70%),#171e17;border-color:#708b4f55;gap:12px}
-.venture-progress-heading{display:flex;align-items:center;gap:11px}.venture-progress-heading strong{font-size:13px;line-height:1.5}
-.venture-thinking-orb{display:flex;align-items:center;gap:3px;flex:none;height:26px}.venture-thinking-orb i{display:block;width:5px;height:12px;border-radius:5px;background:#badd8c;animation:venture-pulse 1.3s ease-in-out infinite}.venture-thinking-orb i:nth-child(2){animation-delay:.18s}.venture-thinking-orb i:nth-child(3){animation-delay:.36s}
-.venture-progress-track{height:3px;background:#82996d22;overflow:hidden;border-radius:4px}.venture-progress-track span{display:block;width:35%;height:100%;background:linear-gradient(90deg,transparent,#bddd94,transparent);animation:venture-sweep 2.8s ease-in-out infinite}
-.venture-progress-estimate{font-size:11px;line-height:1.6;color:#bdcbaa}.venture-local-progress small{font-size:10px}.venture-local-progress.is-complete{padding:10px 14px;gap:5px;border-color:#60764933;background:#212a191f}
-@keyframes venture-pulse{0%,100%{transform:scaleY(.45);opacity:.5}50%{transform:scaleY(1.3);opacity:1}}@keyframes venture-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(390%)}}
-@media(prefers-reduced-motion:reduce){.venture-thinking-orb i,.venture-progress-track span{animation:none}.venture-progress-track span{width:100%;opacity:.5}}
+/* Compact activity: one observed stage, a continuous supplied Lottie and an honest estimate. */
+.venture-loading{max-width:360px;margin:18px 0 20px;display:grid;gap:9px}
+.venture-loading-heading{display:flex;align-items:center;gap:10px;min-height:30px}
+venture-loading-symbol{position:relative;display:block;flex:none;width:28px;height:28px}
+venture-loading-symbol:not([data-ready])::before{content:"";position:absolute;inset:4px;border:2px solid #8d9abb33;border-top-color:#95acff;border-radius:50%;animation:venture-spin 1s linear infinite}
+venture-loading-symbol[data-ready] .venture-qwen-frame{visibility:visible}
+venture-loading-symbol svg{display:block;width:100%;height:100%}
+.venture-loading-label{display:block;position:relative;height:22px;flex:1;overflow:hidden;color:#b8c4de;font-size:13px;line-height:22px}
+.venture-loading-label>span>span{position:absolute;inset:0;animation:venture-status-roll 4.8s ease-in-out infinite;white-space:nowrap}
+.venture-loading-label>span>span:nth-child(2){animation-delay:-2.4s}
+.venture-progress-track{height:3px;background:#8299bd20;overflow:hidden;border-radius:4px}
+.venture-progress-track>span{display:block;width:32%;height:100%;border-radius:inherit;background:linear-gradient(90deg,transparent,#93abef,transparent);animation:venture-sweep 1.8s ease-in-out infinite}
+.venture-progress-track.is-estimated>span{animation:none;background:linear-gradient(90deg,#5878cb,#b8caff);transition:width 1.2s linear}
+.venture-progress-estimate{font-size:11px;line-height:1.5;color:#8e9aad;min-height:0}
+.venture-progress-estimate:empty{display:none}
+.venture-local-progress.is-complete{padding:10px 14px;gap:5px;border-color:#60764933;background:#212a191f}
+.venture-response-text:empty{display:none}
+.venture-response-text .venture-reveal-word{white-space:pre-wrap}
+@keyframes venture-spin{to{transform:rotate(360deg)}}
+@keyframes venture-sweep{from{transform:translateX(-110%)}to{transform:translateX(415%)}}
+@keyframes venture-status-roll{0%{opacity:0;transform:translateY(8px)}8%,40%{opacity:1;transform:translateY(0)}49%,100%{opacity:0;transform:translateY(-8px)}}
+@media(prefers-reduced-motion:reduce){
+ .venture-loading-label>span>span,.venture-progress-track>span,venture-loading-symbol::before,.venture-response-text.is-revealing .venture-reveal-word{animation:none}
+ .venture-loading-label>span>span:nth-child(2){display:none}
+ .venture-progress-track>span{width:100%;opacity:.5}
+ .venture-progress-track.is-estimated>span{transition:none;opacity:1}
+}
 .venture-response-meta .venture-model-subtitle{display:inline-flex;align-items:center;gap:3px}
 .venture-root .venture-response-info{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-width:28px;height:24px;margin:-4px 0;padding:3px;border:0;border-radius:6px;background:transparent;color:#9aa994;opacity:.72;cursor:pointer}
 .venture-root .venture-response-info:hover,.venture-root .venture-response-info[aria-expanded=true]{opacity:1;color:#d1e6ba;background:#afc89212}
