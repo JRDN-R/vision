@@ -98,7 +98,9 @@ class LocalPreferences:
         value = self.get(uid)
         if value['defaultEpoch'] or value['explicitSelection']:
             if (options.get('preferenceRevision') != value['preferenceRevision'] or
-                    options.get('model') != value['settings']['model']):
+                    options.get('model') != value['settings']['model'] or
+                    (options.get('model') == MODEL and
+                     options.get('qwenUncensored',False) != value['settings'].get('qwenUncensored',False))):
                 raise self.Error('Your account model changed. Refresh Venture; your draft has been kept.', 409)
         if options.get('model') == MODEL and not value['disclosureAcknowledged']:
             raise self.Error('Acknowledge the Qwen local-server notice before sending.', 409, 'local-disclosure-required')

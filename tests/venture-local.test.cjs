@@ -90,3 +90,30 @@ test('loading uses measured ranges and never turns elapsed time into a percent',
  assert.match(html,/Taking longer than recent answers/);assert.doesNotMatch(html,/0s remaining/);
  run.localQueue.estimateStatus='learning';assert.match(c.ventureLocalProgress(run),/after 3 similar answers/);
 });
+
+test('one local Uncensored switch tracks availability and never resets saved intent',()=>{
+ const c=fixture(),els={ventureUncensoredRow:{},ventureUncensored:{},ventureUncensoredHelp:{}};
+ c.$=id=>els[id];
+ c.venturePaintUncensored();assert.equal(els.ventureUncensored.disabled,true);
+ c.venture.localCapability={variants:{heretic:{available:true}}};
+ c.venturePaintUncensored();assert.equal(els.ventureUncensored.disabled,false);
+ c.venture.settings.qwenUncensored=true;c.venturePaintUncensored();
+ assert.equal(els.ventureUncensored.checked,true);
+ c.venture.localCapability=null;c.venturePaintUncensored();
+ assert.equal(els.ventureUncensored.checked,true);assert.equal(els.ventureUncensored.disabled,false);
+ c.venture.settings.model='gpt-4.1';c.venturePaintUncensored();
+ assert.equal(els.ventureUncensoredRow.hidden,true);assert.equal(els.ventureUncensored.checked,false);
+});
+test('Heretic visual readiness is separate from the Standard variant',()=>{
+ const c=fixture();c.venture.localCapability={capabilities:{vision:true},variants:{heretic:{available:true,vision:false}}};
+ c.venture.settings.qwenUncensored=true;assert.equal(c.ventureLocalVisionReady(),false);
+ c.venture.localCapability.variants.heretic.vision=true;assert.equal(c.ventureLocalVisionReady(),true);
+ c.venture.settings.qwenUncensored=false;assert.equal(c.ventureLocalVisionReady(),true);
+});
+test('toggle is a real persisted local setting with an old-server send guard',()=>{
+ const source=fs.readFileSync('web/venture.js','utf8');
+ assert.match(source,/id="ventureUncensored" type="checkbox" role="switch"/);
+ assert.match(source,/s\.qwenUncensored=value\.qwenUncensored/);
+ assert.match(source,/qwenUncensored===true&&!ventureHereticAvailable\(\)/);
+ assert.match(source,/venture\.explicitModelSelection=true/);
+});

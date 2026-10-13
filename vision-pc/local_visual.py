@@ -52,6 +52,7 @@ class LocalVisual:
         self.v = self.sessions.venture
         self.runtime_factory = VisualRuntime
         self.confirmed = None  # Backend-lifetime proof, never inferred from red/blue receipts.
+        self.confirmed_variants = {}
         self.register_routes()
 
     def signature(self, profile):
@@ -72,11 +73,26 @@ class LocalVisual:
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def capability(self):
-        current = self.signature(self.local.settings)
-        ready = bool(current and current == self.confirmed and self.local.settings.get('enabled') is True)
+    def confirm(self, profile):
+        if profile.get('modelVariant', 'standard') == 'standard':
+            self.confirmed = self.signature(profile)
+        else:
+            self.confirmed_variants[profile['modelVariant']] = self.signature(profile)
+
+    def invalidate(self, profile):
+        if profile.get('modelVariant', 'standard') == 'standard':
+            self.confirmed = None
+        else:
+            self.confirmed_variants.pop(profile['modelVariant'], None)
+
+    def capability(self, profile=None):
+        profile = self.local.settings if profile is None else profile
+        current = self.signature(profile)
+        variant = profile.get('modelVariant', 'standard')
+        confirmed = self.confirmed if variant == 'standard' else self.confirmed_variants.get(variant)
+        ready = bool(current and current == confirmed and self.local.settings.get('enabled') is True)
         return dict(available=ready, profile='cpu-only',
-                    status='ready' if ready else 'disabled' if self.local.settings.get('visualEnabled') is not True else 'awaiting-integrated-check')
+                    status='ready' if ready else 'disabled' if profile.get('visualEnabled') is not True else 'awaiting-integrated-check')
 
     def owner(self, row):
         chat = self.v.lookup(row['project_id'])
@@ -234,7 +250,7 @@ class LocalVisual:
                                     pass
                             # First use in a backend lifetime performs a fresh
                             # pixel request, even if an old cache entry exists.
-                            if found is None or (not runtime and not self.capability()['available']):
+                            if found is None or (not runtime and not self.capability(profile)['available']):
                                 if runtime is None:
                                     runtime = stack.enter_context(self.runtime_factory(profile, cancelled, stage))
                                 stage('Inspecting pixels: ' + source['name'][:80] + ' / ' + view['crop'])
@@ -271,7 +287,7 @@ class LocalVisual:
             # runtime can load. Runtime availability is confirmed after 9B succeeds.
             stats['runtimeChecked'] = runtime is not None
         except Exception:
-            self.confirmed = None
+            self.invalidate(profile)
             raise
         finally:
             entries = sorted(cache_dir.glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)

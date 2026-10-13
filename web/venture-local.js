@@ -1,11 +1,12 @@
 /* Local provider UI. All model access still goes through the account backend. */
 VENTURE_MODEL_SYMBOLS.qwen = "<svg role=\"img\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><title>QWen</title><path d=\"M23.919 14.545 20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.57.57 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801-6.205-.002 1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315-1.634-2.83c2.129-3.673 4.25-7.351 6.373-11.028h3.592l3.102 5.374z\"/></svg>";
 function ventureIsLocal(model=venture.settings.model){return model==='qwen3.8-local';}
-function ventureLocalVisionReady(){return venture.localCapability?.capabilities?.vision===true;}
+function ventureLocalVisionReady(){return venture.settings.qwenUncensored===true?venture.localCapability?.variants?.heretic?.vision===true:venture.localCapability?.capabilities?.vision===true;}
 function ventureLocalSubtitle(){return ventureLocalVisionReady()?'9B Distill + Vision':venture.localCapability?.enabled===true&&venture.localCapability?.visual?.status==='awaiting-integrated-check'?'9B Distill':'9B Distill · vision not ready';}
 function ventureAcceptLocalCapability(data){
  if(!Object.prototype.hasOwnProperty.call(data,'localModel'))return;
  const before=ventureLocalSubtitle();venture.localCapability=data.localModel||null;
+ if(typeof $==='function')venturePaintUncensored();
  if(before!==ventureLocalSubtitle()){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
 }
 function ventureLocalSourceLink(label,url,run){
@@ -73,7 +74,7 @@ let ventureLocalInfo=null;
 function ventureCloseLocalInfo(){if(ventureLocalInfo){ventureLocalInfo.close();ventureLocalInfo=null;}}
 function ventureOpenLocalInfo(run,button){
  const same=ventureLocalInfo?.runId===run.runId;ventureCloseLocalInfo();if(same)return;
- const controller=new AbortController(),popover=document.createElement('section');popover.className='venture-response-popover';popover.setAttribute('role','dialog');popover.setAttribute('aria-label','Local response information');popover.setAttribute('popover','auto');popover.tabIndex=-1;popover.innerHTML=ventureLocalProgress(run,true);
+ const controller=new AbortController(),popover=document.createElement('section');popover.className='venture-response-popover';popover.setAttribute('role','dialog');popover.setAttribute('aria-label','Local response information');popover.setAttribute('popover','auto');popover.tabIndex=-1;popover.innerHTML='<p>'+((run.localQueue?.modelVariant||'standard')==='heretic'?'Qwen3.8-9B Heretic · Uncensored':'Qwen3.8-9B Distill · Standard')+'</p>'+ventureLocalProgress(run,true);
  const close=()=>{controller.abort();button.setAttribute('aria-expanded','false');if(popover.matches(':popover-open'))popover.hidePopover();popover.remove();if(ventureLocalInfo?.element===popover)ventureLocalInfo=null;};
  ventureLocalInfo={runId:run.runId,element:popover,close};document.body.appendChild(popover);button.setAttribute('aria-expanded','true');
  if(popover.showPopover)popover.showPopover();
@@ -92,4 +93,17 @@ async function ventureFlushLocalSettings(){
  const until=Date.now()+5000;
  while(venture.persisting&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,50));
  return venture.savedSettingsVersion===venture.settingsVersion;
+}
+
+function ventureHereticAvailable(){return venture.localCapability?.variants?.heretic?.available===true;}
+function venturePaintUncensored(){
+ const row=$('ventureUncensoredRow'),toggle=$('ventureUncensored'),help=$('ventureUncensoredHelp');
+ if(!row||!toggle||!help)return;
+ const local=ventureIsLocal(),on=venture.settings.qwenUncensored===true,ready=ventureHereticAvailable();
+ row.hidden=help.hidden=!local;toggle.checked=local&&on;
+ // A missing variant can always be switched OFF; never silently reset saved intent.
+ toggle.disabled=!local||(!ready&&!on);
+ help.textContent=!venture.localCapability?.variants?'Update FUPCJ Server to enable model switching.':
+  !ready?(on?'Heretic unavailable. Turn off to use Standard.':'Install and enable Heretic on FUPCJ Server first.'):
+  on?'Heretic model selected. Refusals may still occur.':'Off uses the original Distill model.';
 }
