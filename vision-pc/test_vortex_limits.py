@@ -158,5 +158,58 @@ class LimitsTests(unittest.TestCase):
         self.assertNotIn('secret', str(failure.exception))
 
 
+class DurationPolicyTests(unittest.TestCase):
+    def test_supervisor_worker_and_optional_service_agree_on_32_hours(self):
+        import re
+        import vortex
+        compose = Path(__file__).with_name('vortex-services.compose.yml').read_text()
+        configured = int(re.search(r"DURATION_LIMIT:\s*'(\d+)'", compose)[1])
+        self.assertEqual(vortex.MAX_DURATION, 115200)
+        self.assertEqual(worker.DEFAULT_MAX_DURATION, vortex.MAX_DURATION)
+        self.assertEqual(configured, vortex.MAX_DURATION)
+
+    def test_service_artifact_probes_use_exclusive_boundary_and_shared_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / 'source.mp4'
+            request = {'directory': directory}
+            for duration in (14401, 86400, 115199.9, 115200, 115201):
+                probe = {'streams': [{'codec_type': 'video'}], 'format': {'duration': str(duration)}}
+                with self.subTest(duration=duration), patch.object(worker, 'probe_file', return_value=probe), \
+                        patch.object(worker, 'export_media', return_value=artifact) as export:
+                    if duration < 115200:
+                        self.assertTrue(adapters.finish_artifact(artifact, {'mediaType': 'video'}, request)['complete'])
+                        export.assert_called_once()
+                    else:
+                        with self.assertRaises(worker.DurationLimitError) as failure:
+                            adapters.finish_artifact(artifact, {'mediaType': 'video'}, request)
+                        self.assertEqual(failure.exception.category, 'duration_limit')
+                        export.assert_not_called()
+
+    def test_cobalt_merge_accepts_long_tracks_and_rejects_boundary_before_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = {'type': 'merge', 'tunnel': ['fixture-video', 'fixture-audio']}
+            request = {'directory': directory, 'maxBytes': 10000, 'ffmpeg': 'fixture-ffmpeg'}
+            for duration in (86400, 115199.9, 115200, 115201):
+                parts = [root / 'video.mp4', root / 'audio.m4a']
+                for part in parts:
+                    part.write_bytes(b'fixture')
+                probes = [{'streams': [{'codec_type': kind}], 'format': {'duration': str(duration)}} for kind in ('video', 'audio')]
+                def merge(*args, **kwargs):
+                    (root / 'merged.mkv').write_bytes(b'merged')
+                with self.subTest(duration=duration), patch.object(adapters, 'download_stream', side_effect=parts), \
+                        patch.object(worker, 'probe_file', side_effect=probes), \
+                        patch.object(adapters.subprocess, 'run', side_effect=merge) as ffmpeg, \
+                        patch.object(adapters, 'finish_artifact', return_value={'complete': True}):
+                    if duration < 115200:
+                        self.assertTrue(adapters.cobalt_local(result, {}, request, None)['complete'])
+                        ffmpeg.assert_called_once()
+                    else:
+                        with self.assertRaises(worker.DurationLimitError):
+                            adapters.cobalt_local(result, {}, request, None)
+                        ffmpeg.assert_not_called()
+                    self.assertTrue(all(not part.exists() for part in parts))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -31,14 +31,14 @@ from flask import g, jsonify, request, send_file
 from uploaded_media import WindowsJob
 from vortex_network import engine_for, validate_input
 
-VORTEX_VERSION = '1.0.3'
+VORTEX_VERSION = '1.0.4'
 RETENTION_SECONDS = 5 * 86400
 MAX_BYTES = 2 * 1024**3
 ACCOUNT_BYTES = 10 * 1024**3
 GLOBAL_BYTES = 40 * 1024**3
 DISK_RESERVE = 2 * 1024**3
 MAX_ITEMS = 50
-MAX_DURATION = 4 * 3600
+MAX_DURATION = 32 * 60 * 60
 MAX_ACTIVE = 3
 MAX_GLOBAL_ACTIVE = 20
 MAX_HISTORY = 500

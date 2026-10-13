@@ -1,4 +1,4 @@
-import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.3&rev=moises.1';
+import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.4&rev=moises.1';
 
 const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);

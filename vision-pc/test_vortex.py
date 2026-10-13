@@ -359,7 +359,7 @@ class VortexAccountTests(unittest.TestCase):
              patch('vortex.importlib.util.find_spec', return_value=None):
             capability = self.service.capability()
         self.assertTrue(capability['ready'])
-        self.assertEqual(capability['maxDuration'], 14400)
+        self.assertEqual(capability['maxDuration'], 115200)
         self.assertTrue(capability['engines']['page-media'])
         self.assertFalse(capability['engines']['yt-dlp'])
         with patch.object(self.service, 'capability', return_value=capability):

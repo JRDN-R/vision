@@ -17,7 +17,8 @@ small available stream, and converts processing audio to 16 kHz mono at 32 kbps.
 Video produces timestamped snapshots and a transcript. Audio-only links,
 including YouTube Music and individual Spotify tracks, produce a transcript.
 Spotify uses the existing metadata/matched-public-audio workflow. Source
-availability, DRM, sign-in requirements and the four-hour media duration limit applies (a reviewed increase from two hours).
+availability, DRM, sign-in requirements and the under-32-hour download duration limit still apply. Snapshot and
+transcription processing retain their separate limits.
 
 After Apply is accepted, download, snapshots and transcription run durably on
 FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
@@ -246,7 +247,8 @@ to the Spotify child; no Firebase tokens or unrelated credentials are forwarded.
 
 All browser messages are neutral (Finding media, Preparing download, Downloading
 media, Converting to the selected format). All-engine failure yields one concise
-retrieval error. Progress is indeterminate unless a foreground candidate has real
+retrieval error, except a confirmed duration rejection reports the server's
+duration limit after alternatives have finished. Progress is indeterminate unless a foreground candidate has real
 byte/fragment/encode measurements. Internal diagnostic events contain only an
 allowlisted engine, failure category and elapsed milliseconds, and are sent to
 the server logger. Raw exceptions, URLs, cookies and signed streams are not logged.
@@ -478,7 +480,7 @@ database remain included in the existing backup process.
 | Active jobs per account / server queue | 3 / 20 |
 | Downloaded artifact | 2 GiB |
 | Account / total Vortex storage | 10 / 40 GiB, including reserved jobs |
-| Media duration | 2 hours |
+| Media duration | Strictly under 32 hours (115,200 seconds) |
 | Gallery contents | 50 files |
 | Search page size / maximum pages | 8 videos + 8 songs / 50 pages |
 | Lookup / download timeout | 3 / 45 minutes |
@@ -487,6 +489,18 @@ database remain included in the existing backup process.
 | Aggregate temporary disk | Existing 3 × 2 GiB allowance, shared across attempts |
 | Per-attempt lookup / download timeout | 2 / 40 minutes |
 | File delivery URL lifetime | At most 5 minutes and never beyond file expiry |
+
+The media limit includes completed livestream recordings (`was_live`).
+Version 1.0.4 accepts recordings strictly shorter than 32 hours; exactly 32 hours
+or longer is rejected with an explicit duration-limit message. Active and
+upcoming livestreams remain unsupported. The supervisor, worker, gallery and
+service-adapter checks all use the same limit, including final file probes.
+Run the normal Windows `-Action Update` to install the backend change. If Cobalt
+is enabled, also run `-Action InstallVortexServices` to recreate its service with
+the updated Compose duration setting. Existing running containers retain their
+old environment until recreated; no media-tool upgrade is needed for this limit change. File-size, storage, memory and
+processing deadlines still apply, so accepting a recording does not guarantee
+its full download and conversion will fit those separate limits.
 
 Paths live under the configured `dataDir/vortex/`, using generated job IDs and
 server-chosen filenames. Job IDs alone grant no access: every history, update,

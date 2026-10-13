@@ -322,8 +322,10 @@ def finish_artifact(artifact, media, request):
     if not (audio if audio_only else video):
         raise ValueError('not_video')
     duration = worker.number((probe.get('format') or {}).get('duration'))
-    if not duration or duration > int(request.get('maxDuration', 14400)):
-        raise ValueError('duration_limit')
+    if not duration:
+        raise worker.WorkerError('The media duration could not be verified.', category='invalid_media')
+    if duration >= int(request.get('maxDuration', worker.DEFAULT_MAX_DURATION)):
+        raise worker.DurationLimitError(request.get('maxDuration', worker.DEFAULT_MAX_DURATION))
     worker.apply_probe(media, probe)
     artifact = worker.export_media(artifact, media, request)
     return dict(complete=True, media=media, results=[media], filename=artifact.name)
@@ -421,8 +423,10 @@ def cobalt_local(result, media, request, client):
         durations = []
         for data in details:
             duration = worker.number((data.get('format') or {}).get('duration'))
-            if not duration or duration > int(request.get('maxDuration', 14400)):
-                raise ValueError('duration_limit')
+            if not duration:
+                raise worker.WorkerError('The media duration could not be verified.', category='invalid_media')
+            if duration >= int(request.get('maxDuration', worker.DEFAULT_MAX_DURATION)):
+                raise worker.DurationLimitError(request.get('maxDuration', worker.DEFAULT_MAX_DURATION))
             durations.append(duration)
         if max(durations) - min(durations) > max(2, max(durations) * .02):
             raise ValueError('incomplete_download')

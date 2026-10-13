@@ -181,7 +181,7 @@ def quality_rank(result, request):
 
 
 def race(request, *, adapters=None, attempt_factory=Attempt):
-    from vortex_worker import WorkerError, emit
+    from vortex_worker import DEFAULT_MAX_DURATION, DurationLimitError, WorkerError, emit
     directory = Path(request['directory']).resolve()
     selected = []
     # One missing/broken dependency must not prevent checking later engines.
@@ -332,7 +332,13 @@ def race(request, *, adapters=None, attempt_factory=Attempt):
                 ('disk_limit', 'This operation reached the server temporary storage limit.'),
                 ('timeout', 'This operation took too long. Try a shorter item or another source.')):
             if any(a.category == category for a in failures):
+                if category == 'duration_limit':
+                    raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
                 raise WorkerError(message, category=category)
+        # Keep a known inspection duration restriction when all download
+        # fallbacks fail generically. Successful alternatives have already won.
+        if any(a.category == 'duration_limit' for a in attempts):
+            raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
         # Prefer transfer failures, then retain explicit inspection restrictions
         # when a generic page fallback also failed. Never expose upstream text.
         for group in (failed_downloads, attempts):

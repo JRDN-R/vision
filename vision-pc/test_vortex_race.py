@@ -145,7 +145,9 @@ time.sleep(spec.get(kind+'Delay',0.05))
 if spec.get(kind+'Category'):
  print(json.dumps({'error':'secret upstream text', 'category':spec[kind+'Category']}),flush=True)
  raise SystemExit(1)
-if spec.get(kind+'Fail'):raise SystemExit(1)
+if spec.get(kind+'Fail'):
+ print(json.dumps({'error':spec.get('error','fixture failure'),'category':spec.get('category','unavailable')}),flush=True)
+ raise SystemExit(1)
 media={'title':a.adapter,'url':r['input'],'source':'X','mediaType':'video','height':spec.get('height',1080),'engine':a.adapter,'transferBytes':spec.get('bytes',1000)}
 result={'complete':True,'media':media,'results':[media]}
 if kind=='download':
@@ -211,6 +213,25 @@ class RaceTests(unittest.TestCase):
             self.run_race({'one': {'inspectFail': True}, 'two': {'downloadFail': True}})
         self.assertFalse((self.root / 'race').exists())
         self.assertFalse(list(self.root.glob('*.mp4')))
+
+    def test_duration_rejection_survives_race_without_forwarding_adapter_text(self):
+        for limit, hours in ((7200, 2), (14400, 4), (115200, 32)):
+            with self.subTest(limit=limit), self.assertRaisesRegex(worker.DurationLimitError, f'{hours}-hour') as caught:
+                self.run_race({'long': {'inspectFail': True, 'category': 'duration_limit',
+                                       'error': 'https://example.com/?token=private'},
+                               'unavailable': {'inspectFail': True}}, kind='inspect', maxDuration=limit)
+            self.assertNotIn('private', str(caught.exception))
+            self.assertFalse((self.root / 'race').exists())
+
+    def test_duration_rejection_does_not_preempt_successful_alternative(self):
+        result = self.run_race({'rejected': {'inspectFail': True, 'category': 'duration_limit'},
+                                'valid': {'inspectDelay': .2}}, kind='inspect')
+        self.assertEqual(result['media']['title'], 'valid')
+
+    def test_download_duration_rejection_retains_specific_terminal_error(self):
+        with self.assertRaisesRegex(worker.DurationLimitError, '32-hour'):
+            self.run_race({'long': {'downloadFail': True, 'category': 'duration_limit'}})
+        self.assertFalse((self.root / 'race').exists())
 
     def test_provider_failure_is_actionable_and_cleans_up(self):
         for category, message in race.PUBLIC_FAILURE_MESSAGES.items():

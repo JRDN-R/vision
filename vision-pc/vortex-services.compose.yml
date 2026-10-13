@@ -22,7 +22,8 @@ services:
       HTTP_PROXY: http://egress:8080
       HTTPS_PROXY: http://egress:8080
       NO_PROXY: ''
-      DURATION_LIMIT: '7200'
+      # Seconds; the Vortex worker enforces the exclusive 32-hour boundary.
+      DURATION_LIMIT: '115200'
     depends_on:
       network-policy:
         condition: service_healthy

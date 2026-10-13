@@ -86,7 +86,7 @@ The remaining implementation defects corrected in this investigation are:
 
 ### Unchanged limits and protections
 
-* 2 GiB maximum output / media transfer budget; four-hour source duration ceiling.
+* 2 GiB maximum output / media transfer budget; source duration strictly under 32 hours.
 * 3x the file cap for job temporary storage; 2 GiB resident memory per adapter
   process tree; 1 MiB adapter event log and 4 MiB supervisor event log.
 * At most three parallel metadata inspections and two parallel transfers,
