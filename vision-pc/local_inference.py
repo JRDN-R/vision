@@ -146,7 +146,8 @@ class LocalInference:
         return dict(provider='local_llama_cpp', modelVariant=variant, requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
-                    progressKind='estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
+                    longResponse=local_ultra.long_response(profile),
+                    progressKind='indeterminate' if local_ultra.long_response(profile) else 'estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
                     metrics=json.loads(row.get('local_metrics_json') or '{}'))
 
     def recover(self):
@@ -233,7 +234,10 @@ class LocalInference:
         # of a previously benchmarked text-only GPU setting.
         if profile.get('visualEnabled') is True and profile.get('modelVariant') != 'ultra':
             profile['gpuLayers'] = 0
-        context_tokens=max(4096,min(16384,int(profile.get('contextTokens',4096))))
+        context_ceiling = max(local_ultra.CONTEXTS) if profile.get('modelVariant') == 'ultra' else 16384
+        context_tokens=max(4096,min(context_ceiling,int(profile.get('contextTokens',4096))))
+        extended = local_ultra.long_response(profile)
+        margin = local_ultra.CONTEXT_MARGIN if extended else 64
         text, last_flush, usage, finish, runtime = '', 0, {}, None, None
         begun = time.monotonic()
         deadline = time.monotonic() + local_run_seconds(profile)
@@ -254,12 +258,12 @@ class LocalInference:
                 stage('Counting the rendered local prompt')
                 count = runtime.count(messages)
                 dropped = 0
-                while count + row['max_tokens'] + 64 > context_tokens and len(messages) > 2:
+                while count + row['max_tokens'] + margin > context_tokens and len(messages) > 2:
                     # Remove whole historical messages, never cut a citation unit.
                     messages.pop(1)
                     dropped += 1
                     count = runtime.count(messages)
-                if count + row['max_tokens'] + 64 > context_tokens:
+                if count + row['max_tokens'] + margin > context_tokens:
                     raise LocalFailure('The request and selected evidence do not fit the installed Qwen context. Narrow the question, reduce output length, or use an administrator-tested larger context profile.')
                 metrics = dict(inputTokens=count, tokenizer='deployed-llama.cpp',
                                contextTokens=context_tokens, maxOutputTokens=row['max_tokens'],
@@ -268,7 +272,7 @@ class LocalInference:
                 metrics['preparationSeconds'] = prepared_at - begun
                 metrics['modelLoadSeconds'] = loaded_at - prepared_at
                 s.update(rid, status='in_progress', phase='Qwen processing the prompt', local_metrics_json=json.dumps(metrics))
-                for event in runtime.generate(messages, row['max_tokens']):
+                for event in local_ultra.response_events(runtime, messages, row['max_tokens'], context_tokens, profile):
                     if cancelled():
                         raise InterruptedError()
                     if event.get('error'):
@@ -278,14 +282,25 @@ class LocalInference:
                             if k in ('prompt_per_second', 'predicted_per_second') and isinstance(v, (int, float))}
                     if isinstance(event.get('usage'), dict):
                         usage = {key: value for key, value in event['usage'].items()
-                                 if key in ('prompt_tokens', 'completion_tokens', 'total_tokens') and isinstance(value, int)}
+                                 if key in ('prompt_tokens', 'completion_tokens', 'total_tokens') and type(value) is int}
+                        metrics['usage'] = usage
+                    if extended and isinstance(event.get('localGeneration'), dict):
+                        metrics['generation'] = event['localGeneration']
+                        s.update(rid, text=text, local_metrics_json=json.dumps(metrics),
+                                 **({'phase': event['localPhase']} if event.get('localPhase') else {}))
+                    retract = event.get('localRetractCharacters') if extended else None
+                    if type(retract) is int and 0 < retract <= len(text):
+                        text = text[:-retract]
+                        s.update(rid, text=text)
                     for choice in event.get('choices', []):
                         delta = choice.get('delta') or {}
-                        content = delta.get('content') or ''
-                        if '<think>' in text + content or '</think>' in text + content:
+                        content = delta.get('content') or delta.get('refusal') or ''
+                        # Inspect only the boundary plus new text, not a growing million-character answer on every token.
+                        boundary = text[-8:] + content
+                        if '<think>' in boundary or '</think>' in boundary:
                             raise LocalFailure('The installed template did not separate private reasoning. Check the runtime profile.')
                         text += content
-                        if len(text) > 128000:
+                        if len(text) > (local_ultra.MAX_RESPONSE_CHARS if extended else 128000):
                             raise LocalFailure('Local answer exceeded its output safety bound.')
                         finish = choice.get('finish_reason') or finish
                         if time.monotonic() - last_flush > .4:
@@ -308,7 +323,9 @@ class LocalInference:
             incomplete = finish != 'stop' or not text.strip()
             if not incomplete and visual_metrics.get('runtimeChecked'):
                 self.visual.confirm(profile)
-            if incomplete and finish == 'length':
+            if incomplete and metrics.get('generation', {}).get('message'):
+                completion_error = metrics['generation']['message']
+            elif incomplete and finish == 'length':
                 detail = ('before producing visible text' if not text.strip()
                           else 'before completing the visible answer')
                 completion_error = ('Qwen reached its selected output/reasoning token budget ' + detail +
@@ -318,9 +335,9 @@ class LocalInference:
             else:
                 completion_error = None
             s.update(rid, status='incomplete' if incomplete else 'completed',
-                     phase='Output token budget reached' if finish == 'length' else 'Incomplete response' if incomplete else 'Complete',
+                     phase='Saved partial answer' if incomplete and extended else 'Output token budget reached' if finish == 'length' else 'Incomplete response' if incomplete else 'Complete',
                      local_finished_at=time.time(), error=completion_error)
-            if not incomplete:
+            if not incomplete and metrics.get('generation', {}).get('completedPasses', 1) <= 1:
                 try:
                     self.calibration.record(s.row(rid))
                 except Exception:
@@ -330,7 +347,7 @@ class LocalInference:
             if time.monotonic() > deadline:
                 self.visual.invalidate(profile)
                 s.update(rid, status='error', phase='Local processing limit reached', text=text,
-                         local_finished_at=time.time(), error='The combined local request reached its processing time limit.')
+                         local_finished_at=time.time(), error='The combined local request reached its processing time limit. Any visible partial answer is saved.')
             elif isinstance(error, ContextPending) and time.time() - row['created_at'] < 600 and not cancelled():
                 s.update(rid, status='queued', phase='Waiting for the saved board index', next_attempt=time.time() + 2)
             elif isinstance(error, InterruptedError) or s.stop.is_set() or s.row(rid)['cancel_requested']:
