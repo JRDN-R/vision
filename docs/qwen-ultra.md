@@ -201,3 +201,24 @@ actual long-run CPU/GPU throughput require on-device validation. Test with benig
 requests, such as a long code explanation and a multi-part mathematical problem,
 before relying on it for a lengthy job. Neither successful fixtures nor a longer
 budget certify answer accuracy, complete source coverage, or guaranteed completion.
+
+
+### Compact progress summaries
+
+Venture asks thinking-enabled local Qwen models to emit optional public progress
+notes at meaningful changes of approach. Only complete `progress_summary` notes
+of 3–30 words are accepted; raw reasoning is discarded. This uses the existing
+stream, with no additional model load or cloud summarization call. Notes consume
+some of the existing generation budget. Model compliance is not guaranteed:
+when no valid note arrives, the UI shows observed preparation/thinking/writing
+stages, never invented activity or a timer-driven sequence.
+
+The current note stays visible. Earlier notes collapse when a new note arrives;
+completion, cancellation, and errors collapse the whole panel. Users can reopen
+saved notes, and normal polling preserves their expansion choices. Notes are
+stored with the account-owned run and survive page reloads. Retention is bounded
+to the latest 128 notes per run, including in extended-response mode. They are
+public model summaries, not a faithful transcript of internal computations.
+
+Update the PC processor using `Setup-Vision-PC.ps1 -Action Update` to enable the
+backend stream. Older processors remain compatible but cannot supply notes.

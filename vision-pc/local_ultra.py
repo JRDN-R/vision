@@ -194,8 +194,9 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile):
     stop/refusal/filter/error results. Private reasoning is neither retained nor
     exposed. No new model, external call, or instruction override is introduced.
     """
+    from local_progress import summary_events
     if not long_response(profile):
-        yield from runtime.generate(messages, answer_reserve)
+        yield from summary_events(runtime.generate(messages, answer_reserve))
         return
     from local_runtime import LocalFailure
     original_thinking = getattr(runtime, 'thinking', profile.get('thinking', True))
@@ -222,7 +223,7 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile):
             yield {'localGeneration': progress,
                    'localPhase': 'Continuing saved answer' if answer else 'Writing a direct response' if direct_recovery else 'Working on your answer'}
             visible, finish, pass_usage = '', None, {}
-            for event in runtime.generate(current, budget['maxTokens']):
+            for event in summary_events(runtime.generate(current, budget['maxTokens'])):
                 if runtime.cancelled():
                     raise InterruptedError()
                 if event.get('error'):
@@ -231,6 +232,9 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile):
                     pass_usage = {k:v for k,v in event['usage'].items()
                                   if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v >= 0}
                 forwarded = {'choices': []}
+                for field in ('localThinking', 'localProgressSummaries'):
+                    if field in event:
+                        forwarded[field] = event[field]
                 if isinstance(event.get('timings'), dict):
                     forwarded['timings'] = event['timings']
                 for choice in event.get('choices', []):

@@ -203,3 +203,17 @@ venture-loading-symbol svg{display:block;width:100%;height:100%}
 @media(prefers-reduced-motion:reduce){.venture-progress-track.is-ultra>span{transition:none}}
 
 @media(max-width:760px){.venture-compose-tools:has(#ventureStop:not([hidden])) .venture-tools-label{display:none}.venture-compose-tools:has(#ventureStop:not([hidden])) #ventureMic{margin-left:auto}}
+
+/* Compact public progress notes. Native disclosures remain keyboard accessible. */
+.venture-progress-notes{max-width:46rem;margin:12px 0 20px;color:var(--muted,#a4aaa2);font-size:13px;line-height:1.6}
+.venture-progress-notes summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:6px 0;min-height:32px;font-weight:500}
+.venture-progress-notes summary::-webkit-details-marker{display:none}
+.venture-progress-notes summary::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);flex:none;transition:transform .16s ease}
+.venture-progress-notes details[open]>summary::before,.venture-progress-notes[open]>summary::before{transform:rotate(45deg)}
+.venture-progress-notes summary:focus-visible{outline:2px solid #cfb777;outline-offset:3px;border-radius:4px}
+.venture-progress-current{margin:5px 0 9px;padding:0 0 0 15px;border-left:2px solid #bca56980;color:var(--text,#e1e5dc);overflow-wrap:anywhere;font-size:14px}
+.venture-progress-current[hidden],.venture-progress-history[hidden]{display:none}
+.venture-progress-history{margin-left:15px;font-size:12px}
+.venture-progress-steps{max-height:230px;overflow:auto;overscroll-behavior:contain;padding-left:13px;border-left:1px solid #ffffff18}
+.venture-progress-steps p{margin:2px 0 12px;padding-left:14px;font-size:13px;overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){.venture-progress-notes summary::before{transition:none}}
