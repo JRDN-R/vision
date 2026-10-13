@@ -207,7 +207,7 @@ function ventureRenderResponse(host,text,run,index,animate){
  venturePatchDOM(host,next.content);
 }
 function ventureUpdateResponse(host,run,index){
- const target=String(run.text||''),active=ventureActive(run);
+ const target=ventureIsLocal(run.model)?ventureLocalResponseParts(run.text).text:String(run.text||''),active=ventureActive(run);
  let reveal=host.ventureReveal;
  if(!reveal){
   reveal=host.ventureReveal={shown:target,target,run,index,timer:null};
@@ -313,7 +313,7 @@ async function ventureTurnAction(event){
  if(action==='attach'){$('ventureFileInput').click();return;}if(action==='board'){$('ventureIncludeBoard').checked=true;if(typeof ventureContextSchedule==='function')ventureContextSchedule(0);$('ventureMessage').focus();return;}
  const article=button.closest('[data-venture-run]'),run=venture.runs.find(r=>r.runId===article?.dataset.ventureRun);if(!run)return;const index=Number(button.dataset.file??button.dataset.artifact??button.dataset.index);
  if(action==='local-info'){ventureOpenLocalInfo(run,button);return;}
- button.disabled=true;try{if(action==='image')await ventureOpenImage(run,index);else if(action==='local-visual')await ventureOpenLocalVisual(run,index);else if(action==='copy')await consoleCopyText(run.text);else if(action==='retry'){if(!confirm('Generate another response to this message? The original stays saved.'+(ventureIsLocal()?' Local inference has no API token charge.':' This uses API credits.')))return;await ventureSend(run);}else if(action==='preview')await consolePreviewArtifact(run,index);else if(action==='download'){const file=run.artifacts[index];download(await consoleArtifactBlob(file,run),R.safeFilename(file.name));}else if(action==='upload'){const response=await ventureFetch(venturePath(run.ventureId)+'/uploads/'+encodeURIComponent(run.runId)+'/'+index);download(await response.blob(),R.safeFilename(run.attachments[index].name));}}catch(error){ventureSetNotice(ventureError(error));}finally{button.disabled=false;}
+ button.disabled=true;try{if(action==='image')await ventureOpenImage(run,index);else if(action==='local-visual')await ventureOpenLocalVisual(run,index);else if(action==='copy')await consoleCopyText(ventureIsLocal(run.model)?ventureLocalResponseParts(run.text).text:run.text);else if(action==='retry'){if(!confirm('Generate another response to this message? The original stays saved.'+(ventureIsLocal()?' Local inference has no API token charge.':' This uses API credits.')))return;await ventureSend(run);}else if(action==='preview')await consolePreviewArtifact(run,index);else if(action==='download'){const file=run.artifacts[index];download(await consoleArtifactBlob(file,run),R.safeFilename(file.name));}else if(action==='upload'){const response=await ventureFetch(venturePath(run.ventureId)+'/uploads/'+encodeURIComponent(run.runId)+'/'+index);download(await response.blob(),R.safeFilename(run.attachments[index].name));}}catch(error){ventureSetNotice(ventureError(error));}finally{button.disabled=false;}
 }
 function ventureEfforts(){return ventureParameterProfile()?.efforts||['auto'];}
 function ventureChoiceLabel(value){return ({auto:'Model default',xhigh:'Extra high',max:'Maximum'})[value]||value[0].toUpperCase()+value.slice(1);}
