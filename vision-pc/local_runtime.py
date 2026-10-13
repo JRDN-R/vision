@@ -22,6 +22,13 @@ MODEL_SHA = 'df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a'
 MODEL_REVISION = '760121cd70bb4c36b2b5ec58eb765e0df5987efe'
 MODEL_REPOSITORY = 'empero-ai/Qwen3.8-9B-Distill-GGUF'
 MODEL_FILE = 'Qwen3.8-9B-Q4_K_M.gguf'
+MAX_LOCAL_RUN_SECONDS = 5 * 60 * 60
+
+
+def local_run_seconds(settings):
+    """Bound local processing independently from a browser or HTTP request."""
+    return max(60, min(MAX_LOCAL_RUN_SECONDS, int(settings.get('maxRunSeconds', 1800))))
+
 RUNTIME_COMMIT = 'f2cc7282ce0042641df55e0e563b75e824e2b647'
 # Independent community conversion of the exact requested rohit267 model.
 # Pins checked against its Hugging Face commit and Git LFS SHA-256 pointer.
@@ -89,8 +96,12 @@ class LlamaRuntime:
     def request(self, path, payload=None, stream=False):
         if path not in ('/health', '/apply-template', '/tokenize', '/v1/chat/completions'):
             raise LocalFailure('Unsupported local inference operation.')
+        # Accepted work is server-owned. A quiet CPU/model stream should not
+        # hit a short socket timeout before its bounded processing deadline.
+        long_operation = stream or path in ('/apply-template', '/tokenize')
+        read_timeout = max(120, local_run_seconds(self.settings) + 30) if long_operation else 120
         response = self.http.request('GET' if payload is None else 'POST', self.base + path,
-                                     json=payload, timeout=(3, 120), stream=stream, allow_redirects=False)
+                                     json=payload, timeout=(3, read_timeout), stream=stream, allow_redirects=False)
         if response.status_code != 200:
             response.close()
             raise LocalFailure('The local runtime rejected this operation. Check its installed profile.')
@@ -151,7 +162,7 @@ class LlamaRuntime:
 
     def monitor(self):
         import psutil
-        deadline = time.monotonic() + max(60, min(7200, int(self.settings.get('maxRunSeconds', 1800))))
+        deadline = time.monotonic() + local_run_seconds(self.settings)
         while not self.done.wait(.25):
             try:
                 process = psutil.Process(self.process.pid)

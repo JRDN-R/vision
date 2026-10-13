@@ -185,7 +185,9 @@ class LocalInferenceTests(unittest.TestCase):
         self.local.runtime_factory=Exhausted
         rid=self.send().json['runId'];self.s.work_once()
         self.assertEqual(self.s.snapshot(rid)['status'],'incomplete')
-        self.assertIn('budget',self.s.snapshot(rid)['error'])
+        self.assertIn('token budget',self.s.snapshot(rid)['error'])
+        self.assertIn('not a timeout',self.s.snapshot(rid)['error'])
+        self.assertEqual(self.s.snapshot(rid)['localQueue']['metrics']['finishReason'],'length')
 
     def test_migration_once_explicit_choice_stale_tabs_and_history_identity(self):
         prefs=self.local.preferences

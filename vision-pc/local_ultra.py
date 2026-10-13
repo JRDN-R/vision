@@ -47,7 +47,7 @@ def base_profile(settings):
     profile.update(modelVariant='ultra', modelId=MODEL, modelPath=str(target / SPEC['modelFile']),
         manifestPath=str(target / 'installed-manifest.json'), contextTokens=8192, maxOutputTokens=4096,
         threads=8, gpuLayers=0, batchSize=256, ubatchSize=64, maxResidentGiB=30,
-        reserveRamGiB=max(10,float(settings.get('reserveRamGiB',10))), maxRunSeconds=7200,
+        reserveRamGiB=max(10,float(settings.get('reserveRamGiB',10))), maxRunSeconds=18000,
         visualManifestPath=str(checked_path(settings.get('visualManifestPath') or
             checked_path(settings['modelPath']).parent / 'visual' / 'visual-worker-manifest.json')))
     return profile
