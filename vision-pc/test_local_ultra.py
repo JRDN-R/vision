@@ -12,7 +12,7 @@ import local_ultra as ultra
 import local_variants
 import test_local_inference as existing
 from setup_local_variant import atomic_json
-from setup_qwen_ultra import cpu_candidates, gpu_candidates, tune, context_check
+from setup_qwen_ultra import cpu_candidates, gpu_candidates, tune, context_check, quiet_machine
 
 
 class UltraControlsTests(unittest.TestCase):
@@ -23,6 +23,7 @@ class UltraControlsTests(unittest.TestCase):
                     {'performance':'cloud'},{'runtimePath':'anything'},{'topP':0}):
             with self.assertRaises(ValueError):ultra.normalize(bad)
         self.assertFalse(ultra.normalize({'thinking':False})['thinking'])
+        self.assertEqual(ultra.normalize({'performance':'boost'})['performance'],'boost')
         with tempfile.TemporaryDirectory() as folder:
             profile = ultra.base_profile({'modelPath': str(Path(folder) / 'model.gguf')})
             self.assertEqual(profile['maxRunSeconds'], 5 * 60 * 60)
@@ -39,8 +40,10 @@ class UltraControlsTests(unittest.TestCase):
 
     def test_cpu_reserves_cores_and_gpu_needs_reported_free_vram(self):
         self.assertEqual(cpu_candidates(16),[8,12,14])
+        self.assertEqual(cpu_candidates(16,reserve=0),[8,12,16])
         self.assertEqual(cpu_candidates(4),[4])
         self.assertEqual(gpu_candidates('Vulkan0: example (8192 MiB, 7000 MiB free)'),[4])
+        self.assertEqual(gpu_candidates('Vulkan0: example (8192 MiB, 7000 MiB free)',boost=True),[4,8])
         self.assertEqual(gpu_candidates('Vulkan0: example (2048 MiB, 1000 MiB free)'),[])
         self.assertEqual(gpu_candidates('unrecognized device reporting format'),[])
 
@@ -85,6 +88,32 @@ class UltraControlsTests(unittest.TestCase):
             self.assertEqual(selected['auto']['profile']['threads'],14)
             self.assertEqual(smoke.call_count,1);self.assertEqual(context.call_count,1)
             self.assertEqual(context.call_args.args[0]['contextTokens'],8192)
+
+    def test_optional_boost_trials_are_measured_and_livestreams_are_protected(self):
+        def measured(profile):
+            threads, layers = profile['threads'], profile['gpuLayers']
+            rate = 30 if (threads,layers)==(16,8) else 4 if layers else threads
+            return dict(loadSeconds=10,promptTokensPerSecond=100,generationTokensPerSecond=rate)
+        with tempfile.TemporaryDirectory() as folder,patch('setup_qwen_ultra.quiet_machine'), \
+                patch('setup_qwen_ultra.psutil.cpu_count',return_value=16), \
+                patch('setup_qwen_ultra.subprocess.run',return_value=SimpleNamespace(stdout='Vulkan0 (7000 MiB free)',stderr='')), \
+                patch('setup_qwen_ultra.benchmark',side_effect=measured), \
+                patch('setup_qwen_ultra.smoke_test') as smoke,patch('setup_qwen_ultra.context_check') as context:
+            default = tune({'runtimePath':'fixture'},Path(folder),8192)
+            self.assertNotIn('boost',default)
+            self.assertEqual(default['auto']['profile']['threads'],14)
+            self.assertEqual(smoke.call_count,1)
+            tuned = tune({'runtimePath':'fixture'},Path(folder),8192,boost=True)
+            self.assertEqual(tuned['cpu']['profile']['threads'],14)
+            self.assertEqual(tuned['auto']['profile']['threads'],14)
+            self.assertEqual(tuned['boost']['profile']['threads'],16)
+            self.assertEqual(tuned['boost']['profile']['gpuLayers'],8)
+            self.assertEqual(smoke.call_count,3)
+            self.assertEqual(context.call_count,3)
+        with patch('setup_qwen_ultra.psutil.process_iter',
+                return_value=[SimpleNamespace(info={'name':'obs64.exe'})]):
+            with self.assertRaisesRegex(local_runtime.LocalFailure,'OBS/Streamlabs'):
+                quiet_machine('starting Ultra Boost')
 
     def test_context_check_uses_template_overhead_and_rejects_wrong_answers(self):
         class Fixture:
@@ -155,6 +184,22 @@ class UltraIntegrationTests(unittest.TestCase):
         self.assertEqual(self.selected[-1]['sampling']['temperature'],.3)
         self.assertEqual(json.loads(self.s.row(rid)['response_json'])['model'],ultra.MODEL)
         self.assertEqual(self.client.get('/api/projects/'+self.cid+'/runs/'+rid,headers=self.b).status_code,404)
+
+    def test_boost_requires_operator_benchmark_and_no_silent_fallback(self):
+        missing=self.send(model=ultra.MODEL,qwenUltra={'performance':'boost'},request_id='boost-before-tune')
+        self.assertEqual(missing.status_code,409,missing.json)
+        self.assertIn('Tune -Boost',missing.json['error'])
+        self.receipt['profiles']['boost']=dict(
+            profile=dict(threads=16,gpuLayers=8,batchSize=256,ubatchSize=64),
+            benchmark=dict(loadSeconds=10,promptTokensPerSecond=120,generationTokensPerSecond=8))
+        atomic_json(self.receipt_path,self.receipt)
+        run=self.send(model=ultra.MODEL,qwenUltra={'performance':'boost'},request_id='boost-after-tune')
+        self.assertEqual(run.status_code,202,run.json)
+        self.s.work_once()
+        self.assertEqual(self.s.snapshot(run.json['runId'])['status'],'completed')
+        self.assertEqual(self.selected[-1]['threads'],16)
+        self.assertEqual(self.selected[-1]['gpuLayers'],8)
+        self.assertEqual(self.selected[-1]['ultraPerformance'],'boost')
 
     def test_unavailable_or_changed_receipt_never_falls_back(self):
         sent=self.send(model=ultra.MODEL);self.assertEqual(sent.status_code,202,sent.json)
