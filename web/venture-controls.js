@@ -275,7 +275,9 @@ async function ventureDictationAttempt(recording) {
  if (result?.status !== 'completed' || typeof result.text !== 'string') {
   throw new Error(result?.error || (provider === 'whisper' ? 'PC Whisper did not return a transcript.' : 'Gemini did not return a transcript.'));
  }
- return result;
+ // Enforce plain text in the editor and in recovery downloads, including if
+ // a previously deployed PC server still returns timestamped Whisper output.
+ return {...result, text:plainDictationText(result.text)};
 }
 async function ventureUploadDictation(recording) {
  if (!ventureDictationCurrent(recording) || recording.uploading || recording.sequenceStarted) return;
