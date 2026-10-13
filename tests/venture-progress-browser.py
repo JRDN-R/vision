@@ -77,7 +77,7 @@ with sync_playwright() as pw:
         assert page.evaluate("window.copiedAnswer")=='## Answer\n\n**Ready.**'
 
         # Malformed notes are omitted. Model text is always rendered as text.
-        page.evaluate("run.status='in_progress';run.localQueue.progress.steps=[{id:4,text:'Checking <img onerror=alert(1)> supplied material.',source:'model'},{id:5,text:'word '.repeat(31),source:'model'}];venturePaintTurns()")
+        page.evaluate("run.text='';run.status='in_progress';run.localQueue.progress.steps=[{id:4,text:'Checking <img onerror=alert(1)> supplied material.',source:'model'},{id:5,text:'word '.repeat(31),source:'model'}];venturePaintTurns()")
         assert page.locator('[data-venture-notes] img').count()==0
         assert '<img' in page.locator('.venture-progress-current').text_content()
         page.evaluate("delete run.localQueue.progress;venturePaintTurns()")
