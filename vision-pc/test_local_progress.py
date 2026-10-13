@@ -40,6 +40,46 @@ class ParserTests(unittest.TestCase):
         self.assertEqual([note for e in events for note in e.get('localProgressSummaries', [])], ['Comparing the available options.'])
         self.assertNotIn('PRIVATE', json.dumps(events))
 
+    def test_visible_summary_streams_to_progress_without_markdown_tags(self):
+        # Reproduce a model writing its public note in the final/content channel.
+        raw = '<progress_summary>Checking the example before drafting an answer.</progress_summary>\n\n## Answer\n\n**Ready.**'
+        events = [{'choices': [{'delta': {'content': char}}]} for char in raw]
+        events.append({'choices': [{'delta': {}, 'finish_reason': 'stop'}]})
+        output = list(summary_events(events))
+        text = ''.join(choice['delta'].get('content', '') for event in output
+                       for choice in event.get('choices', []))
+        notes = [note for event in output for note in event.get('localProgressSummaries', [])]
+        self.assertEqual(text, '\n\n## Answer\n\n**Ready.**')
+        self.assertEqual(notes, ['Checking the example before drafting an answer.'])
+        self.assertNotIn('<progress_summary>', json.dumps(output))
+        self.assertNotIn('</progress_summary>', json.dumps(output))
+
+    def test_invalid_unfinished_or_orphaned_content_markers_never_leak(self):
+        raw = ('Start. <progress_summary>' + 'word ' * 1200
+               + '</progress_summary> Middle. </progress_summary> '
+               + '<progress_summary>One two</progress_summary> End.'
+               + '<progress_summary>Unfinished public note')
+        output = list(summary_events(
+            [{'choices': [{'delta': {'content': raw[n:n + 3]}}]}
+             for n in range(0, len(raw), 3)]
+            + [{'choices': [{'delta': {}, 'finish_reason': 'length'}]}]))
+        text = ''.join(choice['delta'].get('content', '') for event in output
+                       for choice in event.get('choices', []))
+        self.assertEqual(text, 'Start.  Middle.   End.')
+        self.assertFalse(any(event.get('localProgressSummaries') for event in output))
+        self.assertNotIn('<progress', json.dumps(output))
+
+    def test_extended_answer_continuation_omits_markup_from_saved_context(self):
+        from test_local_long_response import Fixture, result, consume
+        runtime = Fixture([
+            [result('<progress_summary>Checking the available examples first.</progress_summary>First part. ', 'length')],
+            [result('Final part.')]])
+        events, answer = consume(runtime)
+        self.assertEqual(answer, 'First part. Final part.')
+        self.assertIn('Checking the available examples first.',
+                      [note for event in events for note in event.get('localProgressSummaries', [])])
+        self.assertNotIn('<progress_summary>', json.dumps(events))
+
     def test_notes_deduplicate_and_bound_history(self):
         notes = ProgressNotes()
         self.assertTrue(notes.add('Working through your request.', key='thinking'))
@@ -76,3 +116,20 @@ class ProgressIntegrationTests(LocalInferenceTests):
         path='/api/projects/'+self.cid+'/runs/'+rid
         self.assertEqual(self.client.get(path, headers=self.b).status_code, 404)
         self.assertEqual(self.client.get(path, headers=self.a).json['localQueue']['progress']['steps'], steps)
+
+    def test_content_channel_summaries_are_saved_as_notes_not_response_text(self):
+        class Runtime(FakeRuntime):
+            def generate(self, messages, max_tokens):
+                yield {'choices': [{'delta': {'content': '<progress_sum'}}]}
+                yield {'choices': [{'delta': {'content': 'mary>Checking the reference before answering.</progress_summary>\n\n## Answer\n'}}]}
+                yield {'choices': [{'delta': {'content': '\n**Ready.**'}}]}
+                yield {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}
+        self.local.runtime_factory = Runtime
+        rid = self.send().json['runId']
+        self.s.work_once()
+        saved = self.s.snapshot(rid)
+        self.assertEqual(saved['status'], 'completed', saved)
+        self.assertEqual(saved['text'], '\n\n## Answer\n\n**Ready.**')
+        self.assertIn('Checking the reference before answering.',
+                      [step['text'] for step in saved['localQueue']['progress']['steps']])
+        self.assertNotIn('<progress_summary>', json.dumps(saved))
