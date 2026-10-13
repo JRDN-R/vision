@@ -67,7 +67,7 @@ with sync_playwright() as pw:
           venturePaintTurns();
         }""")
         assert page.locator('.venture-progress-notes').count()==1
-        assert 'Checking the supplied background' in page.locator('.venture-progress-steps').inner_text()
+        assert 'Checking the supplied background' in page.locator('.venture-progress-steps').text_content()
         assert page.locator('.venture-progress-steps details').count()==2
         assert page.locator('[data-venture-text] strong').inner_text()=='Ready.'
         assert '<progress_summary>' not in page.locator('[data-venture-text]').inner_text()
