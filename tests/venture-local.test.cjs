@@ -117,3 +117,12 @@ test('toggle is a real persisted local setting with an old-server send guard',()
  assert.match(source,/qwenUncensored===true&&!ventureHereticAvailable\(\)/);
  assert.match(source,/venture\.explicitModelSelection=true/);
 });
+
+test('Qwen badge readiness is safe before account settings are loaded',()=>{
+ const c=fixture();delete c.venture.settings;
+ assert.equal(c.ventureLocalVisionReady(),false);
+ assert.match(c.ventureLocalSubtitle(),/vision not ready/);
+ assert.doesNotThrow(()=>c.ventureLocalDisclosure());
+ c.venture.localCapability={capabilities:{vision:true}};
+ assert.equal(c.ventureLocalSubtitle(),'9B Distill + Vision');
+});
