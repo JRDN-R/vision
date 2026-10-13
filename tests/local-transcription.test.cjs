@@ -122,7 +122,7 @@ function fixture(job=makeJob()){
  {
   const f=fixture(makeJob({provider:'gemini'}));f.control.post=()=>({id:'approved-receipt',status:'approval_waiting'});await f.pump();
   f.control.get=()=>({status:'complete',result:{sections:[{start:0,end:10,text:'[00:00:00.000] First.'},{start:10,end:20,text:'[00:00:10.000] Second.'}]}});f.due();await f.pump();
-  assert.equal(f.state.nodes[0].transcriptionJobs.length,0);assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.stats.released,1);assert.equal(f.stats.gemini,0);assert.match(f.transcripts[0].text,/First.*\n\n.*Second/s);
+  assert.equal(f.state.nodes[0].transcriptionJobs.length,0);assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.stats.released,1);assert.equal(f.stats.gemini,0);assert.equal(f.transcripts[0].text,'First. Second.');
  }
  // Invalid complete response cannot discard source audio or completed text.
  {
