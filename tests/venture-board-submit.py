@@ -162,7 +162,7 @@ with sync_playwright() as pw:
                     page.screenshot(path=str(screenshots / f'context-options-{width}.png'))
                 page.locator('#ventureContextClose').click()
                 page.locator('#ventureSend').click()
-                expect(page.locator('#ventureActivity')).to_have_text('Queued')
+                expect(page.locator('#ventureActivity')).to_have_text('You’re next in line')
                 optimized = page.evaluate('contextSubmissionResult()')
                 assert optimized['options']['boardContext'] == {
                     'projectId': 'project-contextfixture', 'revision': 12, 'mode': 'full'}, optimized
