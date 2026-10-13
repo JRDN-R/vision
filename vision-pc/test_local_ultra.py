@@ -23,6 +23,11 @@ class UltraControlsTests(unittest.TestCase):
                     {'performance':'cloud'},{'runtimePath':'anything'},{'topP':0}):
             with self.assertRaises(ValueError):ultra.normalize(bad)
         self.assertFalse(ultra.normalize({'thinking':False})['thinking'])
+        with tempfile.TemporaryDirectory() as folder:
+            profile = ultra.base_profile({'modelPath': str(Path(folder) / 'model.gguf')})
+            self.assertEqual(profile['maxRunSeconds'], 5 * 60 * 60)
+        self.assertEqual(local_runtime.local_run_seconds({'maxRunSeconds': 999999}), 18000)
+        self.assertEqual(local_runtime.local_run_seconds({}), 1800)
 
     def test_estimates_use_both_measured_rates_and_output_budget(self):
         profile={'ultraBenchmark':{'loadSeconds':20,'promptTokensPerSecond':100,'generationTokensPerSecond':5}}
@@ -56,6 +61,14 @@ class UltraControlsTests(unittest.TestCase):
         self.assertFalse(payload['chat_template_kwargs']['enable_thinking'])
         self.assertEqual((payload['temperature'],payload['top_k'],payload['seed']),(.2,40,99))
         self.assertEqual(local_runtime.model_spec(live.settings),ultra.SPEC)
+        live.settings['maxRunSeconds'] = 18000
+        with patch.object(live.http,'request',return_value=SimpleNamespace(status_code=200)) as send:
+            live.request('/v1/chat/completions', {}, stream=True)
+            self.assertEqual(send.call_args.kwargs['timeout'], (3, 18030))
+            live.request('/tokenize', {'content': 'test'})
+            self.assertEqual(send.call_args.kwargs['timeout'], (3, 18030))
+            live.request('/health')
+            self.assertEqual(send.call_args.kwargs['timeout'], (3, 120))
 
     def test_tuner_keeps_fast_cpu_when_offload_is_slower_or_fails(self):
         def measured(profile):
