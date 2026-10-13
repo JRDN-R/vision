@@ -5,7 +5,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {chromium}=require('playwright');
 const ROOT=path.resolve(__dirname,'..'),APP_URL='https://vision.test/',PC_URL='https://processor.tailtest.ts.net';
-const TRANSCRIPT='[00:00:00.000] Build a page showing the weekly project timeline.';
+const WHISPER_TRANSCRIPT='[00:00:00.000] Build a page showing the weekly project timeline.';
+const TRANSCRIPT='Build a page showing the weekly project timeline.';
 
 async function main(){
  const browser=await chromium.launch({headless:true,args:['--single-process','--no-zygote','--disable-gpu'],...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
@@ -48,7 +49,7 @@ async function main(){
     }
     if(suffix.startsWith('/transcriptions/')&&request.method()==='GET'){
      const jobId=suffix.split('/').pop(),job=jobs.get(jobId);if(!job||job.projectId!==id)return json(route,404,{error:'Not found'});
-     return json(route,200,{id:jobId,status:complete?'complete':'processing',progress:complete?100:35,phase:complete?'Complete':'Transcribing on PC',...(complete?{result:{sections:job.payload.sections.map(section=>({start:section.start,end:section.end,text:TRANSCRIPT}))}}:{})});
+     return json(route,200,{id:jobId,status:complete?'complete':'processing',progress:complete?100:35,phase:complete?'Complete':'Transcribing on PC',...(complete?{result:{sections:job.payload.sections.map(section=>({start:section.start,end:section.end,text:WHISPER_TRANSCRIPT}))}}:{})});
     }
     if(suffix==='/runs')return json(route,200,{runs:[]});
    }
