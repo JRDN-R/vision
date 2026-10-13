@@ -18,11 +18,12 @@ from owned_assets import exclusive_file
 from setup_local_variant import atomic_json, download_model, smoke_test
 
 
-def quiet_machine():
-    # The installer never kills another application to win a benchmark.
+def quiet_machine(activity='tuning'):
+    # Never take GPU headroom away from a live streaming/recording process.
+    # The installer/runtime never closes OBS or changes clocks.
     for process in psutil.process_iter(['name']):
         if (process.info['name'] or '').lower() in ('obs64.exe','obs32.exe','streamlabs obs.exe'):
-            raise LocalFailure('Close OBS/Streamlabs before tuning. Download can be run separately; no process was stopped.')
+            raise LocalFailure('Close OBS/Streamlabs before '+activity+'. No process was stopped.')
 
 
 def cpu_candidates(cores, reserve=2):
