@@ -24,8 +24,8 @@ class DelayedVision(mod.Fixture):
                 window.__restoreReleased?Promise.resolve():new Promise(resolve=>{
                     document.documentElement.dataset.fixtureAuthWaiting='true';
                     window.__completeVisionRestore=()=>{window.__restoreReleased=true;resolve();};
-                })''').replace('signInWithPopup:login', '''signInWithPopup:async(auth,provider,resolver)=>{
-                    window.__popupResolver=resolver;window.__popupCount=(window.__popupCount||0)+1;return login();
+                })''').replace('signInWithCredential:login', '''signInWithCredential:async(auth,credential)=>{
+                    window.__credentialExchangeCount=(window.__credentialExchangeCount||0)+1;return login();
                 }''')
             route.fulfill(body=mod.VISION.replace(mod.FIREBASE, sdk, 1), content_type='text/html')
         else:
@@ -59,7 +59,7 @@ def verify_delayed_return(browser):
             page.evaluate('__completeVisionRestore()')
             page.locator('#accountGate').wait_for(state='hidden')
             page.locator('#visionVenture').wait_for(state='visible' if view=='venture' else 'hidden')
-            assert page.evaluate('window.__popupCount||0') == 0
+            assert page.evaluate('window.__googleRequests||0') == 0
             # Return through the real app menu, preserving the same identity.
             page.keyboard.press('Escape')
             page.locator('#workspaceMenuButton').click()
@@ -126,8 +126,8 @@ def verify_restore_retry(browser):
                 page.locator('#accountGateSignIn').click()
         page.locator('#accountGate').wait_for(state='hidden')
         if not signed_in:
-            assert page.evaluate('window.__popupCount') == 1, 'Google did not respond after recovery'
-            assert page.evaluate('window.__popupResolver') == 'POPUP'
+            assert page.evaluate('window.__googleRequests') == 1, 'Google did not respond after recovery'
+            assert page.evaluate('window.__credentialExchangeCount') == 1
         assert not errors, errors
         context.close()
     print('Vision restore: bounded timeout, actionable retry, existing session and responsive Google button passed', flush=True)

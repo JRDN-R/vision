@@ -34,7 +34,7 @@ else{
   port=event.ports[0];port.start();window.removeEventListener('message',handle);clearInterval(readyTimer);
   status.textContent='Preparing Google sign-in…';
   try{
-   const [appSDK,authSDK]=await Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js')]);
+   const [appSDK,authSDK]=await Promise.all([import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js')]);
    bridgeSDK=authSDK;bridgeAuth=authSDK.getAuth(appSDK.initializeApp(config,'vision-local-bridge'));
    await authSDK.setPersistence(bridgeAuth,authSDK.inMemoryPersistence);
    if(expired)return;button.disabled=false;status.textContent='Ready. Continue with Google'+(email?' to connect '+email:'')+'.';

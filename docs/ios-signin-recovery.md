@@ -6,6 +6,57 @@ click. Saved Firebase identities should be restored from IndexedDB or localStora
 the apps should not silently downgrade to session-only persistence or open a
 Google popup during startup.
 
+## Direct Google login change (pending OAuth origin verification)
+
+The hosted shared login now uses Google Identity Services (GIS) to obtain a
+short-lived Google credential, then `signInWithCredential` verifies it through
+the existing Firebase project. It does not visit Firebase's `/__/auth/handler`
+or depend on that handler's cross-site sessionStorage. Vortex still enters via
+Vision's allowlisted `?continue=vortex` gateway; Venture shares Vision's login.
+The Firebase app name, API key, account UIDs, durable persistence and backend
+token verification remain the same. No project or account migration is needed.
+
+`web/google-login.js` uses the project's existing public Google web client ID:
+`150865729216-1f7654bomu7se549rkofjku2fmjg98hu.apps.googleusercontent.com`.
+It was read from the authorization URI returned by the public Firebase
+`accounts:createAuthUri` endpoint for this project, without signing in a user.
+No client secret belongs in this code.
+
+Before merging/publishing this change, verify in Google Cloud Console →
+Google Auth Platform → Clients → that exact web client → **Authorized JavaScript
+origins** that `https://jrdn-r.github.io` is present. Add it if absent, without
+a path or trailing slash. Retain the existing authorized redirect URIs for
+Drive/local-file connections. Firebase's Authorized domains list is a separate
+setting and does not establish that this OAuth JavaScript origin is configured.
+Console settings could not be inspected here; a live GIS request returned 403
+in the execution environment. Do not treat mocked browser tests as confirmation
+of the OAuth client's live origin configuration or an actual iPhone login.
+
+GIS loads only for signed-out hosted users, without opening a popup. A click
+starts the Google popup synchronously; if its script is still loading, the UI
+asks for another click after loading, preserving browser user activation.
+Duplicate requests, denial, closure, blocked popups and expired attempts recover
+without accepting late callbacks. Only `openid email profile` is requested;
+previous Drive grants are not included. The temporary Google token stays in
+memory and is exchanged for the ordinary persistent Firebase session.
+
+This change targets hosted account login. The separate local-file bridge and
+Google Drive reauthentication retain their existing Firebase popup mechanism;
+the bridge and unbundled imports now match the existing 12.8.0 SDK pin.
+
+Verification: `tests/google-login.test.cjs`, `tests/account-auth.test.cjs`,
+`tests/google-login-browser.py`, and `tests/vision-session-return.py` cover
+failure/retry and all three entry routes. Browser checks use the real bundled
+Firebase credential exchange and persistence with provider/backend HTTP fixtures.
+Google's GIS response is mocked. After configuring the origin and publishing,
+complete the physical-iPhone checks below using an actual Google account.
+
+References:
+- https://firebase.google.com/docs/auth/web/google-signin
+- https://developers.google.com/identity/oauth2/web/guides/use-token-model
+- https://developers.google.com/identity/oauth2/web/reference/js-reference
+- https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid
+
 ## October 2026 mitigation
 
 The Google popup/redirect handler showed "Unable to process request due to
