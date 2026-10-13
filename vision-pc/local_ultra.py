@@ -31,7 +31,7 @@ def normalize(value=None):
     result = {**DEFAULTS, **value}
     if (type(result['contextTokens']) is not int or result['contextTokens'] not in CONTEXTS or
             type(result['thinking']) is not bool or type(result['longResponses']) is not bool or
-            result['performance'] not in ('auto','cpu')):
+            result['performance'] not in ('auto','cpu','boost')):
         raise LocalFailure('Choose supported Ultra context, thinking, long-response and performance settings.')
     for key, (low, high) in RANGES.items():
         x = result[key]
@@ -82,6 +82,8 @@ def select_profile(settings, options=None):
     receipt = readiness(profile)
     if controls['contextTokens'] > receipt['maxContextTokens']:
         raise LocalFailure('This Ultra context has not been tested on the server. Run Tune with the larger context first.')
+    if controls['performance'] == 'boost' and 'boost' not in receipt['profiles']:
+        raise LocalFailure('Ultra Boost is not measured on this PC. Run Qwen-Ultra.ps1 -Action Tune -Boost before selecting it.')
     selected = receipt['profiles'][controls['performance']]
     profile.update(selected['profile'])
     profile.update(contextTokens=controls['contextTokens'], thinking=controls['thinking'],
@@ -94,6 +96,8 @@ def select_profile(settings, options=None):
 def check_ready(profile):
     from local_runtime import LocalFailure
     receipt = readiness(profile)
+    if profile['ultraPerformance'] == 'boost' and 'boost' not in receipt['profiles']:
+        raise LocalFailure('Ultra Boost was not tested on this PC. Retune before retrying.')
     selected = receipt['profiles'][profile['ultraPerformance']]
     if (receipt.get('id') != profile.get('ultraReceipt') or
             profile['contextTokens'] > receipt['maxContextTokens'] or
