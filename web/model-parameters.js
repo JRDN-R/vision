@@ -14,6 +14,6 @@ function venturePaintParameterDetails(){
  showDial('ventureEffort',!!p&&p.efforts.length>1);
  showDial('ventureVerbosity',!!p?.verbosity);
  let note=$('ventureParameterDetails');if(!note){note=document.createElement('p');note.id='ventureParameterDetails';note.className='venture-fine-print';$('ventureMaxTokens').after(note);}
- note.textContent=p?'Provider maximum: '+p.maxOutput.toLocaleString()+' output tokens. Context window: '+p.context.toLocaleString()+'. Vision uses a 512 minimum and 16,000 starting budget; these are app settings, not provider defaults. Reasoning shares the output budget.':
+ note.textContent=p?.localProfile?'Installed local profile: '+p.maxOutput.toLocaleString()+' output tokens, '+p.context.toLocaleString()+' context tokens. Thinking shares the output budget. Text and extracted evidence only.':p?'Provider maximum: '+p.maxOutput.toLocaleString()+' output tokens. Context window: '+p.context.toLocaleString()+'. Vision uses a 512 minimum and 16,000 starting budget; these are app settings, not provider defaults. Reasoning shares the output budget.':
  'Parameter capabilities have not been verified for this exact model ID. The slider shows a Vision safety cap, not a confirmed API maximum. Only model-default reasoning controls are shown.';
 }

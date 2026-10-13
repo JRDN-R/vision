@@ -5,6 +5,7 @@ No source site, media service, or paid provider is contacted by these tests.
 from __future__ import annotations
 
 import json
+from html import unescape
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,7 @@ import time
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
@@ -152,9 +154,16 @@ class VortexAccountTests(unittest.TestCase):
         self.assertEqual(label.group(1), 'v' + vortex.VORTEX_VERSION)
         self.assertIn('aria-label="Vortex web app version ' + vortex.VORTEX_VERSION + '"', html)
         for asset in ('app.js', 'sidebar-brand.css', 'vortex.css'):
-            self.assertIn('../web/vortex/' + asset + '?v=' + vortex.VORTEX_VERSION + '"', html)
+            # A frontend-only revision can bust caches independently of the
+            # server release, while the v parameter must still match the label.
+            reference = re.search(r'(?:src|href)="(\.\./web/vortex/' + re.escape(asset) + r'\?[^\"]+)"', html)
+            self.assertIsNotNone(reference, asset)
+            query = parse_qs(urlsplit(unescape(reference.group(1))).query)
+            self.assertEqual(query.get('v'), [vortex.VORTEX_VERSION], asset)
         app = (Path(__file__).resolve().parents[1] / 'web' / 'vortex' / 'app.js').read_text(encoding='utf-8')
-        self.assertIn("from './auth.js?v=" + vortex.VORTEX_VERSION + "';", app)
+        auth = re.search(r"from '(\./auth\.js\?[^']+)';", app)
+        self.assertIsNotNone(auth)
+        self.assertEqual(parse_qs(urlsplit(auth.group(1)).query).get('v'), [vortex.VORTEX_VERSION])
 
     def test_authenticated_version_reporting_does_not_enqueue_work(self):
         for route in ('/api/vortex/jobs?kind=download', '/api/vortex/capabilities'):
@@ -345,6 +354,19 @@ class VortexAccountTests(unittest.TestCase):
         self.service.recover()
         self.assertFalse(directory.exists())
 
+    def test_builtin_media_fallback_not_blocked_when_optional_tools_missing(self):
+        with patch('vortex.importlib.machinery.PathFinder.find_spec', return_value=None), \
+             patch('vortex.importlib.util.find_spec', return_value=None):
+            capability = self.service.capability()
+        self.assertTrue(capability['ready'])
+        self.assertEqual(capability['maxDuration'], 115200)
+        self.assertTrue(capability['engines']['page-media'])
+        self.assertFalse(capability['engines']['yt-dlp'])
+        with patch.object(self.service, 'capability', return_value=capability):
+            result = self.submit(input='https://cdn.example.com/download?id=123',
+                                 requestId='builtin-public')
+        self.assertEqual(result.status_code, 202, result.json)
+
     def test_unknown_progress_and_specialist_unavailability_are_truthful(self):
         job = self.accepted()
         self.assertIsNone(self.service.snapshot(self.service.row(job))['progress'])
@@ -382,7 +404,7 @@ class VortexAccountTests(unittest.TestCase):
         # Queue/HTTP contract only: the fixture mocks DNS and never runs a provider.
         cases = (
             ('https://x.com/moviehub222/status/2104675740168155503/video/1?s=46',
-             'https://x.com/moviehub222/status/2104675740168155503'),
+             'https://x.com/moviehub222/status/2104675740168155503/video/1'),
             ('https://youtu.be/abcdefghijk?t=30',
              'https://www.youtube.com/watch?v=abcdefghijk&t=30'),
         )
@@ -498,3 +520,4 @@ class ProcessTreeCancellationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

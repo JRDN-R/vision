@@ -17,7 +17,7 @@ import math
 import struct
 
 from PIL import Image
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 from werkzeug.serving import make_server, WSGIRequestHandler
 from werkzeug.wrappers import Response
 
@@ -45,7 +45,7 @@ def run():
     posts=[]
     def gemini(url,**kwargs):
         posts.append(kwargs['json'])
-        return GeminiReply('The dictation is plain text, with no subtitle timestamps.')
+        return GeminiReply('[00:00:00.000] The dictation is plain text, with no subtitle timestamps.')
     def application(environ,start_response):
         if environ.get('PATH_INFO')=='/':return Response(fixture,mimetype='text/html')(environ,start_response)
         return server.app(environ,start_response)
@@ -127,7 +127,9 @@ def run():
                 page.on('dialog',lambda dialog:dialog.accept())
                 page.locator('#ventureDeleteConversation').click();page.wait_for_function("!$('ventureRenameDialog').open")
                 assert test.client.get(test.path,headers=test.a).status_code==404
-                assert page.locator('[data-conversation="'+test.cid+'"]').count()==0
+                # The dialog closes before the asynchronous history refresh.
+                # Wait for the actual deletion result, not that earlier UI event.
+                expect(page.locator('[data-conversation="'+test.cid+'"]')).to_have_count(0)
                 assert page.evaluate('venture.current===null')
                 assert not errors,errors
                 context.close()

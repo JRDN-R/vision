@@ -70,6 +70,29 @@ class VentureTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/venture/conversations', headers=self.b, json={'id': self.cid}).status_code, 404)
         self.assertTrue((self.venture.root(self.cid)/'conversation.json').is_file())
 
+    def test_image_previews_are_owned_bounded_and_keep_originals(self):
+        from PIL import Image
+        picture=io.BytesIO();Image.new('RGB',(360,120),'green').save(picture,'PNG');raw=picture.getvalue()
+        opts=dict(clientRequestId='image-preview-test',message='Inspect this image',model='gpt-6-astra',runOptions={'codeInterpreter':True})
+        accepted=self.client.post('/api/projects/'+self.cid+'/runs',headers=self.a,
+            data={'options':json.dumps(opts),'attachments':(io.BytesIO(raw),'landscape.png')})
+        self.assertEqual(accepted.status_code,202,accepted.json)
+        url=self.path+'/uploads/'+accepted.json['runId']+'/0'
+        for size,dimensions in [('thumb',(320,320)),('full',(360,120))]:
+            response=self.client.get(url+'/preview/'+size,headers=self.a)
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.mimetype,'image/jpeg')
+            self.assertIn('no-store',response.headers['Cache-Control'])
+            with Image.open(io.BytesIO(response.data)) as image:self.assertEqual(image.size,dimensions)
+            self.assertEqual(self.client.get(url+'/preview/'+size,headers=self.b).status_code,404)
+        with self.client.get(url,headers=self.a) as original:self.assertEqual(original.data,raw)
+        self.assertEqual(self.client.get(url+'/preview/unbounded',headers=self.a).status_code,400)
+        row=self.service.row(accepted.json['runId']);path=Path(json.loads(row['inputs_json'])[0]['path'])
+        path.write_bytes(b'This is not a PNG')
+        self.assertEqual(self.client.get(url+'/preview/thumb',headers=self.a).status_code,415)
+        path.write_bytes(b'0'*(16*1024*1024+1))
+        self.assertEqual(self.client.get(url+'/preview/full',headers=self.a).status_code,413)
+
     def test_rename_revision_and_local_title_preservation(self):
         renamed = self.client.patch(self.path, headers=self.a, json={'title': 'My custom adventure', 'revision': 1})
         self.assertEqual(renamed.status_code, 200, renamed.json)
@@ -200,7 +223,7 @@ class VentureTests(unittest.TestCase):
         with patch('venture.requests.get',return_value=response) as transport:
             result=self.client.get('/api/venture/models',headers=self.a)
             self.assertEqual(result.status_code,200,result.json)
-            self.assertEqual([m['id'] for m in result.json['models']],['gpt-6-astra','gpt-6-luna','text-embedding-3-small'])
+            self.assertEqual([m['id'] for m in result.json['models']],['qwen3.8-local','gpt-6-astra','gpt-6-luna','text-embedding-3-small'])
             self.assertNotIn('sk-test-venture',json.dumps(result.json))
             self.client.get('/api/venture/models',headers=self.a)
             self.assertEqual(transport.call_count,1)

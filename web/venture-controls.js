@@ -95,8 +95,9 @@ async function ventureDictate() {
   ventureSetNotice('Microphone dictation needs the hosted HTTPS page and a browser that supports audio recording.');
   return;
  }
- const recording = {epoch: venture.epoch, selection: venture.selection, phase: 'permission',
+ const recording = {epoch: venture.epoch, selection: venture.selection, phase: 'permission',localOnly:typeof ventureIsLocal==='function'&&ventureIsLocal(),
   cancelled: false, chunks: [], size: 0, samples: new Uint8Array(1024).fill(128), requestId: ventureId()};
+ recording.provider=recording.localOnly?'whisper':'gemini';
  ventureRecording = recording;
  ventureSetNotice(''); ventureRecordingUI(recording, 'permission');
  try {
@@ -274,7 +275,9 @@ async function ventureDictationAttempt(recording) {
  if (result?.status !== 'completed' || typeof result.text !== 'string') {
   throw new Error(result?.error || (provider === 'whisper' ? 'PC Whisper did not return a transcript.' : 'Gemini did not return a transcript.'));
  }
- return result;
+ // Enforce plain text in the editor and in recovery downloads, including if
+ // a previously deployed PC server still returns timestamped Whisper output.
+ return {...result, text:plainDictationText(result.text)};
 }
 async function ventureUploadDictation(recording) {
  if (!ventureDictationCurrent(recording) || recording.uploading || recording.sequenceStarted) return;
@@ -291,7 +294,9 @@ async function ventureUploadDictation(recording) {
  try {
   for (let attempt = 0; attempt < 4; attempt++) {
    if (!ventureDictationCurrent(recording)) return;
-   recording.provider = attempt === 0 ? 'gemini' : 'whisper';
+   recording.localOnly ??= typeof ventureIsLocal==='function'&&ventureIsLocal();
+   recording.provider = !recording.localOnly&&attempt === 0 ? 'gemini' : 'whisper';
+   recording.form.set('localOnly',String(recording.localOnly));
    recording.localAttempt = attempt;
    const delay = attempt > 0 ? VENTURE_WHISPER_RETRY_MS[attempt-1] : 0;
    if (delay) {
@@ -313,7 +318,7 @@ async function ventureUploadDictation(recording) {
     recording.lastError = ventureError(error);
    }
   }
-  ventureDictationShowRecovery(recording, 'Transcription failed. Gemini and all 3 PC Whisper attempts were unsuccessful. Save the audio clip below to transcribe it elsewhere. Keep this tab open until it is saved.');
+  ventureDictationShowRecovery(recording, recording.localOnly?'Local Whisper transcription failed. Save your recording and retry when FUPCJ is ready. No cloud transcription was used.':'Transcription failed. Gemini and all 3 PC Whisper attempts were unsuccessful. Save the audio clip below to transcribe it elsewhere. Keep this tab open until it is saved.');
  } finally { recording.uploading = false; }
 }
 function ventureResetAvatar() {

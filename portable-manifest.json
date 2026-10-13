@@ -1,11 +1,11 @@
 {
-  "version": "1.0.3.4",
-  "sha256": "8d27f55b55fe606775b0cbae214e7c646ec42487e0269429c109021f80d8efd6",
-  "size": 18286551,
+  "version": "1.0.5.5",
+  "sha256": "43a9a20c568807abfb1789d8606cbd9d966ed442330f06731389d10c1c363b8a",
+  "size": 20034680,
   "file": "Vision.html",
-  "sourceCommit": "bc204792c79d8078ec9c91bad8f444db6b7c92c8",
-  "builtAt": "2026-10-09T17:58:21.915313+00:00",
-  "runId": "37969991564",
-  "portableArtifactId": "11634677937",
-  "sourceArtifactId": "11634757929"
+  "sourceCommit": "e20b3884a6ee0e8578b79e543fa8acd95783f045",
+  "builtAt": "2026-10-13T10:17:41.886847+00:00",
+  "runId": "38382289607",
+  "portableArtifactId": "11804026450",
+  "sourceArtifactId": "11803349888"
 }

@@ -18,6 +18,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import zlib
 
 from context_embeddings import LocalEmbeddings
 from context_sources import PARSER_VERSION, TEXT, ExtractionBudget, ExtractionBudgetExceeded, decode_data, extract_source, redact, text_units
@@ -26,6 +27,26 @@ SCHEMA = 'vision-context-v1'
 MAX_PROJECT_BYTES = 64 * 1024 * 1024
 MAX_CHUNKS = 40_000
 MAX_BUDGET = 2_000_000
+
+
+def encode_cache(result):
+    """Lossless compression of repeated words/records; never summarize evidence."""
+    raw = canonical(result).encode('utf-8')
+    compressed = zlib.compress(raw, 6)
+    return b'VCZ1' + len(raw).to_bytes(8, 'big') + compressed if len(compressed)+12 < len(raw) else raw.decode('utf-8')
+
+
+def decode_cache(value, budget):
+    if isinstance(value, bytes) and value.startswith(b'VCZ1'):
+        expected = int.from_bytes(value[4:12], 'big')
+        budget.reserve(expected)
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(value[12:], expected+1)
+        if len(raw) != expected or not decoder.eof or decoder.unused_data:
+            raise ContextError('A compressed extraction cache failed validation; rebuild this index.')
+        return json.loads(raw)
+    budget.reserve(len(value.encode('utf-8')))
+    return json.loads(value)
 
 
 class ContextError(ValueError):
@@ -77,7 +98,7 @@ class ContextEngine:
                 if path.is_file() and path.suffix in ('.json','.txt','.safetensors') and path.name!='vision-context-model.json' and '.cache' not in path.parts:
                     stat = path.stat()
                     artifacts.append((str(path.relative_to(model)),stat.st_size,stat.st_mtime_ns))
-        return sha(canonical(dict(parser=PARSER_VERSION,engine=SCHEMA,settings=self.settings,modelArtifacts=artifacts)))
+        return sha(canonical(dict(parser=PARSER_VERSION,engine=SCHEMA,visualSourceMetadata=1,settings=self.settings,modelArtifacts=artifacts)))
 
     @contextmanager
     def db(self):
@@ -141,6 +162,8 @@ class ContextEngine:
                 db.execute('ALTER TABLE context_jobs ADD COLUMN snapshot_format INTEGER NOT NULL DEFAULT 0')
             if 'lease' not in {row['name'] for row in db.execute('PRAGMA table_info(context_jobs)')}:
                 db.execute('ALTER TABLE context_jobs ADD COLUMN lease TEXT')
+            if 'progress_json' not in {row['name'] for row in db.execute('PRAGMA table_info(context_jobs)')}:
+                db.execute('ALTER TABLE context_jobs ADD COLUMN progress_json TEXT')
             # A single FUPCJ application process owns this index. Interrupted
             # work was never published and can be safely replayed from snapshot.
             db.execute("UPDATE context_jobs SET status='queued',due=?,error=NULL,lease=NULL WHERE status='processing'", (time.time(),))
@@ -275,7 +298,17 @@ class ContextEngine:
                     ready=generation is not None and not stale,status=state,jobStatus=job['status'] if job else None,stale=stale,
                     availableRevision=head['revision'] if head else None,
                     warning=job['error'] if job else None,manifest=manifest,
-                    semantic=self.embeddings.capability())
+                    semantic=self.embeddings.capability(),
+                    progress=json.loads(job['progress_json'] or 'null') if job else None,
+                    indexingRequiresAnswerModel=False)
+
+    def _progress(self, job, stage, completed=None, total=None):
+        progress = dict(stage=stage, completed=completed, total=total,
+                        kind='determinate' if total else 'indeterminate',
+                        estimatedRemainingSeconds=None, updatedAt=time.time())
+        with self.db() as db:
+            db.execute('UPDATE context_jobs SET progress_json=?,updated=? WHERE owner=? AND project=? AND revision=? AND lease=?',
+                       (canonical(progress),time.time(),job['owner'],job['project'],job['revision'],job['lease']))
 
     def _blob(self, owner, project, raw):
         directory = self.root/'sources'/sha(owner+'\0'+project)
@@ -404,6 +437,7 @@ class ContextEngine:
                              kind='source',mime=str(attachment.get('mime') or 'application/octet-stream')[:120],
                              role=redact(str(attachment.get('role') or '')),timestamp=redact(str(attachment['timestamp'])) if attachment.get('timestamp') is not None else None,
                              transcriptOf=attachment.get('transcriptOf'),videoOf=attachment.get('videoOf'),
+                             ownedAssetId=attachment.get('ownedAssetId'),
                              sourceStatus=attachment.get('status'),metadataOnly=bool(attachment.get('metadataOnly')))
                 try:
                     if attachment.get('data'):
@@ -462,6 +496,7 @@ class ContextEngine:
         owner,project,revision = job['owner'],job['project'],job['revision']
         started, cpu_started = time.monotonic(),time.process_time()
         try:
+            self._progress(job,'Reading saved sources')
             snapshot = self._load_snapshot(owner,project,job['snapshot'],trusted=job.get('snapshot_format')==1)
             sources,nodes,edges,warnings = self._collect(owner,project,snapshot)
             records, chunks, reused, extracted, original_bytes = [],[],0,0,0
@@ -469,6 +504,7 @@ class ContextEngine:
             extraction_settings = {**self.settings,'_stopEvent':self.stop,'_projectTextBudget':text_budget}
             configuration = sha(canonical(self.settings.get('documentSettings') or {}))
             for ordinal, source in enumerate(sources):
+                self._progress(job,'Extracting sources',ordinal,len(sources))
                 if self.stop.is_set():
                     raise InterruptedError('Context indexing interrupted; previous index retained.')
                 sid = sha(source['id'])[:32]
@@ -480,14 +516,9 @@ class ContextEngine:
                 original_bytes += len(raw) if raw else 0
                 cache_key = sha(digest+'\0'+source['name']+'\0'+PARSER_VERSION+'\0'+configuration+'\0'+source['kind'])
                 with self.db() as db:
-                    cached_size = db.execute('SELECT length(CAST(result AS BLOB)) AS size FROM context_cache WHERE owner=? AND project=? AND key=?',(owner,project,cache_key)).fetchone()
-                    if cached_size:
-                        text_budget.reserve(cached_size['size'])
-                        cached = db.execute('SELECT result FROM context_cache WHERE owner=? AND project=? AND key=?',(owner,project,cache_key)).fetchone()
-                    else:
-                        cached = None
+                    cached = db.execute('SELECT result FROM context_cache WHERE owner=? AND project=? AND key=?',(owner,project,cache_key)).fetchone()
                 if cached is not None:
-                    result = json.loads(cached['result'])
+                    result = decode_cache(cached['result'],text_budget)
                     reused += 1
                 else:
                     if source.get('missing'):
@@ -498,7 +529,7 @@ class ContextEngine:
                     else:
                         result = extract_source(raw,source['name'],extraction_settings)
                     with self.db() as db:
-                        db.execute('INSERT OR REPLACE INTO context_cache VALUES(?,?,?,?,?)',(owner,project,cache_key,canonical(result),time.time()))
+                        db.execute('INSERT OR REPLACE INTO context_cache VALUES(?,?,?,?,?)',(owner,project,cache_key,encode_cache(result),time.time()))
                     extracted += 1
                 metadata = {k:v for k,v in source.items() if k not in ('text','raw','id')}
                 metadata.update(complete=result['complete'],warnings=result['warnings'],visual=result.get('visual',False),unitCount=len(result['units']),secretsRedacted=result.get('secretsRedacted',False))
@@ -522,6 +553,7 @@ class ContextEngine:
                     if len(chunks)>MAX_CHUNKS:
                         raise ContextError('Project exceeds the 40,000-unit index bound; previous index retained.')
             # Load lazily only on a background indexing/retrieval operation.
+            self._progress(job,'Preparing local search')
             self.embeddings.encode([])
             model = self.embeddings.identity
             if self.embeddings.model is not None:
@@ -535,6 +567,7 @@ class ContextEngine:
                     else:
                         missing.append(chunk)
                 for start in range(0,len(missing),16):
+                    self._progress(job,'Embedding evidence',start,len(missing))
                     if self.stop.is_set():
                         raise InterruptedError()
                     batch = missing[start:start+16]
@@ -547,6 +580,7 @@ class ContextEngine:
                             if vector:
                                 db.execute('INSERT OR REPLACE INTO context_vectors VALUES(?,?,?,?,?)',(owner,project,chunk['hash'],model,vector))
                     self.stop.wait(.01)
+            self._progress(job,'Saving searchable index')
             manifest = dict(schema=SCHEMA,projectId=project,revision=revision,projectHash=job['digest'],pipelineIdentity=self._pipeline_identity(),
                             title=redact(str(snapshot.get('title') or 'Untitled project'))[:200],
                             nodeCount=len(nodes),sourceCount=len(records),unitCount=len(chunks),nodes=nodes,edges=edges,
@@ -576,6 +610,8 @@ class ContextEngine:
                 db.execute('INSERT OR REPLACE INTO context_generations VALUES(?,?,?,?,?,?)',(owner,project,revision,job['digest'],canonical(manifest),time.time()))
                 db.execute('INSERT INTO context_heads VALUES(?,?,?) ON CONFLICT(owner,project) DO UPDATE SET revision=max(revision,excluded.revision)',(owner,project,revision))
                 db.execute("UPDATE context_jobs SET status='ready',error=NULL,lease=NULL,updated=? WHERE owner=? AND project=? AND revision=?",(time.time(),owner,project,revision))
+                db.execute('UPDATE context_jobs SET progress_json=? WHERE owner=? AND project=? AND revision=?',
+                           (canonical(dict(stage='Ready',kind='determinate',completed=1,total=1,updatedAt=time.time())),owner,project,revision))
         except Exception as error:
             # Error messages do not echo uploaded content, credentials or paths.
             message = str(error) if isinstance(error,(ContextError,ExtractionBudgetExceeded)) else 'Local context indexing failed ('+type(error).__name__+'); prior published revisions and originals are retained.'
@@ -842,6 +878,26 @@ class ContextEngine:
 
     def source(self, owner, project, revision, source_id, budget=160000, offset=0):
         return self.prepare(owner,project,revision,'Retrieve complete original source evidence',budget,source_ids=[source_id],offset=offset)
+
+    def visual_sources(self, owner, project, revision):
+        """Internal inventory; callers must revalidate the pinned board binding.
+
+        No path or arbitrary URL from a board becomes filesystem authority.
+        Original bytes are resolved separately through original()/OwnedAssets.
+        """
+        self._identity(owner, project, revision)
+        with self.db() as db:
+            rows = db.execute('SELECT source,name,mime,metadata FROM context_sources '
+                              'WHERE owner=? AND project=? AND revision=? ORDER BY ordinal',
+                              (owner, project, revision)).fetchall()
+        result = []
+        for row in rows:
+            meta = json.loads(row['metadata'])
+            if (meta.get('visual') or str(row['mime']).startswith(('image/', 'video/')) or meta.get('ownedAssetId')):
+                result.append(dict(sourceId=row['source'], name=row['name'], mime=row['mime'],
+                                   timestamp=meta.get('timestamp'), videoOf=meta.get('videoOf'),
+                                   ownedAssetId=meta.get('ownedAssetId')))
+        return result
 
     def node(self, owner, project, revision, node_id, budget=48000):
         return self.prepare(owner,project,revision,'Retrieve complete connected node evidence',budget,node_ids=[node_id])

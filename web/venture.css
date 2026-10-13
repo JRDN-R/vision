@@ -78,3 +78,94 @@
  .venture-root .venture-settings .venture-feature-grid input{width:16px;height:16px;min-width:16px}
  .venture-root .venture-settings .venture-coming-soon,.venture-root .venture-settings #ventureParameterDetails{display:none!important}
 }
+/* Keep sub-percent changes visible without jumping between whole values. */
+.venture-funding-readout{display:flex;align-items:baseline;margin-top:9px;color:#e3f3d5;font-size:14px;font-variant-numeric:tabular-nums}
+.venture-funding-readout strong{font-weight:550}
+.venture-battery>div{transition:width .25s linear,background .25s}
+.venture-battery.partial{border-style:dashed}
+@media(prefers-reduced-motion:reduce){.venture-battery>div{transition:none}}
+/* Preserve the static fallback until both Qwen animation clips are ready. */
+.model-qwen .venture-model-symbol{background:#fff;filter:drop-shadow(0 0 3px #182bff55)}
+venture-qwen-symbol{position:relative}
+.model-qwen venture-qwen-symbol[data-ready]{background:transparent;mask:none;-webkit-mask:none}
+.venture-qwen-frame{position:absolute;inset:0;visibility:hidden}
+venture-qwen-symbol[data-ready] .venture-qwen-frame{visibility:visible}
+.venture-qwen-frame[hidden]{display:none}
+.model-qwen .venture-qwen-frame svg{display:block;width:100%;height:100%}
+.model-qwen .venture-model-name{
+ color:#487dff;
+ -webkit-text-stroke:.3px #0008;paint-order:stroke fill;
+ text-shadow:0 0 6px rgba(110,141,255,.5),0 0 11px rgba(24,43,255,.24);
+ animation:qwen-name-halo 7.2s ease-in-out infinite;
+}
+.model-qwen .venture-model-local{color:#c4892c;font-weight:400;font-style:italic}
+@keyframes qwen-name-halo{
+ 0%,100%{text-shadow:-2px 0 5px rgba(110,141,255,.6),0 0 11px rgba(24,43,255,.22)}
+ 25%{text-shadow:0 -2px 5px rgba(110,141,255,.68),0 0 11px rgba(24,43,255,.24)}
+ 50%{text-shadow:2px 0 5px rgba(110,141,255,.6),0 0 11px rgba(24,43,255,.22)}
+ 75%{text-shadow:0 2px 5px rgba(110,141,255,.68),0 0 11px rgba(24,43,255,.24)}
+}
+.venture-local-progress{display:grid;gap:8px;margin:12px 0;padding:12px;border:1px solid #5367a755;border-radius:12px;font-size:.85rem}
+.venture-local-progress progress{width:100%;height:5px;accent-color:#6677ff}
+.venture-local-progress small{opacity:.75}
+.venture-local-notice{max-width:min(480px,calc(100vw - 32px));padding:24px;border:1px solid #7887b455;border-radius:20px;background:#151923;color:#f4f5ff}
+.venture-local-notice p{line-height:1.5}
+.venture-local-notice::backdrop{background:#0009}
+@media(prefers-reduced-motion:reduce){.model-qwen .venture-model-name{animation:none;text-shadow:0 0 7px #6988ff55}}
+
+.venture-model-title { display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0; }
+.venture-model-subtitle { font-size:10px;line-height:1.2;font-weight:400;opacity:.72;white-space:normal; }
+.venture-local-image { max-width:min(92vw,1100px);max-height:92vh;padding:16px;border:1px solid #555;border-radius:12px;background:#15171b;color:#eee; }
+.venture-local-image img { display:block;max-width:100%;max-height:72vh;object-fit:contain;margin:12px auto; }
+.venture-activity.pending { flex-wrap:wrap;justify-content:flex-start; }
+.venture-activity.pending>span { flex-basis:100%;white-space:normal;overflow:visible; }
+.venture-image-row{display:flex;gap:10px;width:max-content;max-width:88%;margin:0 0 12px auto;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;padding:3px 1px 8px;scrollbar-width:thin;scrollbar-color:#63794b transparent}
+.venture-root .venture-photo{position:relative;flex:0 0 112px;width:112px;height:112px;border:1px solid #5e714c44;border-radius:13px;overflow:hidden;scroll-snap-align:end;padding:0;background:#293123;cursor:zoom-in}
+.venture-photo img{display:block;width:100%;height:100%;object-fit:cover;color:transparent}
+.venture-photo span{position:absolute;inset:auto 6px 6px;overflow:hidden;text-overflow:ellipsis;font-size:10px;white-space:nowrap;color:#b9c8ad}
+.venture-photo.ready span{display:none}.venture-photo:hover{border-color:#bfdc92}.venture-photo:focus-visible{outline:2px solid #c4ed9b;outline-offset:2px}
+dialog.venture-image-viewer{position:fixed;inset:0;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#fff;overflow:hidden;box-shadow:none}
+.venture-image-viewer::backdrop{background:#050806bd;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.venture-image-glow{position:absolute;inset:8%;background-position:center;background-size:cover;filter:blur(65px);opacity:.16;pointer-events:none}
+.venture-image-stage{position:absolute;inset:64px 0 110px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.venture-image-stage img{display:block;max-width:calc(100% - 100px);max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:16px;box-shadow:0 20px 100px #0005;touch-action:none;user-select:none;transform-origin:center}
+.venture-image-stage img:not([src]){visibility:hidden}
+.venture-image-toolbar{position:absolute;top:max(14px,env(safe-area-inset-top));right:max(20px,env(safe-area-inset-right));z-index:2}
+.venture-image-viewer button{display:inline-flex;align-items:center;justify-content:center;border:1px solid #ffffff20;border-radius:50%;background:#171d18aa;color:#dfe7da;width:42px;height:42px;padding:10px;cursor:pointer;backdrop-filter:blur(6px)}
+.venture-image-viewer button:hover{background:#35432bd9;color:#fff}.venture-image-viewer button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.venture-image-controls{position:absolute;bottom:max(45px,calc(env(safe-area-inset-bottom) + 35px));left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:2}
+.venture-image-controls [data-image-fit]{width:64px;border-radius:24px;font-size:12px}.venture-image-caption{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));left:20px;right:20px;margin:0;text-align:center;font-size:12px;color:#c0cbb8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
+@media(max-width:760px){.venture-image-row{max-width:92%;gap:8px}.venture-root .venture-photo{flex-basis:88px;width:88px;height:88px;border-radius:11px}.venture-image-stage{inset:64px 0 115px}.venture-image-stage img{max-width:calc(100% - 36px);border-radius:13px}}
+/* Compact activity: one observed stage, a continuous supplied Lottie and an honest estimate. */
+.venture-loading{max-width:360px;margin:18px 0 20px;display:grid;gap:9px}
+.venture-loading-heading{display:flex;align-items:center;gap:10px;min-height:30px}
+venture-loading-symbol{position:relative;display:block;flex:none;width:28px;height:28px}
+venture-loading-symbol:not([data-ready])::before{content:"";position:absolute;inset:4px;border:2px solid #8d9abb33;border-top-color:#95acff;border-radius:50%;animation:venture-spin 1s linear infinite}
+venture-loading-symbol[data-ready] .venture-qwen-frame{visibility:visible}
+venture-loading-symbol svg{display:block;width:100%;height:100%}
+.venture-loading-label{display:block;position:relative;height:22px;flex:1;overflow:hidden;color:#b8c4de;font-size:13px;line-height:22px}
+.venture-loading-label>span>span{position:absolute;inset:0;animation:venture-status-roll 4.8s ease-in-out infinite;white-space:nowrap}
+.venture-loading-label>span>span:nth-child(2){animation-delay:-2.4s}
+.venture-progress-track{height:3px;background:#8299bd20;overflow:hidden;border-radius:4px}
+.venture-progress-track>span{display:block;width:32%;height:100%;border-radius:inherit;background:linear-gradient(90deg,transparent,#93abef,transparent);animation:venture-sweep 1.8s ease-in-out infinite}
+.venture-progress-track.is-estimated>span{animation:none;background:linear-gradient(90deg,#5878cb,#b8caff);transition:width 1.2s linear}
+.venture-progress-estimate{font-size:11px;line-height:1.5;color:#8e9aad;min-height:0}
+.venture-progress-estimate:empty{display:none}
+.venture-local-progress.is-complete{padding:10px 14px;gap:5px;border-color:#60764933;background:#212a191f}
+.venture-response-text:empty{display:none}
+.venture-response-text .venture-reveal-word{white-space:pre-wrap}
+@keyframes venture-spin{to{transform:rotate(360deg)}}
+@keyframes venture-sweep{from{transform:translateX(-110%)}to{transform:translateX(415%)}}
+@keyframes venture-status-roll{0%{opacity:0;transform:translateY(8px)}8%,40%{opacity:1;transform:translateY(0)}49%,100%{opacity:0;transform:translateY(-8px)}}
+@media(prefers-reduced-motion:reduce){
+ .venture-loading-label>span>span,.venture-progress-track>span,venture-loading-symbol::before,.venture-response-text.is-revealing .venture-reveal-word{animation:none}
+ .venture-loading-label>span>span:nth-child(2){display:none}
+ .venture-progress-track>span{width:100%;opacity:.5}
+ .venture-progress-track.is-estimated>span{transition:none;opacity:1}
+}
+.venture-response-meta .venture-model-subtitle{display:inline-flex;align-items:center;gap:3px}
+.venture-root .venture-response-info{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-width:28px;height:24px;margin:-4px 0;padding:3px;border:0;border-radius:6px;background:transparent;color:#9aa994;opacity:.72;cursor:pointer}
+.venture-root .venture-response-info:hover,.venture-root .venture-response-info[aria-expanded=true]{opacity:1;color:#d1e6ba;background:#afc89212}
+.venture-response-info svg{width:24px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.venture-response-popover{position:fixed;inset:auto;margin:0;width:275px;max-width:calc(100vw - 24px);padding:13px 16px;border:1px solid #758e5455;border-radius:13px;background:#1b2419f5;color:#dce8d2;box-shadow:0 12px 38px #0005;z-index:10000;backdrop-filter:blur(14px);font:12px/1.6 system-ui,sans-serif}
+.venture-response-popover::backdrop{background:transparent}.venture-response-popover .venture-local-progress{border:0;background:transparent;padding:0;margin:0}.venture-response-popover .venture-progress-heading strong{font-size:11px}.venture-response-popover small{font-size:11px}

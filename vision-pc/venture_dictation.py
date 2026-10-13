@@ -36,18 +36,36 @@ FORMATS = {'audio/webm': 'matroska,webm', 'audio/mp4': 'mov', 'audio/m4a': 'mov'
 
 
 def plain_transcript(data: dict) -> str:
-    """Extract text only, never annotations, SRT timestamps or reasoning."""
+    """Return spoken words, never Whisper markers or SRT/WebVTT cue metadata.
+
+    Preserve ordinary spoken times (such as "meet at 10:30") by removing
+    timestamps only when they have a recognized subtitle/ASR line format.
+    """
     from gemini_processing import response_content
     text = data.get('output_text')
     if not isinstance(text, str):
         text = ''.join(c['text'] for c in response_content(data)
                        if c.get('type') == 'text' and isinstance(c.get('text'), str))
-    # Defensive cleanup if a provider unexpectedly wraps a transcript as subtitles.
-    if re.search(r'\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->', text):
-        text = re.sub(r'(?m)^\s*\d+\s*\n(?=\s*\d{1,2}:\d{2}:\d{2}[,.])', '', text)
-        text = re.sub(r'(?m)^.*\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->.*$', '', text)
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    clock = r'(?:\d{1,4}:)?\d{2}:\d{2}(?:[.,]\d{1,3})?'
+    cue = re.compile(r'^\s*' + clock + r'\s*-->\s*' + clock + r'(?:\s+.*)?$')
+    prefix = re.compile(r'^\s*\[(?:Section start\s+)?' + clock + r'\]\s*')
+    timed = any(cue.fullmatch(line) or prefix.match(line) for line in lines)
+    if timed:
+        words = []
+        for index, line in enumerate(lines):
+            stripped = line.strip().lstrip('\ufeff')
+            if cue.fullmatch(stripped):
+                continue
+            if stripped.isdecimal() and index + 1 < len(lines) and cue.fullmatch(lines[index + 1]):
+                continue
+            if stripped == 'WEBVTT' or re.fullmatch(r'(?:Kind|Language):\s*.*', stripped):
+                continue
+            clean = prefix.sub('', line).strip()
+            if clean:
+                words.append(clean)
+        text = ' '.join(words)
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text).strip()[:50000]
-
 
 class Dictation:
     def __init__(self, venture):
@@ -209,8 +227,7 @@ class Dictation:
             text = data.get('text')
             if not isinstance(text, str):
                 raise ValueError('invalid-local-text')
-            # Remove only the worker's line-prefix timestamps, not spoken dates.
-            text = re.sub(r'^\[\d{2,}:\d{2}:\d{2}\]\s*', '', text, flags=re.M)
+            # Shared text-only formatter also handles Whisper's millisecond stamps.
             return plain_transcript({'output_text': text})
         except (OSError, ValueError, subprocess.SubprocessError):
             raise self.Error('PC Whisper could not complete this recording. Check the installed local transcription service.', 502, 'whisper_worker') from None
@@ -233,9 +250,13 @@ class Dictation:
             if request.method == 'GET':
                 return jsonify(self.capability())
             request.max_content_length = MAX_BYTES + 65536
-            if set(request.form) - {'requestId', 'provider'} or 'requestId' not in request.form or any(len(request.form.getlist(k)) != 1 for k in request.form) or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
+            if set(request.form) - {'requestId', 'provider', 'localOnly'} or 'requestId' not in request.form or any(len(request.form.getlist(k)) != 1 for k in request.form) or set(request.files) != {'audio'} or len(request.files.getlist('audio')) != 1:
                 raise self.Error('Dictation accepts one microphone recording, its request ID and an optional provider only.')
             provider = request.form.get('provider', 'gemini')
+            if request.form.get('localOnly') == 'true' and provider != 'whisper':
+                raise self.Error('Local mode only permits PC Whisper dictation.')
+            if self.v.sessions.local.preferences.get(uid)['settings']['model'] == 'qwen3.8-local' and provider != 'whisper':
+                raise self.Error('Qwen local mode uses PC Whisper. Select a cloud model explicitly before cloud dictation.')
             if provider not in ('gemini', 'whisper'):
                 raise self.Error('Choose Gemini or PC Whisper for dictation.')
             client_id = request.form['requestId']

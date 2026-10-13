@@ -176,8 +176,18 @@ class VentureFeatureTests(unittest.TestCase):
     def test_srt_is_converted_to_text_and_draft_receipts_expire(self):
         self.enable_dictation()
         srt='1\n00:00:00,000 --> 00:00:01,000\nHello there.\n\n2\n00:00:01,000 --> 00:00:02,000\nCheck the wing.'
-        self.assertNotIn('-->',plain_transcript({'output_text':srt}))
-        self.assertNotIn('\n2\n',plain_transcript({'output_text':srt}))
+        self.assertEqual(plain_transcript({'output_text':srt}), 'Hello there. Check the wing.')
+        # Whisper emits millisecond offsets inside brackets; this is never
+        # appropriate for a chat composer or saved dictation text.
+        self.assertEqual(
+            plain_transcript({'output_text':'[00:00:01.250] Check the wing.\n[00:00:02.500] Meet at 10:30.'}),
+            'Check the wing. Meet at 10:30.')
+        self.assertEqual(
+            plain_transcript({'output_text':'WEBVTT\n\n00:01.000 --> 00:02.000\nAlpha.\n\n00:02.000 --> 00:03.000\nBeta.'}),
+            'Alpha. Beta.')
+        self.assertEqual(
+            plain_transcript({'output_text':'Keep this paragraph.\nThen the next paragraph.'}),
+            'Keep this paragraph.\nThen the next paragraph.')
         with patch('venture_dictation.requests.post',return_value=GeminiReply(srt)):
             self.assertEqual(self.dictate().json['status'],'completed')
         with server.connect_db() as db:db.execute('UPDATE venture_dictation_requests SET updated_at=?',(time.time()-1000,))
@@ -186,6 +196,30 @@ class VentureFeatureTests(unittest.TestCase):
             row=db.execute('SELECT * FROM venture_dictation_requests').fetchone()
             self.assertEqual(row['text'],'');self.assertEqual(row['status'],'expired')
         self.assertEqual(self.client.get(self.path,headers=self.a).json['runs'],[])
+
+    def test_local_whisper_dictation_returns_plain_text_not_segment_markers(self):
+        """Exercise the local worker receipt without loading a model or using a network."""
+        local=Mock()
+        local.capability.return_value={'ready': True}
+        local._worker_lock.acquire.return_value=True
+        local.settings={'modelPath':'test-model','cpuThreads':2}
+        with tempfile.TemporaryDirectory() as name:
+            directory=Path(name)
+            worker=Mock(returncode=0)
+            worker.poll.return_value=0
+            worker.wait.return_value=0
+            def completed_worker(*args,**kwargs):
+                (directory/'result.json').write_text(json.dumps({'text':
+                    '[00:00:00.000] First line.\n[00:00:02.125] Second line at 12:45.'}))
+                return worker
+            with patch.object(self.venture,'transcription',local), \
+                 patch('venture_dictation.subprocess.Popen',side_effect=completed_worker) as launched:
+                result=self.venture.dictation.transcribe_whisper(wav_bytes(),2.5,directory)
+            self.assertEqual(result,'First line. Second line at 12:45.')
+            self.assertTrue(launched.called)
+            self.assertEqual(json.loads((directory/'manifest.json').read_text())['sections'][0]['format'],'wav')
+            local._worker_lock.release.assert_called_once()
+            worker.stdin.close.assert_called_once()
 
     def test_invalid_audio_is_not_sent_to_gemini_and_temp_files_removed(self):
         self.enable_dictation()

@@ -63,7 +63,7 @@ try {
     # Resolve main once so all downloads come from one immutable revision.
     $Commit = (Invoke-RestMethod -Uri "https://api.github.com/repos/JRDN-R/vision/commits/$SourceRef" -Headers @{'User-Agent'='Vision-Activity-Setup'} -TimeoutSec 30).sha
     if ($Commit -notmatch '^[0-9a-f]{40}$') { throw 'GitHub did not return a valid source revision.' }
-    foreach ($File in @('activity_dashboard.py','setup_activity.py')) {
+    foreach ($File in @('activity_dashboard.py','account_administration.py','setup_activity.py')) {
         $Destination = Join-Path $Stage $File
         Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/JRDN-R/vision/$Commit/vision-pc/$File" -OutFile $Destination -TimeoutSec 60
         if ((Get-Item -LiteralPath $Destination).Length -eq 0) { throw 'A required download was empty.' }

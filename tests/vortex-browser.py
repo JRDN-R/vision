@@ -30,13 +30,14 @@ FIREBASE = r'''
  const auth={currentUser:identity(localStorage.getItem('__fixtureUID')),authStateReady:async()=>{}};
  window.__switchUser=uid=>{auth.currentUser=identity(uid);if(uid)localStorage.setItem('__fixtureUID',uid);else localStorage.removeItem('__fixtureUID');listeners.forEach(fn=>fn(auth.currentUser));};
  window.__firebaseCalls=[];
+ window.google={accounts:{oauth2:{initTokenClient:options=>({requestAccessToken(){window.__googleRequests=(window.__googleRequests||0)+1;options.callback({access_token:'fixture-google-token'});}})}}};
  const login=async()=>{if(window.__loginError)throw {code:window.__loginError};window.__switchUser('alice');return {user:auth.currentUser};};
  window.addEventListener('storage',event=>{if(event.key==='__fixtureUID'){auth.currentUser=identity(event.newValue);listeners.forEach(fn=>fn(auth.currentUser));}});
  window.VisionFirebaseSDK={app:{getApps:()=>[],initializeApp:(config,name)=>{__firebaseCalls.push({config,name});return {name};}},auth:{
    getAuth:()=>{document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},initializeAuth:(_,options)=>{window.__authInitOptions=options;document.documentElement.dataset.fixtureAuthInitialized='true';return auth;},browserPopupRedirectResolver:'POPUP',useDeviceLanguage:()=>{},onAuthStateChanged:(_,fn)=>{listeners.push(fn);return ()=>{};},
-   setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},browserLocalPersistence:'LOCAL',
-   GoogleAuthProvider:class{setCustomParameters(value){window.__providerOptions=value;localStorage.setItem('__fixtureProvider',JSON.stringify(value));}},
-   signInWithPopup:login,signInWithEmailAndPassword:login,createUserWithEmailAndPassword:login,
+   setPersistence:async(_,value)=>{window.__persistence=value;localStorage.setItem('__fixturePersistence',value);},indexedDBLocalPersistence:'INDEXED',browserLocalPersistence:'LOCAL',
+   GoogleAuthProvider:class{static credential(idToken,accessToken){return {idToken,accessToken};}setCustomParameters(value){window.__providerOptions=value;localStorage.setItem('__fixtureProvider',JSON.stringify(value));}},
+   signInWithPopup:login,signInWithCredential:login,signInWithEmailAndPassword:login,createUserWithEmailAndPassword:login,
    sendPasswordResetEmail:async()=>{},signOut:async()=>window.__switchUser(null)
  }};
 })();
@@ -484,7 +485,8 @@ def verify_login_gateway(browser):
         sign_in(page, method)
         assert page.locator('#authGate').is_hidden()
         assert not api.vision_calls, 'Vortex login opened Vision projects or preferences'
-        assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
+        assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+        assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
 
         # Returning to Vortex with a saved identity needs no login or gateway.
         visits = []
@@ -589,20 +591,21 @@ def run():
             sign_in(page)
             page.locator('#application').wait_for(state='visible')
             page.locator('#connectionStatus').get_by_text('Connected to FUPCJ Server').wait_for()
-            assert page.evaluate("localStorage.getItem('__fixturePersistence')") == 'LOCAL'
-            assert page.evaluate("JSON.parse(localStorage.getItem('__fixtureProvider')).prompt") == 'select_account'
+            assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
+            assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
+            assert page.evaluate("localStorage.getItem('__fixtureProvider')") is None  # No forced account picker
             page.wait_for_function("document.querySelector('#profileImage').src.startsWith('blob:') && document.querySelector('#profileImage').naturalWidth > 0")
             assert any(call['path']=='/api/venture/profile/avatar' and call['uid']=='alice' for call in api.calls)
             assert page.locator('#selection').is_hidden() and page.locator('#processing').is_hidden()
             assert page.locator('#mediaInfo').inner_text() == ''
             # The menu reports the web release, not an assumed Windows version.
-            assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
+            assert page.locator('#vortexVersion').text_content() == 'v1.0.4'
             assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.1'
             if width == 390:
-                api.server_version = '1.0.3'
+                api.server_version = '1.0.2'
                 refresh(page)
-                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.3'
-                assert page.locator('#vortexVersion').text_content() == 'v1.0.3'
+                assert page.locator('#serverVersion').text_content() == 'Vortex server: v1.0.2'
+                assert page.locator('#vortexVersion').text_content() == 'v1.0.4'
                 # Missing versions on older servers and malformed data
                 # are neutral; they neither block history nor inject markup.
                 for value in (None, '', '<img src=x onerror=alert(1)>', {'version':'1.0.1'}):
@@ -665,6 +668,15 @@ def run():
             inspected.update(status='complete', phase='Media ready', progress=None, media=VIDEO, results=[VIDEO])
             refresh(page)
             assert page.locator('#selectionTitle').inner_text() == VIDEO['title']
+            page.locator('#moisesOpenButton').wait_for(state='visible')
+            page.wait_for_function("document.querySelector('#moisesOpenButton .moises-logo').naturalWidth > 0")
+            download_bounds = page.locator('#downloadButton').bounding_box()
+            moises_bounds = page.locator('#moisesOpenButton').bounding_box()
+            for dimension in ('x', 'width', 'height'):
+                assert abs(download_bounds[dimension] - moises_bounds[dimension]) < 1, f'Moises {dimension} differs from Download at {width}px'
+            gap = moises_bounds['y'] - download_bounds['y'] - download_bounds['height']
+            assert 8 <= gap <= 11, f'Moises must sit directly below Download at {width}px: {gap}'
+            assert page.locator('#moisesOpenButton').get_attribute('aria-label') == 'Open in Moises'
             for value in ('16:9', '3840 × 2160', '60 fps', 'H.264', 'AAC'):
                 assert value in page.locator('#mediaInfo').inner_text()
             assert page.locator('#processing').is_hidden()
@@ -769,6 +781,42 @@ def run():
                 page.locator('#downloadButton').click()
             assert retry_event.value.suggested_filename == 'Harbor.mp4'
             assert len(api.jobs['alice']) == before_manual, 'Saving again should not re-encode a ready file'
+            if width == 390:
+                # Mock the native boundary; this does not test the installed iOS app.
+                page.evaluate('''Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+                    Object.defineProperty(navigator,'share',{configurable:true,value:async value=>{window.__moisesShared={name:value.files[0].name,size:value.files[0].size,type:value.files[0].type,active:navigator.userActivation.isActive,keys:Object.keys(value)};}});''')
+                page.locator('#moisesOpenButton').click()
+                page.locator('#moisesStatus').get_by_text('Ready. Tap Open in Moises again', exact=False).wait_for()
+                assert not page.evaluate('!!window.__moisesShared'), 'Preparing must not open the OS share interface'
+                media_request = [call for call in api.calls if call['path'].endswith('/file') and call['token']][-1]
+                assert media_request['uid'] == 'alice' and media_request['token'] == 'Bearer fixture-alice'
+                page.locator('#moisesOpenButton').click()
+                assert page.evaluate('__moisesShared') == dict(name='Harbor.mp4', size=19, type='video/mp4', active=True, keys=['files'])
+                page.evaluate("Object.defineProperty(navigator,'canShare',{configurable:true,value:undefined}); Object.defineProperty(navigator,'share',{configurable:true,value:undefined});")
+            if width < 760:
+                # Check the iPhone setup UI in Chromium. The URL dispatch is
+                # covered by vortex-moises.test.cjs; native import needs iOS.
+                page.evaluate("Object.defineProperty(navigator,'userAgent',{configurable:true,value:'iPhone'});")
+                before_setup = len(api.calls)
+                page.locator('#moisesOpenButton').click()
+                setup = page.locator('#moisesSetupDialog')
+                setup.wait_for(state='visible')
+                assert setup.get_by_text('Vortex to Moises', exact=True).is_visible()
+                assert setup.get_by_text('Shortcut Input', exact=True).is_visible()
+                assert setup.locator('a[href^="https://apps.apple.com/"]').count() == 1
+                assert setup.evaluate('(node)=>node.scrollWidth <= node.clientWidth')
+                bounds = setup.bounding_box()
+                assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= width
+                assert bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 844
+                page.screenshot(path=str(SHOTS/f'vortex-moises-setup-{width}.png'))
+                page.locator('#moisesSetupDone').click()
+                setup.wait_for(state='hidden')
+                assert page.evaluate("localStorage.getItem('vortex:moises-shortcut:v1')") == 'ready'
+                assert not any(call['method'] == 'POST' or call['path'].endswith('/file') for call in api.calls[before_setup:]), 'Setup must not export or transfer a file'
+                page.locator('#moisesSetupButton').click()
+                setup.wait_for(state='visible')
+                setup.locator('.close-dialog').click()
+                page.evaluate('delete navigator.userAgent')
             page.locator('input[name=quality][value=max]').check()
             restore_max = next_job(page, api, queued_download['id'])
             restore_max.update(status='complete', phase='Media ready', media=VIDEO, results=[VIDEO])
@@ -963,7 +1011,7 @@ def run():
             assert page.locator('#navigation nav [aria-current]').count() == 0, 'Vortex should not link to itself'
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             version = page.locator('#navigation #vortexVersion')
-            assert version.inner_text() == 'v1.0.3'
+            assert version.inner_text() == 'v1.0.4'
             assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.3'
             name_box = page.locator('#navigation .nav-brand-name').bounding_box()
             version_box = version.bounding_box()
@@ -1026,7 +1074,7 @@ def run():
                 page.wait_for_timeout(20)
             assert api.held_avatar is not None
             page.locator('#accountDialog .close-dialog').click()
-            api.server_version = '1.0.3'
+            api.server_version = '1.0.2'
             api.hold_list = True
             # A scheduled refresh may consume the held request and disable the
             # button first. Dispatch without waiting for actionability: either
@@ -1070,3 +1118,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+

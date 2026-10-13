@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 def read(name):return (ROOT/name).read_text()
 base=read('web/base.js');download=base[base.index('function download('):].split('\n')[0]
+plain_dictation=base[base.index('function plainDictationText('):base.index('function finishQueuedTranscript(')]
 setup=r'''
 let fixtureUUIDCounter=0;if(!crypto.randomUUID)crypto.randomUUID=()=>('10000000-1000-4000-8000-'+String(++fixtureUUIDCounter).padStart(12,'0'));
 const $=id=>document.getElementById(id), state={title:'Unchanged board',nodes:[],settings:{},consoleSession:null};let busy=false,ioBusy=false;
@@ -19,7 +20,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+plain_dictation+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-local.js')+'\n'+read('web/venture-images.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
@@ -33,7 +34,7 @@ def run():
             for width in [int(value) for value in os.environ.get('VISION_TEST_WIDTHS', '390,1280').split(',')]:
                 conversations=[dict(id='v-test-conversation-001',title='Cowling inspection report',settings=settings,revision=1,createdAt=1791320000,updatedAt=1791320000,boardProject=False)]
                 runs=[dict(runId='run-001',status='completed',model='gpt-6-astra',message='Create an inspection report and save the HTML.',text='## Your inspection report\n\nThe measurements are organized by panel and location.\n\n[Download the report](sandbox:/mnt/data/report.html)',artifacts=[dict(id='a-001',name='report.html',mime='text/html',ready=True,size=50)],attachments=[],runOptions=settings['runOptions'],createdAt='2026-10-06T17:00:00Z',updatedAt='2026-10-06T17:01:00Z',sequence=2)]
-                funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[])
+                funding=dict(provider='estimate',status='available',fraction=.76,revision=1,updatedAt=1791320000,issues=[],liveMeterVersion=1)
                 submitted=[];funding_posts=[];conversation_posts=[]
                 def api(url,method,raw):
                     if url.endswith('/artifacts/a-001'):
@@ -64,6 +65,7 @@ def run():
                 context=browser.new_context(viewport={'width':width,'height':844},accept_downloads=True)
                 context.route('**/*',lambda r:r.abort());p=context.new_page();p.expose_function('ventureTestAPI',api);errors=[];p.on('pageerror',lambda e:errors.append(str(e)))
                 p.set_content(fixture,wait_until='load');assert not errors,errors
+                assert p.evaluate("plainDictationText('[00:00:01.000] Alpha.\\n[00:00:03.500] Beta.')")=='Alpha. Beta.'
                 p.locator('#runProjectBtn').click();p.wait_for_timeout(400)
                 assert p.locator('#visionVenture').is_visible()
                 assert p.locator('.venture-monocle image').count()>=2
@@ -72,17 +74,18 @@ def run():
                 p.locator('[data-conversation="v-test-conversation-001"]').first.click();p.wait_for_timeout(200)
                 assert 'Your inspection report' in p.locator('#ventureTurns').inner_text()
                 assert p.evaluate('testState().board')=='Unchanged board'
-                assert p.evaluate('testState().settings.runOptions.webSearch') is True
+                # Opening history/settings must retain explicit saved opt-outs.
+                assert p.evaluate('testState().settings.runOptions.webSearch') is False
                 assert p.evaluate('testState().settings.runOptions.codeInterpreter') is True
-                assert p.evaluate('testState().settings.memoryEnabled') is True
+                assert p.evaluate('testState().settings.memoryEnabled') is False
                 p.screenshot(path=str(shots/f'venture-{width}.png'))
                 p.locator('#ventureSettingsToggle').click();p.wait_for_timeout(2200)
                 assert p.locator('#ventureSettings').is_visible(),'Settings closed automatically'
                 # The settings dialog should fit an actual mobile Safari viewport.
                 assert not p.locator('#ventureSettings').get_by_text('Set your course').count()
                 assert p.locator('.venture-feature-grid label').count()==3
-                assert p.evaluate('ventureSettings().memoryEnabled') is True
-                assert p.evaluate('ventureSettings().runOptions.webSearch') is True
+                assert p.evaluate('ventureSettings(venture.settings).memoryEnabled') is False
+                assert p.evaluate('ventureSettings(venture.settings).runOptions.webSearch') is False
                 assert p.evaluate('ventureSettings().runOptions.codeInterpreter') is True
                 if width<761:
                     p.set_viewport_size({'width':width,'height':640})
@@ -135,6 +138,18 @@ def run():
                 p.locator('#ventureAvatar').click();assert 'Estimated API balance' in p.locator('#ventureAccount').inner_text()
                 assert '$' not in p.locator('#ventureAccount').inner_text()
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='76'
+                assert p.locator('#ventureFundingPercent').inner_text()=='76.0% remaining'
+                # Change the server fixture while the menu stays open. No user
+                # click, conversation update or completed response triggers this.
+                funding.update(fraction=.975,activeRuns=1,usage=dict(inputTokens=1234,outputTokens=567,models=['gpt-5.6-terra'],scope='active',kind='live-estimate'))
+                p.wait_for_function("document.getElementById('ventureFundingPercent').textContent==='97.5% remaining'")
+                assert p.locator('#ventureFundingStatus').inner_text()=='Live estimate'
+                assert 'Terra' in p.locator('#ventureFundingUsage').inner_text()
+                funding['fraction']=.97499
+                p.wait_for_function("document.getElementById('ventureFundingPercent').textContent==='97.499% remaining'")
+                assert abs(float(p.locator('#ventureBattery').get_attribute('aria-valuenow'))-97.499)<.00001
+                p.screenshot(path=str(shots/f'venture-live-funding-{width}.png'))
+                funding.update(activeRuns=0,usage=None)
                 p.locator('#ventureCalibrate').click();p.locator('#ventureBalanceAmount').fill('25');p.locator('#ventureBalanceForm [type=submit]').click();p.wait_for_timeout(200)
                 assert p.locator('#ventureBattery').get_attribute('aria-valuenow')=='100',p.locator('#ventureBalanceStatus').inner_text()
                 assert funding_posts[-1]['kind']=='set'

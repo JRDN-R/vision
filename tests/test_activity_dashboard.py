@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'vision-pc'))
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'vision-pc' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
@@ -194,6 +195,7 @@ class ActivityTests(unittest.TestCase):
         (self.root/'config.json').write_text(json.dumps(config))
         stage=self.root/'stage';stage.mkdir()
         (stage/'activity_dashboard.py').write_text((ROOT/'vision-pc/activity_dashboard.py').read_text())
+        (stage/'account_administration.py').write_text((ROOT/'vision-pc/account_administration.py').read_text())
         with patch('builtins.input',return_value='YES'):
             setup.prepare(self.root,stage,'one@example.test')
         self.assertEqual((self.root/'server.py').read_bytes(),raw)

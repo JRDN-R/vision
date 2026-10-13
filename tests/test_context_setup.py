@@ -57,18 +57,49 @@ class ContextInstallerTests(unittest.TestCase):
         (source / 'vortex' / 'job' / 'media.mp4').write_bytes(b'expiring download')
         (source / 'projects' / 'vortex').mkdir(parents=True)
         (source / 'projects' / 'vortex' / 'notes.txt').write_text('original board evidence')
-        (source / 'vision.sqlite3').write_bytes(b'account database and job receipts')
+        with closing(sqlite3.connect(source / 'vision.sqlite3')) as db, db:
+            db.execute('CREATE TABLE jobs(id TEXT)')
+        original_database = (source / 'vision.sqlite3').read_bytes()
         target = self.root / 'processor-backup'
         result = setup.backup_data(source, target, exclude_vortex_media=True)
         self.assertEqual(result['excludedTransientDirectories'], ['vortex'])
         self.assertFalse((target / 'data' / 'vortex').exists())
         self.assertEqual((target / 'data' / 'projects' / 'vortex' / 'notes.txt').read_text(), 'original board evidence')
-        self.assertEqual((target / 'data' / 'vision.sqlite3').read_bytes(), b'account database and job receipts')
+        self.assertEqual((target / 'data' / 'vision.sqlite3').read_bytes(), original_database)
         self.assertTrue((source / 'vortex' / 'job' / 'media.mp4').exists())
         # Explicit complete backups retain their existing behavior.
         complete = self.root / 'complete-backup'
         setup.backup_data(source, complete)
         self.assertEqual((complete / 'data' / 'vortex' / 'job' / 'media.mp4').read_bytes(), b'expiring download')
+
+    def test_processor_backup_includes_pending_vision_adoption_sources(self):
+        source, protected = self.root / 'data', 'a' * 24
+        for name in (protected, 'b' * 24):
+            directory = source / 'vortex' / name
+            directory.mkdir(parents=True)
+            (directory / 'media.mp4').write_bytes(name.encode())
+        (source / 'owned-assets').mkdir()
+        (source / 'owned-assets' / 'evidence.json').write_text('retained evidence')
+        with closing(sqlite3.connect(source / 'vision.sqlite3')) as db, db:
+            db.execute('CREATE TABLE owned_source_leases(vortex_id TEXT)')
+            db.execute('INSERT INTO owned_source_leases VALUES(?)', (protected,))
+        target = self.root / 'backup'
+        result = setup.backup_data(source, target, exclude_vortex_media=True)
+        self.assertEqual(result['protectedVortexSourceIds'], [protected])
+        self.assertEqual((target / 'data/vortex' / protected / 'media.mp4').read_bytes(), protected.encode())
+        self.assertFalse((target / 'data/vortex' / ('b' * 24)).exists())
+        self.assertEqual((target / 'data/owned-assets/evidence.json').read_text(), 'retained evidence')
+
+    def test_unverifiable_source_leases_fail_before_backup_is_created(self):
+        source = self.root / 'data'
+        (source / 'vortex').mkdir(parents=True)
+        for contents in (None, b'invalid SQLite database'):
+            if contents:
+                (source / 'vision.sqlite3').write_bytes(contents)
+            target = self.root / 'not-a-backup'
+            with self.assertRaises(ValueError):
+                setup.backup_data(source, target, exclude_vortex_media=True)
+            self.assertFalse(target.exists())
 
     def test_link_cannot_disclose_outside_source(self):
         source = self.root / "data"

@@ -141,6 +141,8 @@ class VortexAdapterTests(unittest.TestCase):
         class FakeYoutubeDL:
             def __init__(self, options):
                 captured.update(options)
+            def build_format_selector(self, specification):
+                return lambda context: iter(context['formats'][-1:])
             def __enter__(self): return self
             def __exit__(self, *_unused): return False
             def extract_info(self, value, download=False):
@@ -235,7 +237,7 @@ class VortexAdapterTests(unittest.TestCase):
         info = dict(self.video(1080), id='YWwf-Og5gSQ',
                     title='Royalwood Homecoming Weekend | Friday Night',
                     webpage_url='https://www.youtube.com/watch?v=YWwf-Og5gSQ',
-                    duration=10151, live_status='was_live', is_live=False)
+                    duration=10151, live_status='was_live', is_live=False, tbr=64)
 
         def extract(ydl, value, download=False):
             # Exercise real yt-dlp format selection and its match_filter, not
@@ -244,18 +246,21 @@ class VortexAdapterTests(unittest.TestCase):
 
         with patch.object(worker, 'configure_ytdlp_safety'), \
                 patch.object(yt_dlp.YoutubeDL, 'extract_info', extract):
-            request = self.request(input=info['webpage_url'], kind='inspect')
+            request = self.request(input=info['webpage_url'], kind='inspect', maxBytes=2 * 1024**3)
             with self.assertRaisesRegex(worker.DurationLimitError, '2-hour'):
                 worker.run_ytdlp(request)
             request.pop('maxDuration')
             result = worker.run_ytdlp(request)
             self.assertEqual(result['media']['duration'], 10151)
             self.assertTrue(worker.verify_result(result, request)['complete'])
-            info['duration'] = 14400
-            self.assertTrue(worker.run_ytdlp(request)['complete'])
-            info['duration'] = 14401
-            with self.assertRaisesRegex(worker.DurationLimitError, '4-hour'):
-                worker.run_ytdlp(request)
+            for duration in (14400, 14401, 8 * 3600, 24 * 3600, 115199.9):
+                with self.subTest(accepted=duration):
+                    info['duration'] = duration
+                    self.assertTrue(worker.run_ytdlp(request)['complete'])
+            for duration in (115200, 115201):
+                with self.subTest(rejected=duration), self.assertRaisesRegex(worker.DurationLimitError, '32-hour'):
+                    info['duration'] = duration
+                    worker.run_ytdlp(request)
             for status in ('is_live', 'is_upcoming'):
                 info.update(duration=60, live_status=status)
                 with self.assertRaisesRegex(worker.WorkerError, 'live broadcast'):
@@ -273,16 +278,19 @@ class VortexAdapterTests(unittest.TestCase):
         with patch.object(worker, 'probe_file', return_value=data), \
                 patch.object(worker.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
             self.assertTrue(worker.verify_result(copy.deepcopy(result), request)['complete'])
-            data['format']['duration'] = '14401'
-            with self.assertRaisesRegex(worker.DurationLimitError, '4-hour'):
-                worker.verify_result(copy.deepcopy(result), request)
+            data['format']['duration'] = '115199.9'
+            self.assertTrue(worker.verify_result(copy.deepcopy(result), request)['complete'])
+            for duration in ('115200', '115201'):
+                data['format']['duration'] = duration
+                with self.assertRaisesRegex(worker.DurationLimitError, '32-hour'):
+                    worker.verify_result(copy.deepcopy(result), request)
 
     def test_duration_error_survives_worker_envelope_without_provider_details(self):
         request_file = self.root / 'request.json'
         request_file.write_text(json.dumps(self.request()), encoding='utf-8')
         from vortex_race import PUBLIC_ERROR
         for failure, message, category in (
-                (worker.DurationLimitError(14400), "This media exceeds Vortex's 4-hour duration limit.", 'duration_limit'),
+                (worker.DurationLimitError(115200), "This media is at or above Vortex's 32-hour duration limit.", 'duration_limit'),
                 (worker.SourceError('private signed URL https://example.com/?token=secret'), PUBLIC_ERROR, 'unavailable')):
             self.events.seek(0)
             self.events.truncate()

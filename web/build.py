@@ -9,11 +9,12 @@ import base64
 import hashlib
 import json
 import re
+import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-funding.js', 'intelligent-context.js', 'venture.js', 'workspace.js', 'navigation.js', 'toolbelt.js', 'account-profile.js']
-STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'documents.css', 'run-tools.css', 'venture.css', 'workspace.css', 'navigation.css', 'toolbelt.css', 'account-profile.css']
+SCRIPTS = ['base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'google-login.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'vortex-import.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-local.js', 'venture-images.js', 'venture-funding.js', 'intelligent-context.js', 'rag-export.js', 'venture.js', 'workspace.js', 'navigation.js', 'toolbelt.js', 'account-profile.js']
+STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'vortex-import.css', 'documents.css', 'run-tools.css', 'venture.css', 'rag-export.css', 'workspace.css', 'navigation.css', 'toolbelt.css', 'account-profile.css']
 
 
 def without_browser_gemini(source):
@@ -48,6 +49,37 @@ def select_release(requested, previous_raw, changed):
     return normalize_version(previous)
 
 
+def qwen_animation_script():
+    """Bundle the badge clips and continuous loading archive using the existing offline SVG player."""
+    animations = []
+    for name in ('qwen-p1.lottie', 'qwen-p2.lottie', 'venture-loading.lottie'):
+        with zipfile.ZipFile(WEB / name) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            animation_id = manifest['activeAnimationId']
+            animation = json.loads(archive.read(f'animations/{animation_id}.json'))
+            # Lottie Animator puts the first rotation's incoming easing handle
+            # on its destination keyframe. lottie-web needs both handles on
+            # the starting keyframe; otherwise its clock runs but rendering
+            # fails as soon as that rotation begins. Keep the source archives,
+            # angles, timing and easing values intact.
+            for layer in animation.get('layers', []):
+                rotation = layer.get('ks', {}).get('r', {})
+                if rotation.get('a') != 1:
+                    continue
+                keyframes = rotation['k']
+                for start, end in zip(keyframes, keyframes[1:]):
+                    if not start.get('h') and 'i' not in start:
+                        start['i'] = end['i']
+            # These supplied archives include their PNGs as data URLs.
+            if any(asset.get('p') and not asset['p'].startswith('data:')
+                   for asset in animation.get('assets', [])):
+                raise ValueError(f'{name} contains an unbundled image')
+            animations.append(animation)
+    controller = (WEB / 'venture-qwen-animation.js').read_text(encoding='utf-8')
+    return controller.replace('/* VISION_QWEN_ANIMATIONS */ []',
+                              json.dumps(animations, separators=(',', ':')))
+
+
 def build():
     source = (ROOT / 'Vision.html').read_text(encoding='utf-8')
     previous_version = re.search(r'<meta name="vision-version" content="(\d+\.\d+\.\d+\.\d+)">', source)
@@ -77,6 +109,11 @@ def build():
     if not isinstance(notes.get('title'), str) or not notes.get('items') or not all(isinstance(item, str) for item in notes['items']):
         raise ValueError('Release notes need a title and nonempty text bullet points')
     script = script.replace('/* VISION_RELEASE_NOTES */ {}', json.dumps(notes, separators=(',', ':')))
+    vortex_icon_marker = "/* VISION_VORTEX_MENU_ICON */ './vortex_menu_icon.png'"
+    if script.count(vortex_icon_marker) != 1:
+        raise ValueError('Expected one Vortex menu logo placeholder')
+    vortex_icon = 'data:image/png;base64,' + base64.b64encode((ROOT / 'vortex_menu_icon.png').read_bytes()).decode('ascii')
+    script = script.replace(vortex_icon_marker, '/* VISION_VORTEX_MENU_ICON */ ' + json.dumps(vortex_icon))
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:
@@ -90,7 +127,7 @@ def build():
     controller = (WEB / 'workspace-chevron.js').read_text().replace('/* VISION_CHEVRONS */ {}', json.dumps(chevrons, separators=(',', ':')))
     menu_data = json.loads((WEB / 'animations/menu-in-out.json').read_text())
     menu_controller = (WEB / 'navigation-animation.js').read_text().replace('/* VISION_MENU_ANIMATION */ {}', json.dumps(menu_data, separators=(',', ':')))
-    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + menu_controller + '\n' + script)
+    source = source.replace('{{VISION_APPLICATION}}', firebase + '\n' + lottie + '\n' + controller + '\n' + menu_controller + '\n' + qwen_animation_script() + '\n' + script)
     css = '\n'.join((WEB / name).read_text(encoding='utf-8') for name in STYLES)
     if source.count('{{VISION_STYLES}}') != 1:
         raise ValueError('Expected one stylesheet placeholder')

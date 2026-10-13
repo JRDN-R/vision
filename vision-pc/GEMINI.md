@@ -56,6 +56,24 @@ request results are checkpointed. A recorded request with an indeterminate resul
 is not silently sent again after restart. No failed Gemini request falls back to
 a different paid model or switches the selected provider.
 
+### Speech timestamp validation
+
+Rounded word annotations with identical start/end offsets are kept and grouped
+with adjacent speech. An isolated point receives the minimum millisecond subtitle
+display interval inside its audio section. The existing half-second end-padding
+allowance clamps both ends of a word to the section, so padding cannot create a
+reversed cue. Negative, reversed, non-finite, and truly out-of-range offsets still
+fail validation; the processor never rescales them or guesses a different clock.
+
+This is a PC processor repair: updating the webpage alone does not install it.
+A speech timing failure stops the affected transcript before sound enhancement;
+disabling sound effects does not avoid that validation. Other queued files still
+get their own processing attempts. Failed requests retain their usage receipt and
+are not automatically replayed. The private server log records the fixed failure
+reason, word index, offsets, and section bounds, without transcript text or keys.
+No raw Gemini response is retained, so this change cannot recover an earlier
+rejected response. Retrying a failed item starts another Gemini request.
+
 ## Usage and pricing
 
 Vision Status shows each sound/speech request, account, project/job, event timing,

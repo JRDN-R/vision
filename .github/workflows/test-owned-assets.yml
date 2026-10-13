@@ -1,0 +1,41 @@
+name: Test retained import ownership
+on:
+  pull_request:
+    branches: [main]
+    paths: ['vision-pc/**', 'tests/test_context_setup.py', '.github/workflows/test-owned-assets.yml']
+permissions:
+  contents: read
+concurrency:
+  group: retained-import-tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  retention:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r vision-pc/requirements.txt
+      - name: Real filesystem, inventory and Flask integration fixtures
+        run: python -m unittest discover -s vision-pc -p 'test_*owned_assets.py' -v
+      - name: Cold-data backup and lease retention
+        run: python tests/test_context_setup.py -v
+      - name: Parse both helpers using Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $Errors = $null
+          $Tokens = $null
+          foreach ($File in @('vision-pc/Setup-Vision-PC.ps1', 'vision-pc/Durable-Assets.ps1')) {
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $File), [ref]$Tokens, [ref]$Errors) | Out-Null
+            if ($Errors.Count) { throw ($Errors | Out-String) }
+          }
+          $Script = Get-FileHash 'vision-pc/Durable-Assets.ps1' -Algorithm SHA256
+          $Text = Get-FileHash 'vision-pc/Durable-Assets.txt' -Algorithm SHA256
+          if ($Script.Hash -ne $Text.Hash) { throw 'The PowerShell and transfer-text copies differ.' }

@@ -1,21 +1,52 @@
 # Vortex
 
 Vortex runs at `https://jrdn-r.github.io/vision/vortex/`. Its page and modules are
-independent of the Vision board and Venture conversation interface. The only
-changes to those interfaces are their two Vortex links and release notes.
+independent of the Vision board and Venture conversation interface. Vision also offers Vortex imports in Add to board and the module Files tab.
 Opening Vortex in the same tab saves pending board changes first.
+
+## Import into Vision
+
+Choose **Vortex** in **Add to board**, or **+ Vortex** in a selected module's
+**Files** tab. Paste a video/audio URL, choose **Find**, then **Apply**. The red
+orbital URL field matches Vortex. Controls retain the current transcription
+provider and sound-effects preference, and let a Files import create a new module.
+There is no download or video/audio format chooser in this dialog.
+
+The server prefers 320–480p video where the source offers it, falls back to a
+small available stream, and converts processing audio to 16 kHz mono at 32 kbps.
+Video produces timestamped snapshots and a transcript. Audio-only links,
+including YouTube Music and individual Spotify tracks, produce a transcript.
+Spotify uses the existing metadata/matched-public-audio workflow. Source
+availability, DRM, sign-in requirements and the under-32-hour download duration limit still apply. Snapshot and
+transcription processing retain their separate limits.
+
+After Apply is accepted, download, snapshots and transcription run durably on
+FUPCJ Server even if the browser closes. Gemini approval still applies. Reopen
+the saved Vision project to receive the result. Completed import receipts remain
+available for 24 hours to cover delayed project saves. Original media is not embedded
+in Vision or its ZIP/RAG exports; the small processing copy is deleted once
+snapshots and the durable transcription receipt are saved.
+
+A separate account-owned **Balanced MP4** video or default **M4A** audio download
+is silently queued in Vortex history. It uses the usual five-day retention,
+account ownership, queue and disk limits. A full queue/storage retries the
+history handoff without blocking the Vision result or creating duplicate copies.
+History download failures remain visible in Vortex, without a Vision notification.
+
+**This integration requires a PC update.** Run the latest installer with
+`-Action Update` using the command below. An existing Vortex installation does
+not need its engines or Docker services reinstalled. The updater includes
+`vortex_imports.py`; the UI detects older processors and asks for the update.
 
 ## Version
 
-Current release: **v1.0.1**. This patch fixes successful normalized URL lookups
-being silently discarded by the webpage and adds visible feedback when an
-inspection receipt is no longer available. The active job retains its original
-submitted text so shared/short URLs can match the server's canonical response
-without allowing late results to overwrite a genuinely edited input.
-The fix is in the webpage and works with the existing backend; no engine or
-Docker reinstall is required. Updating the Windows processor is only needed
-to advance its separately reported version. This does not make unavailable
-provider media accessible or bypass authentication requirements.
+Current proposed release: **v1.0.3**. This update builds on v1.0.2
+and adds a guarded fallback for direct, time-limited Instagram CDN MP4s and
+explicitly supplied VideoDropper download links. It does not send regular
+Instagram post or Reel links to VideoDropper, does not require source-account
+cookies, and does not guarantee that every Instagram original URL can be
+resolved. The backend must be updated on FUPCJ for the new adapter to work.
+No new download packages or Docker service are required.
 
 Vortex starts its own release numbering at **v1.0.0**, independent of Vision's
 version. Open the side menu to see the web version directly beneath the Vortex
@@ -115,6 +146,59 @@ the file and tapping Share are separate steps so iOS receives a fresh user
 gesture. Save file uses a short-lived URL and the browser's download/Save to
 Files workflow, without holding a large video in page memory.
 
+The selected audio/video panel also offers **Open in Moises** directly below
+Download, with the same responsive width and 44 px height and the supplied Moises
+artwork. A Moises-only export reuses Vortex's queue and does not also start a
+browser download; tapping Download still requests the normal save.
+
+On **iPhone and iPad**, the button uses an installed Apple Shortcut to download
+the finished file and open it directly in Moises. Set up once on each device:
+
+1. In Shortcuts, name the shortcut exactly **Vortex to Moises**.
+2. Add **Get Contents of URL**, using **Shortcut Input** as the URL and **GET**
+   as the method.
+3. Add **Open File**, using the previous action's **Contents of URL** output.
+   Choose **Moises** and turn **Show Open In Menu** off.
+4. Back in Vortex, select **I've set up the shortcut** in the setup dialog.
+
+To update the two-action test shortcut, rename it, replace **Select File** with
+**Get Contents of URL**, and connect that output to Open File. The tested native
+Open File action imported an MP3 into Moises's instrument selection screen;
+the complete website-to-shortcut download still needs a physical-device test.
+Start with Audio only → M4A or MP3. Video imports depend on the installed Moises
+version accepting the selected format. The user still chooses instruments and
+submits processing inside Moises.
+
+When the export is ready, a fresh tap invokes
+`shortcuts://run-shortcut?name=Vortex%20to%20Moises&input=text&text=<encoded-file-url>`.
+The shortcut receives only Vortex's HTTPS, short-lived, job-specific file ticket,
+never a Firebase token. Its download uses the existing GET `/file` endpoint and
+attachment filename; no server change or Music AI API is needed. Vortex does not
+load the media bytes into browser memory on this path, so the browser's 32 MiB
+sharing limit does not apply. Moises's own size/format/account limits still apply.
+Expired or nearly expired tickets are refreshed with account authentication;
+after that completes, another tap launches the shortcut. No background callback
+opens another app. Account, selection, format, result, or page changes abort a
+pending refresh and ignore late responses. Only the setup preference is persisted.
+
+**Shortcut setup / help** remains available. iOS may ask permission to run the
+shortcut or download from the Vortex server. Vortex cannot detect installation;
+the setup includes a Moises App Store link. If Shortcuts reports a missing
+shortcut, check its exact name. If a link expires while approving prompts, return
+to Vortex and tap Open in Moises again. Save file manually remains available.
+See Apple's [URL scheme](https://support.apple.com/guide/shortcuts/run-a-shortcut-from-a-url-apd624386f42/ios).
+
+Other platforms retain the browser's native Share Sheet fallback. Vortex prepares
+a file using authenticated retrieval, then a fresh tap opens the chooser. This
+path is limited to 32 MiB, checked against metadata and received bytes, and uses
+explicit MP4/MOV and M4A/MP3/WAV MIME types. The browser cannot select Moises for
+the user. Cancellation retains the prepared file for retry; account, selection,
+format, result, or page changes discard it. If sharing is unsupported or Moises
+is absent from the chooser, save the file and import inside Moises.
+See [WebKit's user activation guidance](https://webkit.org/blog/13862/the-user-activation-api/),
+the [Web Share standard](https://www.w3.org/TR/web-share/), and
+[Moises's import instructions](https://help.moises.ai/hc/en-us/articles/8583454469276-How-to-Upload-and-Edit-your-track-using-Moises).
+
 ## Parallel extraction and engine availability
 
 A user action still creates exactly one SQLite job and one history row. Within
@@ -147,6 +231,7 @@ No engine configuration comes from a browser request.
 | --- | --- |
 | yt-dlp | Native public video/audio inspection and download; compatible providers and existing YouTube search/pagination. Installed by Update/InstallVortexTools. |
 | gallery-dl | Native public gallery/video extraction; now races yt-dlp for X, Instagram and Reddit. X candidates must match the requested tweet ID; quotes, replies and previews are excluded. Installed by InstallVortexTools. |
+| Instagram signed MP4 | New local adapter accepts a pasted direct HTTPS Instagram CDN MP4 or an explicit `dl.videodropper.app/?url=...` download link **only when it wraps one Instagram CDN MP4**. Attempts the CDN first, then the user-supplied relay if needed, with standard size limits, local FFmpeg conversion and full-file verification. Never sends ordinary Instagram links to VideoDropper automatically; signed URLs expire. |
 | spotDL | Existing official Spotify metadata and public YouTube/YouTube Music audio matching. Only compatible Spotify work is dispatched here. Installed by InstallVortexTools. |
 | FFmpeg/FFprobe | Existing Windows tools; shared local conversion plus mandatory final file verification. |
 | Cobalt | Implemented opt-in API adapter and pinned self-hosted Linux-container provisioning. The local service must pass health checks; unsupported services, picker responses and unavailable streams fail only this adapter. It is not enabled by a normal Update. |
@@ -395,7 +480,7 @@ database remain included in the existing backup process.
 | Active jobs per account / server queue | 3 / 20 |
 | Downloaded artifact | 2 GiB |
 | Account / total Vortex storage | 10 / 40 GiB, including reserved jobs |
-| Media duration | 4 hours |
+| Media duration | Strictly under 32 hours (115,200 seconds) |
 | Gallery contents | 50 files |
 | Search page size / maximum pages | 8 videos + 8 songs / 50 pages |
 | Lookup / download timeout | 3 / 45 minutes |
@@ -405,12 +490,15 @@ database remain included in the existing backup process.
 | Per-attempt lookup / download timeout | 2 / 40 minutes |
 | File delivery URL lifetime | At most 5 minutes and never beyond file expiry |
 
-The four-hour media limit includes completed livestream recordings (`was_live`).
-Active and upcoming livestreams remain unsupported. Version 1.0.3 raises the
-previous two-hour limit and preserves an explicit duration-limit error instead
-of describing an over-limit recording as unavailable or requiring sign-in.
-Run the normal Windows `-Action Update` to activate this backend change; no
-Docker or extractor reinstallation is required. File-size, storage, memory and
+The media limit includes completed livestream recordings (`was_live`).
+Version 1.0.4 accepts recordings strictly shorter than 32 hours; exactly 32 hours
+or longer is rejected with an explicit duration-limit message. Active and
+upcoming livestreams remain unsupported. The supervisor, worker, gallery and
+service-adapter checks all use the same limit, including final file probes.
+Run the normal Windows `-Action Update` to install the backend change. If Cobalt
+is enabled, also run `-Action InstallVortexServices` to recreate its service with
+the updated Compose duration setting. Existing running containers retain their
+old environment until recreated; no media-tool upgrade is needed for this limit change. File-size, storage, memory and
 processing deadlines still apply, so accepting a recording does not guarantee
 its full download and conversion will fit those separate limits.
 
@@ -488,3 +576,15 @@ Use the existing updater's `Rollback` action and selected backup directory to
 restore the previous processor if activation fails. Vortex tables are additive;
 do not remove the shared database or other Vision data during rollback. Revert
 the Vortex change in GitHub to remove its page and navigation additions.
+
+## Durable import ownership preview
+
+The opt-in Phase 1A retention implementation, diagnostics and outstanding release
+gates are documented in [Durable import ownership](../docs/durable-import-ownership.md).
+It is disabled by default, does not activate Qwen or change model preferences, and
+does not yet complete board attachment on the server.
+
+
+### Local Qwen and RAG preview
+
+The optional Qwen provider, durable local queue, versioned preferences, lossless RAG cache/export compression, and indexing progress are documented in [the implementation and installation guide](../docs/local-qwen-rag.md). Ordinary updates keep Qwen disabled and do not activate account defaults. Photo input, FUPCJ hardware validation, and streamed 400+ MB source ingestion remain pending.

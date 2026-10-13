@@ -1,9 +1,10 @@
 {
-  "title": "Vortex thumbnails and media formats",
+  "title": "Local Qwen and RAG preview",
   "items": [
-    "YouTube search results show thumbnails and load more videos and songs as you scroll.",
-    "Open a selected or recent item's thumbnail to visit its original source.",
-    "Choose MP4 or MOV video, or extract audio as M4A, MP3 or WAV. New media exports no longer use MKV or WebM.",
-    "Run the Windows processor Update action on FUPCJ Server to activate search pagination and media conversion."
+    "Qwen3.8 9B Distill appears first in the model picker. It requires a separate, verified FUPCJ runtime installation and enable step.",
+    "Local text and extracted-file requests use the saved server queue, with no API key or token charge. Queue position and elapsed time appear with the response.",
+    "RAG shows actual indexing stages and source counts. Reusable extraction caches are compressed without changing the evidence; an optional gzip snapshot download is available.",
+    "The local model and all-user default migration remain off in ordinary updates. Photo input, measured completion estimates, and large streamed source ingestion are still pending.",
+    "The opt-in retained-import groundwork is preserved. Existing cloud models, authentication and account data remain available."
   ]
 }

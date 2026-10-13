@@ -5,6 +5,7 @@
 const NAVIGATION_RELEASE = /* VISION_RELEASE_NOTES */ {};
 const navigation = {menu:false, uid:'', newsTimer:null, receipts:new Set(), dialogPress:null};
 const navigationSpark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/><path d="M20 2v4m-2-2h4"/></svg>';
+const navigationVortexLogo = /* VISION_VORTEX_MENU_ICON */ './vortex_menu_icon.png';
 function navigationBrand(name){return '<span class="workspace-brand-head" aria-hidden="true">'+ventureBrandIcon()+'</span><span class="workspace-brand-name">'+name+'</span>';}
 function navigationVersion(){return document.querySelector('meta[name="vision-version"]')?.content||'';}
 function navigationReceipt(){return 'vision-release-seen-v1:'+encodeURIComponent(ventureScope())+':'+navigationVersion();}
@@ -98,7 +99,7 @@ async function navigationOpenVortex(event){
 }
 function navigationVortexLink(id){
  const link=document.createElement('a');link.id=id;link.className='workspace-vortex-link';link.href=navigationVortexURL();
- link.innerHTML=ventureIcon('download')+'<span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
+ link.innerHTML='<img class="workspace-vortex-logo" src="'+navigationVortexLogo+'" alt="" aria-hidden="true"><span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
 }
 function navigationInstall(){
  document.documentElement.classList.add('compact-navigation');

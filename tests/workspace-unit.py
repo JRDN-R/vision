@@ -56,6 +56,8 @@ class ServiceTests(unittest.TestCase):
             if cid!='conversation-alice' or uid!='alice':raise Error('Unavailable',404)
             return {'id':cid}
         self.v=types.SimpleNamespace(app=self.app,db=db,Error=Error,account=lambda:self.uid,lookup=lookup,transcription=None)
+        preferences=types.SimpleNamespace(get=lambda uid:{'settings':{'model':'gpt-5.6-terra'}})
+        self.v.sessions=types.SimpleNamespace(local=types.SimpleNamespace(preferences=preferences))
         self.w=Workspace(self.v);self.w.initialize();self.d=Dictation(self.v);self.d.initialize()
         with db() as con:
             con.executescript('''CREATE TABLE project_runs(id TEXT PRIMARY KEY,project_id TEXT,inputs_json TEXT,created_at REAL);
@@ -136,7 +138,8 @@ class ServiceTests(unittest.TestCase):
             (self.root/'result.json').write_text(json.dumps({'text':'[00:00:01] Hello\n[00:00:02] world'}));return child
         with patch('venture_dictation.subprocess.Popen',side_effect=spawn):
             text=self.d.transcribe_whisper(b'wav',2,self.root)
-        self.assertEqual(text,'Hello\nworld');self.assertFalse(lock.locked());child.wait.assert_called_with(timeout=600);child.stdin.close.assert_called_once()
+        # Dictation joins timed subtitle segments into natural plain text.
+        self.assertEqual(text,'Hello world');self.assertFalse(lock.locked());child.wait.assert_called_with(timeout=600);child.stdin.close.assert_called_once()
     def test_whisper_exception_releases_lock(self):
         lock=threading.Lock();self.v.transcription=types.SimpleNamespace(capability=lambda:{'ready':True},_worker_lock=lock,settings={'modelPath':'installed-model','cpuThreads':4})
         with patch('venture_dictation.subprocess.Popen',side_effect=OSError('private path')):
