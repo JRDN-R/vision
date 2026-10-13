@@ -25,6 +25,21 @@ function fixture(job=makeJob()){
  return{state,job,calls,stats,control,timers,transcripts,run,context,pump:()=>run('pumpTranscriptionQueue()'),due:()=>{for(const j of state.nodes[0].transcriptionJobs)j.nextAttemptAt=0;}};
 }
 (async()=>{
+ // Dictation is plain speech even if a Whisper worker sends timed segments,
+ // SRT cues or WebVTT. Spoken times are not subtitle metadata.
+ {
+  const f=fixture();
+  f.context.raw='[00:00:01.250] First sentence.\n[00:00:02.750] Meet at 10:30.';
+  assert.equal(f.run('plainDictationText(raw)'),'First sentence. Meet at 10:30.');
+  f.context.raw='1\n00:00:00,000 --> 00:00:01,000\nFirst.\n\n2\n00:00:01,000 --> 00:00:02,000\nSecond.';
+  assert.equal(f.run('plainDictationText(raw)'),'First. Second.');
+  f.context.raw='WEBVTT\n\n00:01.000 --> 00:02.000\nHello.';
+  assert.equal(f.run('plainDictationText(raw)'),'Hello.');
+  f.context.raw='Follow up at 12:45.\nKeep the next line.';
+  assert.equal(f.run('plainDictationText(raw)'),f.context.raw);
+  f.context.raw='1\n00:00:01,000 --> 00:00:02,000\n*cat meows*\n';
+  assert.equal(f.run('offsetSoundSrt(raw)'),f.context.raw,'Explicit .srt output retains its timings.');
+ }
  // Legacy queues must not resume a billed provider after migration.
  {
   const f=fixture();f.context.raw=[makeJob({provider:undefined,status:'error',error:'Google billing denied',sections:[section(0,true),section(10)]})];
@@ -55,7 +70,7 @@ function fixture(job=makeJob()){
   const posted=JSON.parse(f.calls[0].options.body);assert.equal(f.stats.registered,1);assert.equal(posted.clientRequestId,'job-1');assert.deepEqual(posted.sections.map(s=>s.start),[10,20]);assert.equal(f.stats.released,0);assert.equal(f.job.remoteId,'remote-1');
   f.context.raw=JSON.parse(JSON.stringify([f.job]));const reopened=f.run('validateTranscriptionJobs(raw,state.nodes[0].attachments)')[0];assert.equal(reopened.remoteId,'remote-1');assert.equal(reopened.backendUrl,f.state.projectCloud.backendUrl);assert.equal(reopened.remoteRequestId,'job-1');f.state.nodes[0].transcriptionJobs=[reopened];
   f.control.get=()=>({id:'remote-1',status:'complete',result:{sections:[{start:10,end:20,text:'[00:00:10.000] Second.'},{start:20,end:30,text:'[00:00:20.000] Third.'}]}});
-  await f.pump();assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.transcripts[0].text,'[00:00:00.000] Already complete.\n\n[00:00:10.000] Second.\n\n[00:00:20.000] Third.');assert.equal(f.stats.released,1);assert.equal(f.stats.gemini,0);assert.equal(f.state.nodes[0].transcriptionJobs.length,0);
+  await f.pump();assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);assert.equal(f.transcripts[0].text,'Already complete. Second. Third.');assert.equal(f.stats.released,1);assert.equal(f.stats.gemini,0);assert.equal(f.state.nodes[0].transcriptionJobs.length,0);
  }
  // Progress polling does not repeatedly autosave the pending audio payload.
  {

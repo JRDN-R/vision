@@ -787,13 +787,29 @@ function syncQueueHistory(n,job,finished=false){
 }
 function queueChanged(n){markDirty();refreshNodeAttachments(n);if(selected===n.id)renderAttachments();renderTranscriptionQueue();}
 function queuedTranscriptText(job){return job.sections.filter(s=>s.done).map(s=>s.text||'').filter(Boolean).join('\n\n');}
+// Dictation and normal audio transcripts are readable text. Only dedicated SRT
+// attachments retain cue timings. Never remove a spoken time such as "10:30".
+function plainDictationText(value){
+ const text=String(value||'').replace(/\r\n?/g,'\n'),lines=text.split('\n');
+ const clock='(?:\\d{1,4}:)?\\d{2}:\\d{2}(?:[.,]\\d{1,3})?';
+ const cue=new RegExp('^\\s*'+clock+'\\s*-->\\s*'+clock+'(?:\\s+.*)?$');
+ const prefix=new RegExp('^\\s*\\[(?:Section start\\s+)?'+clock+'\\]\\s*');
+ if(!lines.some(line=>cue.test(line)||prefix.test(line)))return text.trim();
+ return lines.map((line,index)=>{
+  const stripped=line.trim().replace(/^\uFEFF/,'');
+  if(cue.test(stripped)||( /^\d+$/.test(stripped)&&cue.test(lines[index+1]||'')))return'';
+  if(stripped==='WEBVTT'||/^(?:Kind|Language):\s*/.test(stripped))return'';
+  return line.replace(prefix,'').trim();
+ }).filter(Boolean).join(' ');
+}
 function finishQueuedTranscript(runtime){
  if(!queueAlive(runtime))return;
- const{n,source,job}=runtime,text=queuedTranscriptText(job);
+ const{n,source,job}=runtime,rawText=queuedTranscriptText(job);
+ const text=job.sourceKind==='video'?rawText:plainDictationText(rawText);
  if(job.sourceKind==='video')storeVideoTranscript(n,source,videoTranscriptClock(text,job.offsetSeconds)||'[The transcription service returned no speech.]','complete');
  else saveTranscript(n,source,text,'complete');
  if(job.includeSoundEvents)saveSoundSubtitles(n,source,job);
- if(source.transcriptToPrompt&&typeof applyImportedTranscript==='function')applyImportedTranscript(n,source,job.soundResult?.speechText??text);
+ if(source.transcriptToPrompt&&typeof applyImportedTranscript==='function')applyImportedTranscript(n,source,plainDictationText(job.soundResult?.speechText??text));
  syncQueueHistory(n,job,true);n.transcriptionJobs=n.transcriptionJobs.filter(j=>j!==job);releaseCompletedSourceAudio(n,source);queueChanged(n);const warning=job.soundResult?.warnings?.join(' ');if(typeof recordActivity==='function')recordActivity(job.sourceName,warning?'Speech saved · '+warning:job.includeSoundEvents?'Speech and sound effects complete':'Transcription complete');toast(warning?job.sourceName+': '+warning:'Transcription complete: '+job.sourceName,!!warning);
 }
 async function localASRRequest(runtime,path,options={}){
