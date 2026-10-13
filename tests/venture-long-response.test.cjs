@@ -57,10 +57,15 @@ test('queued, stopping and limited continuation context are labelled', () => {
   assert.equal(sandbox.ventureUltraProgress(run), '');
 });
 
-test('checkbox reflects explicit off and old servers keep the control disabled', () => {
-  const {sandbox, elements} = setup({contexts: [4096, 8192, 32768], capabilities: {longResponses: true}});
+test('checkbox preserves an off choice across capability loading and disables known old servers', () => {
+  const {sandbox, elements} = setup(null);
   assert.match(sandbox.ventureUltraControls(), /id="ventureUltraLongResponses"/);
   sandbox.venture.settings.qwenUltra = {longResponses: false};
+  assert.equal(sandbox.ventureUltraOptions(sandbox.venture.settings.qwenUltra).longResponses, false);
+  sandbox.venturePaintUltra();
+  assert.equal(sandbox.venture.settings.qwenUltra.longResponses, false);
+  assert.equal(sandbox.ventureReadUltra().longResponses, false);
+  sandbox.venture.localCapability.ultra = {contexts: [4096, 8192, 32768], capabilities: {longResponses: true}};
   sandbox.venturePaintUltra();
   assert.equal(elements.get('ventureUltraLongResponses').checked, false);
   assert.equal(elements.get('ventureUltraLongResponses').disabled, false);
@@ -70,4 +75,5 @@ test('checkbox reflects explicit off and old servers keep the control disabled',
   sandbox.venturePaintUltra();
   assert.equal(elements.get('ventureUltraLongResponses').disabled, true);
   assert.equal(Object.hasOwn(sandbox.ventureReadUltra(), 'longResponses'), false);
+  assert.equal(Object.hasOwn(sandbox.venture.settings.qwenUltra, 'longResponses'), false);
 });
