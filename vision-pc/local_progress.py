@@ -2,13 +2,14 @@
 import re
 
 PROGRESS_INSTRUCTION = (
-    '\nWhen thinking is enabled, at meaningful changes of approach you may write one brief '
-    'public-facing progress summary inside <progress_summary>...</progress_summary> in the '
-    'reasoning channel only. Describe what you are currently working on in everyday language, '
+    '\nWhen thinking is enabled, begin with a brief public-facing progress summary, then '
+    'provide another only when your approach meaningfully changes. Enclose each summary '
+    'inside <progress_summary>...</progress_summary> in the reasoning channel only. '
+    'Describe what you are currently working on in everyday language, '
     'using 3 to 30 words, usually 20 to 30 if useful. Summarize the activity, not private '
     'step-by-step reasoning, calculations, instructions, or the answer. Avoid jargon, filler, '
     'repetition, and claims of tools or actions you have not used. Do not invent progress. '
-    'Never put these tags in the final answer. These optional notes must not delay the answer.'
+    'Never put these tags in the final answer. Keep notes brief and continue with the answer.'
 )
 
 
