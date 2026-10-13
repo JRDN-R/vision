@@ -52,21 +52,106 @@ class SummaryParser:
         return notes
 
 
+class VisibleSummaryFilter:
+    """Route in-band progress notes away from the streamed Markdown answer.
+
+    Some llama.cpp templates deliver the model's public note in content rather
+    than reasoning_content. Withhold incomplete tag prefixes and marked blocks
+    across arbitrary token boundaries so they never flash in the answer.
+    """
+
+    start = SummaryParser.start
+    end = SummaryParser.end
+
+    def __init__(self):
+        self.buffer = ''
+        self.inside = False
+        self.invalid = False
+
+    def feed(self, text):
+        if not isinstance(text, str):
+            return '', []
+        visible, notes = [], []
+        for offset in range(0, len(text), 1024):
+            self.buffer += text[offset:offset + 1024]
+            while self.buffer:
+                if not self.inside:
+                    # Discard an orphan closing marker as well as complete blocks.
+                    positions = [(i, marker) for marker in (self.start, self.end)
+                                 if (i := self.buffer.find(marker)) >= 0]
+                    if positions:
+                        index, marker = min(positions, key=lambda item: item[0])
+                        visible.append(self.buffer[:index])
+                        self.buffer = self.buffer[index + len(marker):]
+                        self.inside = marker == self.start
+                        self.invalid = False
+                        continue
+                    # Retain only a suffix that could grow into a marker.
+                    keep = max((length for marker in (self.start, self.end)
+                                for length in range(1, min(len(marker), len(self.buffer) + 1))
+                                if self.buffer.endswith(marker[:length])), default=0)
+                    visible.append(self.buffer[:-keep] if keep else self.buffer)
+                    self.buffer = self.buffer[-keep:] if keep else ''
+                    break
+
+                index = self.buffer.find(self.end)
+                if index >= 0:
+                    note = ' '.join(self.buffer[:index].split())
+                    if (not self.invalid and 3 <= len(note.split()) <= 30
+                            and len(note) <= 500 and not re.search(r'[<>\x00-\x08]', note)):
+                        notes.append(note)
+                    self.buffer = self.buffer[index + len(self.end):]
+                    self.inside = False
+                    self.invalid = False
+                    continue
+
+                # Overlong/malformed blocks remain hidden until their closing
+                # marker, without accumulating multi-hour generation output.
+                if len(self.buffer) > 2048:
+                    self.invalid = True
+                    self.buffer = self.buffer[-(len(self.end) - 1):]
+                break
+        return ''.join(visible), notes
+
+    def finish(self):
+        # An unterminated marked block is not an answer.
+        tail = '' if self.inside else self.buffer
+        self.buffer = ''
+        self.inside = False
+        if len(tail) >= 4 and (self.start.startswith(tail) or self.end.startswith(tail)):
+            return ''
+        return tail
+
+
 def summary_events(events):
-    """Filter raw reasoning before it leaves the runtime adapter."""
-    parser = SummaryParser()
+    """Keep private reasoning and in-band summary markup out of visible output."""
+    reasoning_parser = SummaryParser()
+    visible_filters = {}
     for event in events:
         result = dict(event)
         choices, notes, thinking = [], [], False
-        for choice in event.get('choices', []):
+        for position, choice in enumerate(event.get('choices', [])):
             value = dict(choice)
             delta = dict(value.get('delta') or {})
+            index = value.get('index', position)
             reasoning = delta.pop('reasoning_content', None)
             alternate = delta.pop('reasoning', None)
             reasoning = reasoning if isinstance(reasoning, str) else alternate
             if isinstance(reasoning, str) and reasoning:
                 thinking = True
-                notes.extend(parser.feed(reasoning))
+                notes.extend(reasoning_parser.feed(reasoning))
+            for field in ('content', 'refusal'):
+                if isinstance(delta.get(field), str):
+                    stream = visible_filters.setdefault((index, field), VisibleSummaryFilter())
+                    delta[field], extracted = stream.feed(delta[field])
+                    notes.extend(extracted)
+                # Flush any withheld ordinary text on the terminal chunk.
+                if value.get('finish_reason'):
+                    stream = visible_filters.pop((index, field), None)
+                    if stream:
+                        tail = stream.finish()
+                        if tail:
+                            delta[field] = (delta.get(field) or '') + tail
             value['delta'] = delta
             choices.append(value)
         result['choices'] = choices
@@ -75,6 +160,12 @@ def summary_events(events):
         if notes:
             result['localProgressSummaries'] = notes[:8]
         yield result
+    # A disconnect may omit finish_reason. Preserve any ordinary text already
+    # produced, but never expose an unfinished progress-summary block.
+    for (index, field), stream in visible_filters.items():
+        tail = stream.finish()
+        if tail:
+            yield {'choices': [{'index': index, 'delta': {field: tail}}]}
 
 
 class ProgressNotes:
