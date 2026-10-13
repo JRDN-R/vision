@@ -22,8 +22,7 @@ It requires the existing pinned Qwen Local runtime and an enabled localAI
 installation. It does not change any account's default model. Refresh the
 updated Vision app and explicitly select **Qwen Ultra**.
 
-Pass `-SourceRef <40-character-reviewed-commit>` to pin application code. The
-standalone download supplied with the change is already pinned. Use
+Pass `-SourceRef <40-character-reviewed-commit>` to pin application code. Use
 `-SkipCodeUpdate` when the server already runs that code. Resumable model bytes
 are retained after interrupted downloads; original models are never overwritten.
 
@@ -34,13 +33,27 @@ After the code update, these commands operate without a server restart:
 .\Qwen-Ultra.ps1 -Action Check
 .\Qwen-Ultra.ps1 -Action Tune
 .\Qwen-Ultra.ps1 -Action Tune -ContextTokens 16384
+.\Qwen-Ultra.ps1 -Action Tune -ContextTokens 32768
 .\Qwen-Ultra.ps1 -Action Disable
 ```
+
+An optional explicit `-ContextTokens 65536` is also supported. It is not enabled
+until the actual PC passes its larger-context checks. Large-context validation
+can take hours or fail because of memory, drivers, or speed; it is not a promise
+that a 48 GB machine can run every setting. A failed attempt to upgrade a still-
+valid smaller context keeps that smaller readiness receipt. Stale or mismatched
+receipts remain disabled. Select the successfully tested context in Venture
+settings after tuning; the default stays 8,192, not an automatic RAM increase.
 
 Tune uses the same OS inference lock as Venture and exits if local work is
 active. Requests accepted while tuning remain queued. Disable removes only the
 Ultra readiness receipt. Removing/changing the receipt prevents queued Ultra
 requests from silently using another model. It never falls back to a cloud API.
+
+For an already installed model, update the server with the existing
+`Update-Venture.ps1`, then refresh Venture (or rebuild/download the portable
+application). Updating application code restarts the processor: allow existing
+jobs to finish first. A merge in GitHub alone does not update the Windows PC.
 
 ## Model and disk requirements
 
@@ -63,6 +76,77 @@ requests from silently using another model. It never falls back to a cloud API.
 The publisher's “Ultra-Uncensored” name does not certify accuracy or zero
 refusals. Installation does not run a refusal benchmark.
 
+## Long responses: reasoning space plus answer space
+
+**Long responses** is enabled by default for newly accepted Ultra jobs. Turn it
+off in Ultra settings to retain the old single-pass output limit. Already queued
+jobs without this setting retain their original profile snapshot. Other models
+and paid API requests are unchanged.
+
+In long-response mode, the existing 512–4,096 output slider is an **answer-space
+reserve per pass**, not a whole-answer or whole-reasoning cap. The server counts
+the actual rendered prompt with the installed tokenizer, uses the remaining
+tested context for generation, and sends a separate native thinking budget:
+
+```
+generation allowance = tested context - rendered prompt - 256
+thinking allowance   = max(0, generation allowance - answer reserve - 64)
+```
+
+The additional 64 tokens leave room for ending the thinking section. The pinned
+runtime's `thinking_budget_tokens` field is handled by the sampling bridge in
+[server-common.cpp](https://github.com/ggml-org/llama.cpp/blob/f2cc7282ce0042641df55e0e563b75e824e2b647/tools/server/server-common.cpp).
+It depends on the model template exposing thinking end tags. No model weights,
+safety behavior, system instructions, or memory protections are changed.
+
+For example, with a **validated 32,768-token context**, a 2,000-token rendered
+prompt and a 2,048-token answer reserve, the generation allowance is 30,512 and
+the thinking allowance is 28,400. This is an illustration, not a measurement of
+a specific user's request. A bigger input leaves less room for generation. The
+server rejects an input that cannot fit without the required answer space; it
+does not silently cut the current question or selected evidence.
+
+When the runtime ends with `finish_reason=length`, Venture keeps the visible
+answer and continues it in the same durable job. Later passes write the answer
+without starting another private thinking phase. An empty, length-limited first
+pass gets at most one direct-response recovery. A normal completed response,
+including a refusal, is not retried. Filter results, errors and disconnected
+streams are not treated as permission to retry or bypass a stop.
+
+All visible text is saved while it arrives and at pass boundaries, under the
+same account and conversation. Private reasoning text is neither saved nor
+exposed. Total token usage is aggregated over passes. Long-response progress
+shows work/saved passes rather than a fabricated whole-job percentage or ETA.
+
+If the previous visible answer becomes too large to include in the next context,
+Venture uses its ending and labels the earlier sections as omitted from that
+continuation's context. The original request, instructions and source evidence
+remain present. Earlier generated sections stay saved in the conversation.
+This is not an infinite context or exact hidden-state continuation: coherence
+across a very large document still needs review. If even a short ending cannot
+fit alongside the original evidence, the partial answer is kept with a clear
+context message. Exact repeated large sections are removed and the loop stops.
+
+## Time, memory and retention limits
+
+The 27B profile reserves at least 10 GiB system RAM (or the existing higher
+reserve), stops over 30 GiB process RSS, and retains the **five-hour processing
+limit** for each accepted run, excluding time waiting in the FIFO queue. Every
+continuation shares that same job deadline and cancellation callback; it does
+not reset a five-hour timer on every pass. Long-response mode is additionally
+bounded to **64 generation passes** and **1,000,000 visible characters**. It does
+not run forever, promise a useful answer to every request, or increase RAM
+allocations automatically.
+
+Browser navigation, Safari suspension and client polling timeouts do not cancel
+accepted work; the server owns it. The local stream/tokenization read deadline
+allows slow CPU processing. Clicking Stop, memory pressure, a runtime failure,
+or reaching a genuine job/retention limit can end work. Saved visible partial
+output is retained and the reason is reported. Server/Windows restarts still
+interrupt inference; saved text is retained but no hidden-state job is silently
+replayed after restart. These protections and short benchmarks do not certify
+livestream coexistence.
+
 ## Software performance tuning
 
 This tunes inference rather than clocks: no BIOS, voltage, overclock, power-plan
@@ -84,31 +168,14 @@ The installer saves a local `tuning-report.json` and a readiness receipt beside
 the model under `local-ai/ultra/<revision>` (or beside the existing custom model
 path). No prompts or machine inventory are uploaded.
 
-The normal default remains an 8,192-token deployed context, with a selectable
-4,096-token setting. A successful explicit 16,384-token Tune unlocks that option.
-The upstream 262,144-token architectural limit is not offered as an untested
-48 GB PC setting. Output is 512–4,096 tokens and must leave at least 576 context
-tokens for the request/template. Thinking consumes the same output budget.
-Temperature, top P, top K, min P, repeat/presence penalties and seed map directly
-to runtime parameters. Hardware profiles are server-resolved, never client paths
-or arbitrary command arguments. Each queued job snapshots its effective profile.
+Context options are 4,096 and 8,192, with 16,384, 32,768 and 65,536 unlocked only
+by successful explicit tests. The upstream 262,144-token architectural limit
+is not offered as an untested 48 GB PC setting. Hardware profiles are server-
+resolved, never client paths or arbitrary command arguments. Each queued job
+snapshots its effective profile. Temperature, top P, top K, min P, repeat/presence
+penalties and seed map directly to runtime parameters.
 
-The 27B profile reserves at least 10 GiB system RAM (or the existing higher
-reserve), stops over 30 GiB process RSS, and has a **five-hour processing limit**
-for each accepted run (excluding time waiting in the FIFO queue). Browser
-navigation, Safari suspension, and client polling timeouts do not cancel accepted
-work; the server keeps the run and saves visible text as it arrives. The local
-stream/tokenization read deadline is also extended so a slow CPU response does
-not fail after 120 seconds without data. Server/Windows restarts still interrupt
-active inference; already saved partial text remains available, not replayed.
-
-The separate **4,096 output-token cap** is unchanged. Hidden thinking and
-visible answer text share it, so an output-budget failure can yield zero visible
-text long before the five-hour processing limit. Venture distinguishes that
-failure from a timeout. These controls and a short benchmark do not certify
-livestream coexistence.
-
-## Capabilities and waiting time
+## Capabilities and verification boundary
 
 Ultra uses Venture's existing authenticated file preparation, board retrieval,
 history and memory. Image/frame analysis uses the **existing separate visual
@@ -118,25 +185,19 @@ paths remain anchored; Ultra does not download a second projector or claim nativ
 the integrated path. Web search, code execution and image generation remain
 unavailable; code writing/review and reading supported files work as before.
 
-The composer shows a “grab a coffee” range and approximate local-clock return
-window from measured loading, prompt and generation speed. Before submission it
-uses the full available prompt/output budget, including thinking. Its uncertainty
-range is 0.65–1.6 times that budget estimate, not a statistical confidence interval.
-Answers may finish sooner. Queueing, attachments and other PC work can add time.
-In-progress estimates prefer this account's comparable completed requests;
-isolated text turns can use the benchmark until enough history exists. Unknown
-visual/queue duration and overruns remain explicit rather than counting to zero.
+Single-pass timing calibration remains separate from long-response profiles;
+multi-pass jobs are not admitted as single-prompt throughput samples. The number
+of long-response passes is not known in advance, so the UI shows saved work and
+an indeterminate indicator rather than counting down to a guessed finish time.
 
-## Verification boundary
-
-Offline tests exercise parameter rejection, profile pinning, CPU/GPU candidate
-selection, benchmark estimation, template/sampling forwarding, authenticated
-no-key routing, no billing, account isolation, conversation continuation and
-receipt invalidation. Browser tests cover mobile/desktop layout, original Qwen
-animation, Ultra gold shimmer, reduced motion, settings restoration and timing.
+Offline tests exercise parameter rejection, profile pinning, native-budget
+forwarding, context accounting, retained partial answers, automatic continuation,
+bounded empty recovery, refusal/filter stops, cancellation, duplicate detection,
+account isolation, larger-context gating and old-server UI compatibility.
 Windows CI parses the PowerShell script; it does not install large model weights.
 
-The real 27B model, its Windows driver and actual CPU/GPU throughput cannot be
-verified by these fixtures. The installer performs those local checks before
-enabling Ultra. Exact speed or a percentage performance improvement is not
-promised in advance.
+The real 27B model, its Windows driver, native thinking-boundary behavior and
+actual long-run CPU/GPU throughput require on-device validation. Test with benign
+requests, such as a long code explanation and a multi-part mathematical problem,
+before relying on it for a lengthy job. Neither successful fixtures nor a longer
+budget certify answer accuracy, complete source coverage, or guaranteed completion.
