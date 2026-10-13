@@ -2,7 +2,7 @@
 const VENTURE_ULTRA_ID='qwen-ultra-local';
 const VENTURE_ULTRA_DEFAULTS={contextTokens:8192,thinking:true,longResponses:true,performance:'auto',temperature:.6,topP:.95,topK:20,minP:0,repeatPenalty:1,presencePenalty:0,seed:-1};
 const VENTURE_ULTRA_DIALS=[['temperature','Temperature',0,2,.05],['topP','Top P',.01,1,.01],['topK','Top K',0,100,1],['minP','Min P',0,1,.01],['repeatPenalty','Repeat penalty',.8,1.5,.01],['presencePenalty','Presence penalty',-2,2,.1]];
-function ventureUltraOptions(value){const result=Object.fromEntries(Object.entries(VENTURE_ULTRA_DEFAULTS).map(([k,v])=>[k,value?.[k]??v]));if(ventureUltraCapability()?.capabilities?.longResponses!==true)delete result.longResponses;return result;}
+function ventureUltraOptions(value){const result=Object.fromEntries(Object.entries(VENTURE_ULTRA_DEFAULTS).map(([k,v])=>[k,value?.[k]??v])),cap=ventureUltraCapability();if(cap&&cap.capabilities?.longResponses!==true)delete result.longResponses;return result;}
 function ventureUltraCapability(){return venture.localCapability?.ultra||null;}
 function ventureUltraControls(){return '<section id="ventureUltraControls" class="venture-ultra-controls" hidden><p class="venture-ultra-label">27B · Ultra-Uncensored Heretic · Q4_K_M</p><label class="venture-ultra-check"><input id="ventureUltraThinking" type="checkbox">Multistep thinking</label><p class="venture-fine-print">Thinking can take longer. “Uncensored” is the publisher’s description; refusals and mistakes can still occur.</p><label class="venture-ultra-check"><input id="ventureUltraLongResponses" type="checkbox">Long responses · keep working and save progress</label><p id="ventureUltraLongHelp" class="venture-fine-print">Uses the tested context, reserves answer space, and continues long replies automatically. May take hours.</p><label for="ventureUltraContext">Context window</label><select id="ventureUltraContext"><option value="4096">4,096 tokens</option><option value="8192">8,192 tokens</option></select><label for="ventureUltraPerformance">Performance</label><select id="ventureUltraPerformance"><option value="auto">Fastest measured profile</option><option value="cpu">Measured CPU profile</option></select><p id="ventureUltraHardware" class="venture-fine-print"></p><details><summary>Sampling controls</summary>'+VENTURE_ULTRA_DIALS.map(([k,label,min,max,step])=>'<label class="venture-dial-label" for="ventureUltra_'+k+'">'+label+'<output id="ventureUltraValue_'+k+'"></output></label><input id="ventureUltra_'+k+'" type="range" min="'+min+'" max="'+max+'" step="'+step+'">').join('')+'<label for="ventureUltraSeed">Seed (−1 = random)</label><input type="number" id="ventureUltraSeed" min="-1" max="2147483647" step="1"></details><p class="venture-fine-print">File reading, code writing and the installed image worker are available through Venture. Web search, code execution and image generation are not integrated with this model.</p></section>';}
 function venturePaintUltra(){
@@ -13,6 +13,8 @@ function venturePaintUltra(){
  $('ventureUltraContext').innerHTML=[...new Set([...contexts,o.contextTokens])].sort((a,b)=>a-b).map(n=>'<option value="'+n+'"'+(!contexts.includes(n)?' disabled':'')+'>'+n.toLocaleString()+' tokens'+(!contexts.includes(n)?' · needs tuning':'')+'</option>').join('');
  $('ventureUltraContext').value=o.contextTokens;$('ventureUltraThinking').checked=o.thinking;$('ventureUltraPerformance').value=o.performance;
  const longAvailable=cap?.capabilities?.longResponses===true;
+ // Unknown capability is not an old server: do not erase a saved off choice during initial loading.
+ if(cap&&!longAvailable&&venture.settings.qwenUltra)delete venture.settings.qwenUltra.longResponses;
  $('ventureUltraLongResponses').disabled=!longAvailable;$('ventureUltraLongResponses').checked=longAvailable&&o.longResponses!==false;
  $('ventureUltraLongHelp').textContent=!longAvailable?'Update FUPCJ Server to enable long responses.':o.longResponses!==false?'Uses the available tested context and continues long replies automatically. The output slider reserves answer space per pass; it is not a whole-reply cap. May take hours. Stop remains available.':'Single pass: thinking and the answer share the selected output-token limit.';
  $('ventureUltraSeed').value=o.seed;
@@ -22,7 +24,9 @@ function venturePaintUltra(){
 }
 function ventureReadUltra(){
  const value={contextTokens:Number($('ventureUltraContext').value),thinking:$('ventureUltraThinking').checked,performance:$('ventureUltraPerformance').value,seed:Number($('ventureUltraSeed').value)};
- if(ventureUltraCapability()?.capabilities?.longResponses===true)value.longResponses=$('ventureUltraLongResponses').checked;
+ const cap=ventureUltraCapability();
+ if(cap?.capabilities?.longResponses===true)value.longResponses=$('ventureUltraLongResponses').checked;
+ else if(!cap&&typeof venture.settings.qwenUltra?.longResponses==='boolean')value.longResponses=venture.settings.qwenUltra.longResponses;
  for(const [k] of VENTURE_ULTRA_DIALS){value[k]=Number($('ventureUltra_'+k).value);$('ventureUltraValue_'+k).textContent=value[k];}
  return value;
 }
