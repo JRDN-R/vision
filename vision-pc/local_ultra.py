@@ -1,4 +1,5 @@
-"""Pinned, independent 27B model and strictly bounded per-request controls."""
+"""Pinned 27B profile, validated contexts, and bounded long-response generation."""
+import hashlib
 import math
 from pathlib import Path
 
@@ -11,7 +12,11 @@ SPEC = dict(modelRepository='JunLee88999/Qwen3.5-27B-heretic-v2-GGUF',
 SOURCE = 'llmfan46/Qwen3.5-27B-ultra-uncensored-heretic-v1'
 SOURCE_REVISION = '0b134ea2c3e0fef5f4f78194d1c86258c1c81b8f'
 SCHEMA = 'vision-ultra-ready-v1'
-DEFAULTS = dict(contextTokens=8192, thinking=True, performance='auto',
+CONTEXTS = (4096, 8192, 16384, 32768, 65536)
+CONTEXT_MARGIN = 256
+MAX_RESPONSE_PASSES = 64
+MAX_RESPONSE_CHARS = 1_000_000
+DEFAULTS = dict(contextTokens=8192, thinking=True, longResponses=True, performance='auto',
     temperature=.6, topP=.95, topK=20, minP=0., repeatPenalty=1., presencePenalty=0., seed=-1)
 RANGES = dict(temperature=(0.,2.), topP=(.01,1.), topK=(0,100), minP=(0.,1.),
               repeatPenalty=(.8,1.5), presencePenalty=(-2.,2.), seed=(-1,2147483647))
@@ -24,9 +29,10 @@ def normalize(value=None):
     if not isinstance(value, dict) or set(value) - set(DEFAULTS):
         raise LocalFailure('Invalid Qwen Ultra controls.')
     result = {**DEFAULTS, **value}
-    if (type(result['contextTokens']) is not int or result['contextTokens'] not in (4096,8192,16384) or
-            type(result['thinking']) is not bool or result['performance'] not in ('auto','cpu')):
-        raise LocalFailure('Choose a supported Ultra context, thinking setting and performance profile.')
+    if (type(result['contextTokens']) is not int or result['contextTokens'] not in CONTEXTS or
+            type(result['thinking']) is not bool or type(result['longResponses']) is not bool or
+            result['performance'] not in ('auto','cpu')):
+        raise LocalFailure('Choose supported Ultra context, thinking, long-response and performance settings.')
     for key, (low, high) in RANGES.items():
         x = result[key]
         if (type(x) not in (int,float) or not math.isfinite(x) or not low <= x <= high or
@@ -64,7 +70,7 @@ def readiness(profile):
             receipt.get('modelStamp') != stamp(profile['modelPath']) or
             receipt.get('runtimeStamp') != stamp(profile['runtimePath']) or
             stamp(profile['modelPath'])[0] != SPEC['modelBytes'] or
-            receipt.get('maxContextTokens') not in (8192,16384)):
+            receipt.get('maxContextTokens') not in CONTEXTS[1:]):
         raise LocalFailure('Qwen Ultra needs its installer benchmark before use.')
     return receipt
 
@@ -79,6 +85,7 @@ def select_profile(settings, options=None):
     selected = receipt['profiles'][controls['performance']]
     profile.update(selected['profile'])
     profile.update(contextTokens=controls['contextTokens'], thinking=controls['thinking'],
+                   longResponses=controls['longResponses'],
                    sampling={k:controls[k] for k in RANGES}, ultraPerformance=controls['performance'],
                    ultraBenchmark=selected['benchmark'], ultraReceipt=receipt['id'])
     return profile
@@ -100,7 +107,7 @@ def status(settings):
         nativeContextTokens=262144, contexts=[4096,8192], defaults=DEFAULTS,
         modelBytes=SPEC['modelBytes'], quantization='Q4_K_M', noApiTokenCharge=True,
         capabilities=dict(text=True, projectRetrieval=True, localFiles=True, vision=False,
-                          codeGeneration=True, codeExecution=False, webSearch=False))
+                          longResponses=True, codeGeneration=True, codeExecution=False, webSearch=False))
     try:
         profile = base_profile(settings)
         if Path(profile['modelPath']).is_file():
@@ -109,7 +116,7 @@ def status(settings):
         result.update(enabled=settings.get('enabled') is True,
             status='ready' if settings.get('enabled') is True else 'disabled',
             contextTokens=receipt['maxContextTokens'],
-            contexts=[n for n in (4096,8192,16384) if n <= receipt['maxContextTokens']],
+            contexts=[n for n in CONTEXTS if n <= receipt['maxContextTokens']],
             performance={k:dict(threads=v['profile']['threads'],gpuLayers=v['profile']['gpuLayers'],
                                benchmark=v['benchmark']) for k,v in receipt['profiles'].items()})
     except (OSError,ValueError,KeyError,TypeError):
@@ -118,7 +125,9 @@ def status(settings):
 
 
 def benchmark_estimate(profile, prompt_tokens, output_tokens, elapsed=0):
-    """Budget estimate, not a promise: output may end early; all thinking counts."""
+    """Budget estimate for single-pass jobs, not an unknown-length continuation."""
+    if profile.get('longResponses'):
+        return None
     b = profile.get('ultraBenchmark') or {}
     try:
         rates = [float(b[k]) for k in ('promptTokensPerSecond','generationTokensPerSecond')]
@@ -133,3 +142,136 @@ def benchmark_estimate(profile, prompt_tokens, output_tokens, elapsed=0):
                     estimatedRemainingSeconds=round(max(5,seconds-elapsed)),estimateSamples=1, estimateBasis='benchmark-output-budget')
     except (KeyError,ValueError,TypeError,ZeroDivisionError):
         return None
+
+
+def long_response(profile):
+    # Old queued snapshots have no flag and retain their original contract.
+    return profile.get('modelVariant') == 'ultra' and profile.get('longResponses') is True
+
+
+def response_budget(context_tokens, prompt_tokens, answer_reserve, thinking):
+    """Use actual rendered prompt size; leave space for visible output and closing tags."""
+    from local_runtime import LocalFailure
+    if (type(context_tokens) is not int or context_tokens not in CONTEXTS or
+            type(prompt_tokens) is not int or prompt_tokens < 0 or
+            type(answer_reserve) is not int or not 512 <= answer_reserve <= 4096):
+        raise LocalFailure('Invalid long-response budget.')
+    available = context_tokens - prompt_tokens - CONTEXT_MARGIN
+    if available < answer_reserve:
+        raise LocalFailure('The saved request leaves too little answer space in the tested context. '
+                           'Tune/select a larger context or reduce the selected answer reserve. Partial output is retained.')
+    reserve = answer_reserve
+    return dict(maxTokens=available, answerReserveTokens=reserve,
+                thinkingBudgetTokens=max(0, available-reserve-64) if thinking else 0)
+
+
+def continuation_messages(runtime, original, answer, context_tokens, reserve):
+    """Keep original instructions/evidence; use a labelled answer tail only when required."""
+    from local_runtime import LocalFailure
+    tail = answer
+    while tail:
+        clipped = len(tail) < len(answer)
+        instruction = ('Continue the unfinished answer immediately after the supplied ending, without repeating it. '
+                       'Keep following the original request and system instructions. Stop when the answer is complete. '
+                       'Do not invent missing facts or claim to see omitted text.')
+        if clipped:
+            instruction += ' Only the ending of your saved answer is included here; earlier sections remain saved but are omitted from this context.'
+        messages = [*original, dict(role='assistant', content=tail), dict(role='user', content=instruction)]
+        count = runtime.count(messages)
+        if count + reserve + CONTEXT_MARGIN <= context_tokens:
+            return messages, count, clipped
+        if len(tail) <= 256:
+            break
+        tail = answer[-max(256, len(tail)*3//4):]
+    raise LocalFailure('There is not enough tested context to continue this answer without dropping its original instructions. '
+                       'The partial answer is saved; use a larger validated context.')
+
+
+def response_events(runtime, messages, answer_reserve, context_tokens, profile):
+    """One durable job; native reasoning reserve, then bounded visible continuations.
+
+    The caller owns the same deadline/cancel callback for every pass. Never retry
+    stop/refusal/filter/error results. Private reasoning is neither retained nor
+    exposed. No new model, external call, or instruction override is introduced.
+    """
+    if not long_response(profile):
+        yield from runtime.generate(messages, answer_reserve)
+        return
+    from local_runtime import LocalFailure
+    original_thinking = getattr(runtime, 'thinking', profile.get('thinking', True))
+    original_budget = getattr(runtime, 'thinking_budget', None)
+    answer, seen, totals = '', set(), {}
+    direct_recovery = False
+    clipped_any = False
+    progress = {}
+    try:
+        for part in range(1, MAX_RESPONSE_PASSES + 1):
+            if runtime.cancelled():
+                raise InterruptedError()
+            # Continuations write the existing answer instead of redoing its private thought process.
+            runtime.thinking = bool(original_thinking and part == 1)
+            if answer:
+                current, count, clipped = continuation_messages(runtime, messages, answer, context_tokens, answer_reserve)
+                clipped_any |= clipped
+            else:
+                current, count = messages, runtime.count(messages)
+            budget = response_budget(context_tokens, count, answer_reserve, runtime.thinking)
+            runtime.thinking_budget = budget['thinkingBudgetTokens']
+            progress = dict(passNumber=part, completedPasses=part-1, inputTokens=count,
+                            continuationContextTruncated=clipped_any, directRecovery=direct_recovery, **budget)
+            yield {'localGeneration': progress,
+                   'localPhase': 'Continuing saved answer' if answer else 'Writing a direct response' if direct_recovery else 'Working on your answer'}
+            visible, finish, pass_usage = '', None, {}
+            for event in runtime.generate(current, budget['maxTokens']):
+                if runtime.cancelled():
+                    raise InterruptedError()
+                if event.get('error'):
+                    raise LocalFailure('The local model reported a generation failure. Partial output is retained.')
+                if isinstance(event.get('usage'), dict):
+                    pass_usage = {k:v for k,v in event['usage'].items()
+                                  if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v >= 0}
+                forwarded = {'choices': []}
+                if isinstance(event.get('timings'), dict):
+                    forwarded['timings'] = event['timings']
+                for choice in event.get('choices', []):
+                    delta = choice.get('delta') or {}
+                    content = delta.get('content') or delta.get('refusal') or ''
+                    if not isinstance(content, str):
+                        raise LocalFailure('Invalid local answer stream. Partial output is retained.')
+                    visible += content
+                    if len(answer) + len(visible) > MAX_RESPONSE_CHARS:
+                        raise LocalFailure('The saved answer reached the one-million-character retention limit. Partial output is retained.')
+                    finish = choice.get('finish_reason') or finish
+                    # The worker only sees the terminal finish reason after all continuations.
+                    forwarded['choices'].append({'delta': {'content': content}})
+                yield forwarded
+            for key, value in pass_usage.items():
+                totals[key] = totals.get(key, 0) + value
+            progress = {**progress, 'completedPasses': part, 'usage': dict(totals)}
+            yield {'localGeneration': progress, 'usage': dict(totals)}
+            if not finish:
+                raise LocalFailure('The local stream disconnected before a final result. Partial output is retained; it was not replayed.')
+            normalized = ''.join(visible.split())
+            digest = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+            if len(normalized) >= 256 and digest in seen:
+                yield {'localRetractCharacters': len(visible)}
+                yield {'localGeneration': {**progress, 'message': 'Qwen repeated a saved section. The duplicate was removed and the partial answer retained.'},
+                       'choices': [{'delta': {}, 'finish_reason': 'length'}], 'usage': dict(totals)}
+                return
+            seen.add(digest)
+            answer += visible
+            if finish != 'length':
+                # Includes a normal refusal: a completed refusal is not a failed generation.
+                yield {'choices': [{'delta': {}, 'finish_reason': finish}], 'usage': dict(totals)}
+                return
+            if not visible.strip():
+                if direct_recovery:
+                    yield {'localGeneration': {**progress, 'message': 'Qwen produced no visible text even after one direct-response recovery. Partial output is retained; no more retries were started.'},
+                           'choices': [{'delta': {}, 'finish_reason': 'length'}], 'usage': dict(totals)}
+                    return
+                direct_recovery = True
+        yield {'localGeneration': {**progress, 'message': 'This request reached 64 generation passes. The partial answer is saved; no unbounded retry loop was started.'},
+               'choices': [{'delta': {}, 'finish_reason': 'length'}], 'usage': dict(totals)}
+    finally:
+        runtime.thinking = original_thinking
+        runtime.thinking_budget = original_budget
