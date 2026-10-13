@@ -169,10 +169,10 @@ class VentureTests(unittest.TestCase):
         self.assertEqual(row['venture_retry_of'],second)
         self.assertEqual(len(self.client.get(self.path,headers=self.a).json['runs']),3)
 
-    def test_history_requires_response_and_titles_first_successful_exchange(self):
+    def test_history_starts_at_acceptance_and_titles_first_successful_exchange(self):
         first=self.submit().json['runId']
         self.service.update(first,status='error',text='',error='Unavailable')
-        self.assertEqual(self.client.get('/api/venture/conversations',headers=self.a).json['conversations'],[])
+        self.assertEqual(len(self.client.get('/api/venture/conversations',headers=self.a).json['conversations']),1)
         second=self.submit('request-venture-0002').json['runId']
         self.service.update(second,status='in_progress',text='Inspect the cowling gaps.')
         rows=self.client.get('/api/venture/conversations',headers=self.a).json['conversations']

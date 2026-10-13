@@ -435,7 +435,7 @@ class Venture:
             cursor=request.args.get('before','')
             # Drafts and requests with no assistant output remain recoverable by
             # ID, but never take up a place in the user's conversation history.
-            clauses=['uid=?','deleted_at IS NULL',"EXISTS(SELECT 1 FROM project_runs r WHERE r.project_id=venture_conversations.id AND (length(trim(r.text))>0 OR EXISTS(SELECT 1 FROM run_artifacts a WHERE a.run_id=r.id AND a.path IS NOT NULL)))"];params=[uid]
+            clauses=['uid=?','deleted_at IS NULL',"EXISTS(SELECT 1 FROM project_runs r WHERE r.project_id=venture_conversations.id)"];params=[uid]
             if term:clauses.append("title LIKE ? ESCAPE '\\'");params.append('%'+re.sub(r'([%_\\])',r'\\\1',term)+'%')
             if cursor:
                 try:

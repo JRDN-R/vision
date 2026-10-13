@@ -116,6 +116,9 @@ class UltraIntegrationTests(unittest.TestCase):
         selected=self.selected
         class Capture(existing.FakeRuntime):
             def __init__(self,settings,*args):super().__init__(settings,*args);selected.append(dict(settings))
+            def generate(self,*args):
+                yield from super().generate(*args)
+                yield {'timings':{'prompt_per_second':100,'predicted_per_second':2}}
         self.local.runtime_factory=Capture
 
     def test_distinct_catalog_no_key_no_billing_and_immutable_queued_settings(self):
@@ -131,6 +134,9 @@ class UltraIntegrationTests(unittest.TestCase):
         self.assertEqual(saved['status'],'completed',saved)
         self.assertEqual(saved['model'],ultra.MODEL)
         self.assertEqual(saved['localQueue']['modelVariant'],'ultra')
+        self.assertTrue(self.selected[-1]['benchmark'])
+        with self.local.db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM ultra_timing_samples').fetchone()[0],1)
         self.assertFalse(self.selected[-1]['thinking'])
         self.assertEqual(self.selected[-1]['threads'],8)
         self.assertEqual(self.selected[-1]['sampling']['temperature'],.3)

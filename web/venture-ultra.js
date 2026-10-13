@@ -22,22 +22,47 @@ function ventureReadUltra(){
  for(const [k] of VENTURE_ULTRA_DIALS){value[k]=Number($('ventureUltra_'+k).value);$('ventureUltraValue_'+k).textContent=value[k];}
  return value;
 }
-function ventureUltraEstimate(){
- const o=ventureUltraOptions(venture.settings.qwenUltra),b=ventureUltraCapability()?.performance?.[o.performance]?.benchmark;
- if(!b||![b.promptTokensPerSecond,b.generationTokensPerSecond].every(n=>Number.isFinite(n)&&n>0)||!Number.isFinite(b.loadSeconds))return null;
- const output=venture.settings.maxOutputTokens,seconds=b.loadSeconds+Math.max(1,o.contextTokens-output-64)/b.promptTokensPerSecond+output/b.generationTokensPerSecond;
- return [Math.max(5,Math.round(seconds*.65)),Math.max(10,Math.round(seconds*1.6))];
+
+const VENTURE_ULTRA_COFFEE_IMAGE=/* VISION_ULTRA_COFFEE_IMAGE */ './qwen-ultra-coffee.png';
+const ventureUltraProgressState=new Map();
+async function ventureUltraNotice(){
+ if(venture.ultraNoticePromise)return venture.ultraNoticePromise;
+ const epoch=venture.epoch;
+ const task=(async()=>{
+  let notice;
+  try{notice=await ventureJSON('/venture/ultra/notice');}
+  catch(error){if(epoch===venture.epoch)ventureSetNotice('Unable to check the Ultra notice. Update FUPCJ Server and try again. '+ventureError(error));return false;}
+  if(epoch!==venture.epoch)return false;
+  if(notice.due===false){venture.localAcknowledged=true;return true;}
+  return new Promise(resolve=>{
+   const dialog=document.createElement('dialog');dialog.className='venture-ultra-notice';dialog.setAttribute('aria-labelledby','ventureUltraNoticeTitle');dialog.setAttribute('aria-describedby','ventureUltraNoticeCopy');
+   dialog.innerHTML='<img class="venture-ultra-coffee" src="'+VENTURE_ULTRA_COFFEE_IMAGE+'" alt="A smiling character relaxing with a cup of coffee"><span class="venture-ultra-eyebrow">QWEN ULTRA</span><h2 id="ventureUltraNoticeTitle">Good things take a little time.</h2><p id="ventureUltraNoticeCopy">Qwen Ultra runs locally on the FUPCJ server. Responses may take significantly longer, so grab yourself a coffee and settle in. Your request keeps running if you leave.</p><p class="venture-ultra-notice-error" role="status"></p><button type="button" data-accept>Acknowledge</button>';
+   let accepted=false;document.body.appendChild(dialog);
+   dialog.querySelector('[data-accept]').onclick=async()=>{
+    const button=dialog.querySelector('[data-accept]');button.disabled=true;
+    try{await ventureJSON('/venture/ultra/notice','POST',{});if(epoch!==venture.epoch){dialog.close();return;}venture.localAcknowledged=true;accepted=true;dialog.close();}
+    catch(error){if(epoch===venture.epoch){dialog.querySelector('[role="status"]').textContent=ventureError(error);button.disabled=false;}}
+   };
+   dialog.addEventListener('close',()=>{dialog.remove();resolve(accepted&&epoch===venture.epoch);},{once:true});dialog.showModal();
+  });
+ })();
+ venture.ultraNoticePromise=task;
+ try{return await task;}finally{if(venture.ultraNoticePromise===task)venture.ultraNoticePromise=null;}
 }
-function ventureUltraCoffee(range){
- if(!Array.isArray(range)||range.length!==2||!range.every(n=>Number.isFinite(n)&&n>=0)||range[1]<range[0])return '';
- const now=Date.now(),clock=n=>new Date(now+n*1000).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
- return 'Grab a coffee — allow about '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+', around '+clock(range[0])+'–'+clock(range[1])+'.';
-}
-function venturePaintUltraWait(){
- const el=$('ventureUltraWait');if(!el)return;el.hidden=venture.settings.model!==VENTURE_ULTRA_ID;if(el.hidden)return;
- const cap=ventureUltraCapability(),active=venture.runs?.find(ventureActive);
- if(!cap?.enabled){el.textContent='Qwen Ultra needs installation and tuning on FUPCJ before it can run.';return;}
- if(active){el.textContent='Ultra can take a while. Your accepted request keeps running when you leave; its current estimate appears with the response.';return;}
- const range=ventureUltraEstimate();
- el.textContent=(range?ventureUltraCoffee(range)+' Based on the measured speed and full token budget; answers may finish sooner.':'Ultra can take a while. Timing becomes available after the PC benchmark.')+(venture.files?.length||$('ventureIncludeBoard')?.checked?' Images, files and board preparation add time.':'')+' Queueing and other PC work can extend this estimate.';
+function ventureUltraProgress(run){
+ const active=ventureActive(run),q=run.localQueue||{};
+ let state=ventureUltraProgressState.get(run.runId);
+ if(!active){
+  if(!state)return '';
+  if(run.status!=='completed'){ventureUltraProgressState.delete(run.runId);return '';}
+  state.percent=100;
+  return '<div class="venture-loading venture-ultra-loading is-finished"><div class="venture-progress-track is-ultra" role="progressbar" aria-label="Response complete" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span style="width:100%"></span></div></div>';
+ }
+ if(!state){state={percent:0};ventureUltraProgressState.set(run.runId,state);if(ventureUltraProgressState.size>100)ventureUltraProgressState.delete(ventureUltraProgressState.keys().next().value);}
+ const total=q.estimatedTotalSeconds,elapsed=q.processingSeconds||0,hasETA=Number.isFinite(total)&&total>0&&Number.isFinite(q.estimatedCompletionAt);
+ if(hasETA)state.percent=Math.max(state.percent,Math.min(97,100*elapsed/total));
+ const labels=ventureLoadingLabels(run),clock=hasETA?new Date(q.estimatedCompletionAt*1000).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
+ const caption=q.requestsAhead||run.status==='queued'?'ETA available when your turn begins':hasETA?(q.estimateStatus==='overrun'?'Taking longer than estimated · originally expected ':'Estimated completion · ')+clock:q.estimateStatus==='preparing'?'Preparing your files · ETA follows':'Measuring response time…';
+ const basis=hasETA?(q.estimateBasis==='calibrated'?'Based on the saved server calibration':'Initial estimate · learning from completed responses'):'';
+ return '<div class="venture-loading venture-ultra-loading"><div class="venture-loading-heading"><venture-loading-symbol aria-hidden="true"></venture-loading-symbol><span role="status">'+escapeHTML(run.phase==='Stopping'?'Stopping your response…':labels[0])+'</span></div><div class="venture-progress-track is-ultra" role="progressbar" aria-label="Estimated response progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(state.percent)+'" aria-valuetext="'+escapeHTML(caption)+'"><span style="width:'+state.percent.toFixed(3)+'%"></span></div><span class="venture-progress-estimate">'+escapeHTML(caption)+'</span>'+(basis?'<small class="venture-ultra-estimate-basis">'+escapeHTML(basis)+'</small>':'')+'</div>';
 }

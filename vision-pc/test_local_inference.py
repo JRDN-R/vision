@@ -7,6 +7,7 @@ import subprocess
 import sys
 import os
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import server
@@ -68,6 +69,32 @@ class LocalInferenceTests(unittest.TestCase):
         value.update(options)
         return self.client.post('/api/projects/'+(cid or self.cid)+'/runs', headers=headers or self.a,
                                 data={'options':json.dumps(value)})
+
+    def test_daily_ultra_notice_is_account_scoped_and_rolling(self):
+        path='/api/venture/ultra/notice'
+        self.assertTrue(self.client.get(path,headers=self.a).json['due'])
+        with patch('local_preferences.time',SimpleNamespace(time=lambda:1000000)):
+            value=self.client.post(path,headers=self.a).json
+        self.assertEqual(value['remainingSeconds'],86400)
+        with patch('local_preferences.time',SimpleNamespace(time=lambda:1086399)):
+            self.assertFalse(self.client.get(path,headers=self.a).json['due'])
+            self.assertTrue(self.client.get(path,headers=self.b).json['due'])
+        with patch('local_preferences.time',SimpleNamespace(time=lambda:1086400)):
+            self.assertTrue(self.client.get(path,headers=self.a).json['due'])
+        self.assertIn(self.client.get(path).status_code,(401,403))
+
+    def test_accepted_empty_response_is_recoverable_in_history_and_can_stop(self):
+        self.assertEqual(self.client.get('/api/venture/conversations',headers=self.a).json['conversations'],[])
+        run=self.send().json
+        history=self.client.get('/api/venture/conversations',headers=self.a).json['conversations']
+        self.assertEqual([r['id'] for r in history],[self.cid])
+        reopened=self.client.get('/api/venture/conversations/'+self.cid,headers=self.a).json
+        self.assertEqual(reopened['runs'][0]['runId'],run['runId'])
+        self.assertEqual(reopened['runs'][0]['text'],'')
+        self.assertEqual(self.client.get('/api/venture/conversations',headers=self.b).json['conversations'],[])
+        url='/api/projects/'+self.cid+'/runs/'+run['runId']+'/cancel'
+        self.assertEqual(self.client.post(url,headers=self.a).json['status'],'cancelled')
+        self.assertEqual(len(self.client.get('/api/venture/conversations',headers=self.a).json['conversations']),1)
 
     def test_no_key_discovery_disclosure_answer_retention_and_no_billing(self):
         catalog = self.client.get('/api/venture/models', headers=self.a)

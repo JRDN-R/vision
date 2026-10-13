@@ -7,7 +7,7 @@ function ventureAcceptLocalCapability(data){
  if(!Object.prototype.hasOwnProperty.call(data,'localModel'))return;
  const before=ventureLocalSubtitle(venture.settings.model);venture.localCapability=data.localModel||null;
  if(typeof $==='function')venturePaintUncensored();
- if(typeof venturePaintUltra==='function'){venturePaintUltra();venturePaintUltraWait();}
+ if(typeof venturePaintUltra==='function'){venturePaintUltra();}
  if(before!==ventureLocalSubtitle(venture.settings.model)){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
 }
 function ventureLocalSourceLink(label,url,run){
@@ -24,6 +24,7 @@ function ventureAcceptPreferences(prefs){
  venture.profiles=prefs.profiles||{};
 }
 async function ventureLocalNotice(model=venture.settings?.model){
+ if(model==='qwen-ultra-local')return ventureUltraNotice();
  if(venture.localAcknowledged)return true;
  if(venture.localNoticePromise)return venture.localNoticePromise;
  const epoch=venture.epoch;
@@ -75,13 +76,14 @@ function ventureLocalProgress(run,details=false){
   if(!q)return '';
   return '<div class="venture-local-progress is-complete"><strong>Local inference · no API token charge</strong><small>Waited '+ventureLocalDuration(q.waitingSeconds||0)+' · Processing '+ventureLocalDuration(q.processingSeconds||0)+'</small></div>';
  }
+ if(run.model==='qwen-ultra-local')return ventureUltraProgress(run);
  if(!active)return '';
  const labels=ventureLoadingLabels(run),range=q?.estimatedRemainingRange;
  // Conservative time estimate, not a token-completion measurement. Queue and
  // overruns stay indeterminate; neither can honestly imply near completion.
  const estimated=q?.estimateStatus==='estimated'&&!q.requestsAhead&&run.status!=='queued'&&Array.isArray(range)&&range.length===2&&range.every(n=>Number.isFinite(n)&&n>=0)&&range[1]>=range[0]&&Number.isFinite(q.processingSeconds)&&q.processingSeconds>0;
  const percent=estimated?Math.min(95,Math.max(1,Math.round(100*q.processingSeconds/(q.processingSeconds+Math.max(1,range[1]))))):null;
- const caption=estimated?(run.model==='qwen-ultra-local'&&typeof ventureUltraCoffee==='function'?ventureUltraCoffee(range):'About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' left'):q?.estimateStatus==='overrun'?'Still working on it':run.model==='qwen-ultra-local'?'Ultra can take a while. You can leave and return later.':'';
+ const caption=estimated?('About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' left'):q?.estimateStatus==='overrun'?'Still working on it':run.model==='qwen-ultra-local'?'Ultra can take a while. You can leave and return later.':'';
  return '<div class="venture-loading"'+(estimated?' data-estimated':'')+'><div class="venture-loading-heading"><venture-loading-symbol aria-hidden="true"></venture-loading-symbol><span class="venture-loading-label" role="status" aria-label="'+escapeHTML(labels[0])+'"><span aria-hidden="true">'+labels.map(t=>'<span>'+escapeHTML(t)+'</span>').join('')+'</span></span></div><div class="venture-progress-track'+(estimated?' is-estimated':'')+'" role="progressbar" aria-label="'+(estimated?'Estimated response progress':'Answer in progress')+'"'+(estimated?' aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+percent+'" aria-valuetext="'+escapeHTML(caption)+' (estimated)"':'')+'><span'+(estimated?' style="width:'+percent+'%"':'')+'></span></div><span class="venture-progress-estimate">'+escapeHTML(caption)+'</span></div>';
 }
 function ventureLocalDuration(seconds){seconds=Math.max(0,Math.round(seconds));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m'+(seconds%60?' '+seconds%60+'s':'');}

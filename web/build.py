@@ -114,6 +114,11 @@ def build():
         raise ValueError('Expected one Vortex menu logo placeholder')
     vortex_icon = 'data:image/png;base64,' + base64.b64encode((ROOT / 'vortex_menu_icon.png').read_bytes()).decode('ascii')
     script = script.replace(vortex_icon_marker, '/* VISION_VORTEX_MENU_ICON */ ' + json.dumps(vortex_icon))
+    coffee_marker = "/* VISION_ULTRA_COFFEE_IMAGE */ './qwen-ultra-coffee.png'"
+    if script.count(coffee_marker) != 1:
+        raise ValueError('Expected one Ultra coffee image placeholder')
+    coffee = 'data:image/png;base64,' + base64.b64encode((WEB / 'qwen-ultra-coffee.png').read_bytes()).decode('ascii')
+    script = script.replace(coffee_marker, json.dumps(coffee))
     if '</script' in script.lower():
         raise ValueError('Application JavaScript contains a closing script tag')
     if source.count('{{VISION_APPLICATION}}') != 1:
