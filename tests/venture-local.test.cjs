@@ -131,3 +131,22 @@ test('Qwen badge readiness is safe before account settings are loaded',()=>{
  c.venture.localCapability={capabilities:{vision:true}};
  assert.equal(c.ventureLocalSubtitle(),'9B Distill + Vision');
 });
+
+test('legacy in-band Qwen summaries become disclosure notes, not answer Markdown',()=>{
+ const c=fixture();
+ const raw='<progress_summary>Checking the supplied context before drafting the response.</progress_summary>\n\n## Answer\n\n**Ready.**';
+ const parts=c.ventureLocalResponseParts(raw);
+ assert.equal(parts.text,'## Answer\n\n**Ready.**');
+ assert.equal(Array.from(parts.notes).join('|'),'Checking the supplied context before drafting the response.');
+ assert.doesNotMatch(parts.text,/<\/?progress_summary>/);
+ const multiple=c.ventureLocalResponseParts('Begin <progress_summary>Checking source details now.</progress_summary> then <progress_summary>Organizing the final response next.</progress_summary> finish.');
+ assert.equal(multiple.text,'Begin  then  finish.');
+ assert.equal(multiple.notes.length,2);
+ assert.equal(c.ventureLocalResponseParts('Text <progress_summary>unfinished thoughts').text,'Text ');
+ assert.equal(c.ventureLocalResponseParts('Text <progress_summ').text,'Text ');
+ assert.equal(c.ventureLocalResponseParts('Text </progress_summary> tail').text,'Text  tail');
+ assert.equal(c.ventureLocalResponseParts('<progress_summary><img>should not be a note</progress_summary>\n\nFinal.').text,'Final.');
+ assert.equal(c.ventureLocalResponseParts('Ordinary **Markdown**').text,'Ordinary **Markdown**');
+ const source=fs.readFileSync('web/venture.js','utf8');
+ assert.match(source,/ventureIsLocal\(run\.model\)\?ventureLocalResponseParts\(run\.text\)\.text/);
+});

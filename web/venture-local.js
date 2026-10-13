@@ -128,12 +128,51 @@ function venturePaintUncensored(){
   on?'Heretic model selected. Refusals may still occur.':'Off uses the original Distill model.';
 }
 
+// Compatibility for replies saved before in-band progress markers were removed
+// by the processor. Restore valid notes to the same disclosure, but never
+// render control tags or their contents as answer Markdown.
+function ventureLocalResponseParts(value){
+ const original=String(value||''),open='<progress_summary>',close='</progress_summary>';
+ if(!original.includes('<'))return {text:original,notes:[]};
+ const notes=[],pattern=/<progress_summary>([\s\S]*?)<\/progress_summary>/g;
+ let text='',offset=0,removed=false;
+ for(const match of original.matchAll(pattern)){
+  text+=original.slice(offset,match.index);
+  const note=match[1].trim().replace(/\s+/gu,' ');
+  const count=note?note.split(/\s+/u).length:0;
+  if(count>=3&&count<=30&&note.length<=500&&!/[<>\x00-\x08]/u.test(note))notes.push(note);
+  offset=match.index+match[0].length;
+  removed=true;
+ }
+ let rest=original.slice(offset),unfinished=rest.indexOf(open);
+ if(unfinished!==-1){rest=rest.slice(0,unfinished);removed=true;}
+ // Avoid brief flashes of a partially streamed marker from an older server.
+ for(const marker of [open,close]){
+  for(let length=Math.min(marker.length-1,rest.length);length>=4;length--){
+   if(rest.endsWith(marker.slice(0,length))){rest=rest.slice(0,-length);removed=true;break;}
+  }
+ }
+ if(rest.includes(close)){rest=rest.replaceAll(close,'');removed=true;}
+ text+=rest;
+ if(removed)text=text.replace(/^\n+/u,'');
+ return {text,notes};
+}
+
 // Public summaries supplied by the model, or observed server stages. No raw
 // reasoning transcript, synthetic timer, or additional summarizer request.
 function ventureUpdateProgressNotes(host,run){
  if(!host)return;
  const data=run.localQueue?.progress;
  const steps=data?.version===1&&Array.isArray(data.steps)?data.steps.filter(s=>Number.isInteger(s.id)&&typeof s.text==='string'&&s.text.trim().split(/\s+/u).length>=3&&s.text.trim().split(/\s+/u).length<=30&&s.text.length<=500).slice(-128):[];
+ if(ventureIsLocal(run.model)){
+  const recovered=ventureLocalResponseParts(run.text).notes;
+  const seen=new Set(steps.map(s=>s.text.trim().toLocaleLowerCase()));
+  for(let i=0;i<recovered.length;i++){
+   const note=recovered[i],key=note.toLocaleLowerCase();
+   if(!seen.has(key)){steps.push({id:1000000+i,text:note,source:'model',legacy:true});seen.add(key);}
+  }
+  if(steps.length>128)steps.splice(0,steps.length-128);
+ }
  if(!steps.length){host.replaceChildren();delete host.progressState;return;}
  const active=ventureActive(run),latest=steps[steps.length-1];
  const signature=JSON.stringify([active,run.status,steps]);
@@ -162,9 +201,9 @@ function ventureUpdateProgressNotes(host,run){
  state.historyTitle.textContent=(active?'Earlier updates':'Saved updates')+' · '+historySteps.length;
  const keep=new Set(historySteps.map(s=>s.id));
  for(const [id,row] of state.rows)if(!keep.has(id)){row.remove();state.rows.delete(id);}
- for(const step of historySteps){
+ for(const [position,step] of historySteps.entries()){
   let row=state.rows.get(step.id);
-  if(!row){row=document.createElement('details');const label=document.createElement('summary'),copy=document.createElement('p');label.textContent='Step '+step.id;copy.textContent=step.text;row.append(label,copy);state.list.appendChild(row);state.rows.set(step.id,row);}
+  if(!row){row=document.createElement('details');const label=document.createElement('summary'),copy=document.createElement('p');label.textContent=step.legacy?'Summary '+(position+1):'Step '+step.id;copy.textContent=step.text;row.append(label,copy);state.list.appendChild(row);state.rows.set(step.id,row);}
  }
  state.latest=latest.id;state.active=active;state.signature=signature;
 }
