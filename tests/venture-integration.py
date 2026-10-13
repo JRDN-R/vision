@@ -45,7 +45,7 @@ def run():
     posts=[]
     def gemini(url,**kwargs):
         posts.append(kwargs['json'])
-        return GeminiReply('The dictation is plain text, with no subtitle timestamps.')
+        return GeminiReply('[00:00:00.000] The dictation is plain text, with no subtitle timestamps.')
     def application(environ,start_response):
         if environ.get('PATH_INFO')=='/':return Response(fixture,mimetype='text/html')(environ,start_response)
         return server.app(environ,start_response)
