@@ -23,6 +23,26 @@ MODEL_REVISION = '760121cd70bb4c36b2b5ec58eb765e0df5987efe'
 MODEL_REPOSITORY = 'empero-ai/Qwen3.8-9B-Distill-GGUF'
 MODEL_FILE = 'Qwen3.8-9B-Q4_K_M.gguf'
 RUNTIME_COMMIT = 'f2cc7282ce0042641df55e0e563b75e824e2b647'
+# Independent community conversion of the exact requested rohit267 model.
+# Pins checked against its Hugging Face commit and Git LFS SHA-256 pointer.
+HERETIC_SPEC = dict(
+    modelRepository='mradermacher/Qwen3.8-9B-heretic-uncensored-GGUF',
+    modelRevision='6fa1707e4f5a664800cff1012e991dc258ccdc86',
+    modelFile='Qwen3.8-9B-heretic-uncensored.Q4_K_M.gguf',
+    modelBytes=5629109728,
+    modelSha256='8eb51ad276c3b529266b800a2bd866ba03337709db6a1b4758243ffc5c96510f',
+    runtimeCommit=RUNTIME_COMMIT)
+
+
+def model_spec(settings):
+    variant = settings.get('modelVariant', 'standard')
+    if variant == 'heretic':
+        return dict(HERETIC_SPEC)
+    if variant != 'standard':
+        raise LocalFailure('Unknown local model variant. No replacement was selected.')
+    return dict(modelRepository=MODEL_REPOSITORY, modelRevision=MODEL_REVISION,
+                modelFile=MODEL_FILE, modelBytes=MODEL_BYTES,
+                modelSha256=MODEL_SHA, runtimeCommit=RUNTIME_COMMIT)
 
 
 class LocalFailure(ValueError):
@@ -79,15 +99,14 @@ class LlamaRuntime:
 
     def verify(self):
         runtime, model = Path(self.settings['runtimePath']), Path(self.settings['modelPath'])
-        manifest = json.loads(Path(self.settings['manifestPath']).read_text(encoding='utf-8'))
+        manifest = json.loads(Path(self.settings['manifestPath']).read_text(encoding='utf-8-sig'))
+        spec = model_spec(self.settings)
         if (not runtime.is_absolute() or not model.is_absolute() or runtime.is_symlink() or model.is_symlink() or
-                model.stat().st_size != MODEL_BYTES or manifest.get('modelSha256') != MODEL_SHA or
-                manifest.get('modelBytes') != MODEL_BYTES or manifest.get('modelRepository') != MODEL_REPOSITORY or
-                manifest.get('modelFile') != MODEL_FILE or
-                manifest.get('modelRevision') != MODEL_REVISION or manifest.get('runtimeCommit') != RUNTIME_COMMIT):
+                model.stat().st_size != spec['modelBytes'] or
+                any(manifest.get(key) != value for key, value in spec.items())):
             raise LocalFailure('Local model provenance does not match the reviewed installation.')
         self.stage('Verifying installed model')
-        if digest_file(model, self.cancelled) != MODEL_SHA or digest_file(runtime, self.cancelled) != manifest.get('runtimeSha256'):
+        if digest_file(model, self.cancelled) != spec['modelSha256'] or digest_file(runtime, self.cancelled) != manifest.get('runtimeSha256'):
             raise LocalFailure('Local runtime/model integrity check failed. Reinstall the verified package.')
         root = Path(manifest['runtimeRoot']).resolve()
         expected = manifest['runtimeFiles']
@@ -102,7 +121,7 @@ class LlamaRuntime:
         return runtime, model
 
     def model_bytes(self):
-        return MODEL_BYTES
+        return model_spec(self.settings)['modelBytes']
 
     def command(self, runtime, model):
         return [str(runtime), '--model', str(model), '--alias', self.alias,

@@ -7,6 +7,7 @@ from flask import jsonify, request
 
 from local_preferences import LocalPreferences, MODEL
 from local_runtime import LlamaRuntime, LocalFailure
+from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
 
 ACTIVE = "('queued','preparing','submitting','in_progress','saving')"
@@ -41,6 +42,7 @@ class LocalInference:
     def initialize(self, settings):
         self.settings = settings if isinstance(settings, dict) else {}
         self.visual.confirmed = None
+        self.visual.confirmed_variants.clear()
         self.preferences.initialize()
         with self.db() as db:
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
@@ -59,13 +61,19 @@ class LocalInference:
                         for k in ('runtimePath', 'modelPath', 'manifestPath'))
         enabled = self.settings.get('enabled') is True
         visual = self.visual.capability()
+        heretic = variant_status(self.settings)
+        if heretic['available']:
+            try:
+                heretic['vision'] = self.visual.capability(select_profile(self.settings, True))['available']
+            except (OSError, ValueError, KeyError, TypeError):
+                heretic.update(available=False, status='needs-enable')
         return dict(id=MODEL, name='Qwen Local', subtitle='9B Distill + Vision', provider='local_llama_cpp',
                     status='installed' if installed and enabled else 'disabled' if installed else 'not-installed',
                     enabled=enabled and installed, contextTokens=self.context_tokens,
                     maxOutputTokens=self.max_output, noApiTokenCharge=True,
                     capabilities=dict(text=True, projectRetrieval=True, localFiles=True, vision=visual['available'],
                                       codeGeneration=True, codeExecution=False, webSearch=False),
-                    visual=visual, defaultMigrationEligible=self.migration_eligible(),
+                    visual=visual, variants={'heretic':heretic}, defaultMigrationEligible=self.migration_eligible(),
                     note='Local visual worker and 9B answering model run sequentially. Image analysis is available only after this backend confirms the integrated path.')
 
     def migration_eligible(self):
@@ -73,6 +81,9 @@ class LocalInference:
         return self.visual.capability()['available'] and eligible(self.settings)
 
     def accept(self, uid, options):
+        uncensored = options.get('qwenUncensored', False)
+        if not isinstance(uncensored, bool) or (uncensored and options.get('model') != MODEL):
+            raise self.sessions.Error('Uncensored must be an on/off setting for Qwen Local.')
         self.preferences.validate_send(uid, options)
         if options.get('model') != MODEL:
             return
@@ -81,6 +92,10 @@ class LocalInference:
         limit=options.get('maxOutputTokens',self.max_output)
         if isinstance(limit,bool) or not isinstance(limit,int) or not 512 <= limit <= self.max_output:
             raise self.sessions.Error('The installed Qwen profile supports at most ' + str(self.max_output) + ' output tokens.')
+        try:
+            return select_profile(self.settings, uncensored)
+        except (LocalFailure, OSError, ValueError, KeyError) as error:
+            raise self.sessions.Error('Qwen Heretic is unavailable. Install and enable the pinned variant on FUPCJ, or turn Uncensored off. Your draft is kept; no fallback was used.', 409) from error
 
     def snapshot(self, row):
         if row.get('provider') != 'local_llama_cpp':
@@ -103,7 +118,8 @@ class LocalInference:
                     AND r.provider='local_llama_cpp' AND r.status='completed' AND r.local_finished_at>?
                     ORDER BY r.local_finished_at DESC LIMIT 60''', (row['project_id'],now-30*86400)).fetchall()
             timing = estimate(row, [dict(item) for item in history], elapsed, ahead)
-        return dict(provider='local_llama_cpp', requestsAhead=ahead,
+        variant = json.loads(row.get('local_profile_json') or '{}').get('modelVariant','standard')
+        return dict(provider='local_llama_cpp', modelVariant=variant, requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
                     progressKind='indeterminate', noApiTokenCharge=True,
@@ -204,6 +220,7 @@ class LocalInference:
                 raise InterruptedError()
             s.update(rid, status='preparing', phase='Preparing local source evidence',
                      local_started_at=row.get('local_started_at') or time.time())
+            check_ready(profile)  # A removed/disabled variant must not run or silently fall back.
             messages, visual_metrics = self.messages(row, profile, cancelled, stage)
             with self.runtime_factory(profile, cancelled, stage) as runtime:
                 stage('Counting the rendered local prompt')
@@ -256,13 +273,13 @@ class LocalInference:
             # The runtime has stopped before committing terminal state/advancing FIFO.
             incomplete = finish != 'stop' or not text.strip()
             if not incomplete and visual_metrics.get('runtimeChecked'):
-                self.visual.confirmed = self.visual.signature(profile)
+                self.visual.confirm(profile)
             s.update(rid, status='incomplete' if incomplete else 'completed', phase='Output budget reached' if incomplete else 'Complete',
                      local_finished_at=time.time(), error='Qwen exhausted its output/reasoning budget. Narrow the question or retry with a validated profile.' if incomplete else None)
         except Exception as error:
             from context_integration import ContextPending
             if time.monotonic() > deadline:
-                self.visual.confirmed = None
+                self.visual.invalidate(profile)
                 s.update(rid, status='error', phase='Local processing limit reached', text=text,
                          local_finished_at=time.time(), error='The combined local request reached its processing time limit.')
             elif isinstance(error, ContextPending) and time.time() - row['created_at'] < 600 and not cancelled():
@@ -270,7 +287,7 @@ class LocalInference:
             elif isinstance(error, InterruptedError) or s.stop.is_set() or s.row(rid)['cancel_requested']:
                 s.update(rid, status='cancelled', phase='Cancelled', text=text, local_finished_at=time.time())
             else:
-                self.visual.confirmed = None
+                self.visual.invalidate(profile)
                 s.update(rid, status='error', phase='Local response needs attention', text=text, local_finished_at=time.time(),
                          error=getattr(runtime, 'stop_reason', None) or (str(error)[:700] if isinstance(error, LocalFailure) else 'Local preparation/inference failed. Check FUPCJ installation and retry. No cloud fallback was used.'))
         finally:

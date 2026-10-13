@@ -230,7 +230,7 @@ class Venture:
 
     def settings(self,value) -> dict:
         from sessions import model_output_token_limit, normalize_run_options
-        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled'}:
+        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled','qwenUncensored'}:
             raise self.Error('Invalid Venture settings.')
         model=value.get('model',DEFAULT_SETTINGS['model'])
         limit=value.get('maxOutputTokens',2048 if model=='qwen3.8-local' else 16000)
@@ -246,7 +246,11 @@ class Venture:
         except ValueError as error:raise self.Error(str(error))
         memory=value.get('memoryEnabled',False)
         if not isinstance(memory,bool):raise self.Error('Past-conversation memory must be on or off.')
-        return dict(model=model,maxOutputTokens=limit,runOptions=options,memoryEnabled=memory)
+        uncensored=value.get('qwenUncensored',False)
+        if not isinstance(uncensored,bool):raise self.Error('Uncensored must be on or off.')
+        if uncensored and model!='qwen3.8-local':raise self.Error('Uncensored is only available for Qwen Local.')
+        return dict(model=model,maxOutputTokens=limit,runOptions=options,memoryEnabled=memory,
+                    **({'qwenUncensored':uncensored} if model=='qwen3.8-local' else {}))
 
     def current_key_id(self,uid: str):
         from sessions import unprotect_secret

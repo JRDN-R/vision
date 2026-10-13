@@ -37,6 +37,7 @@ function ventureModelChoices() {
  return result;
 }
 function venturePaintModelPicker() {
+ if(typeof venturePaintUncensored==='function')venturePaintUncensored();
  const s=venture.settings,label=ventureModelBadge(s.model,s.runOptions.mode);
  $('ventureModelLabel').innerHTML=label;$('ventureModel').innerHTML=label+'<span aria-hidden="true">⌄</span>';
  $('ventureModel').setAttribute('aria-label','Choose model: '+ventureModelIdentity(s.model,s.runOptions.mode).name);
