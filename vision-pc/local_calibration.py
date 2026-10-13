@@ -16,7 +16,7 @@ def positive(value):
 
 def identity(row, profile):
     descriptor = {k: profile.get(k) for k in ('ultraReceipt', 'threads', 'gpuLayers', 'batchSize',
-                  'ubatchSize', 'contextTokens', 'thinking', 'sampling', 'visualEnabled')}
+                  'ubatchSize', 'contextTokens', 'thinking', 'sampling', 'visualEnabled', 'longResponses')}
     descriptor['workload'] = 'context' if row.get('previous_id') or row.get('board_context_json') or json.loads(row.get('inputs_json') or '[]') else 'text'
     # A receipt changes when the installed runtime/model or tuned hardware changes.
     return hashlib.sha256(json.dumps(descriptor, sort_keys=True).encode()).hexdigest()[:24]
@@ -45,14 +45,17 @@ class UltraCalibration:
             self.export_pending()
             return
         metrics = json.loads(row.get('local_metrics_json') or '{}')
+        if metrics.get('generation', {}).get('completedPasses', 1) > 1:
+            return  # A multi-pass job is not a single-prompt throughput sample.
         timings = metrics.get('timings', {})
         pp, tg = timings.get('prompt_per_second'), timings.get('predicted_per_second')
         prompt = metrics.get('inputTokens')
         output = metrics.get('usage', {}).get('completion_tokens')
         elapsed = (row.get('local_finished_at') or 0) - (row.get('local_started_at') or 0)
-        if not all(positive(v) for v in (pp, tg, prompt, output, elapsed, row['max_tokens'])):
+        budget = metrics.get('generation', {}).get('maxTokens', row['max_tokens'])
+        if not all(positive(v) for v in (pp, tg, prompt, output, elapsed, budget)):
             return
-        sample = dict(promptTokens=prompt, outputTokens=output, outputBudget=row['max_tokens'],
+        sample = dict(promptTokens=prompt, outputTokens=output, outputBudget=budget,
                       promptTokensPerSecond=pp, generationTokensPerSecond=tg, totalSeconds=elapsed,
                       overheadSeconds=max(0, elapsed-prompt/pp-output/tg))
         with self.db() as db:
@@ -88,6 +91,10 @@ class UltraCalibration:
                       estimateStatus='waiting', estimateBasis='calibrated' if frozen else 'benchmark')
         if row['status'] in ('completed', 'incomplete', 'cancelled', 'error'):
             return dict(result, estimateStatus='complete')
+        if profile.get('longResponses') is True:
+            # The number of continuations is unknown, so elapsed time is not a completion percentage.
+            return dict(result, estimateStatus='working' if row.get('local_started_at') and not ahead else 'waiting',
+                        estimateBasis='long-response')
         if ahead or not row.get('local_started_at'):
             return result
         metrics = json.loads(row.get('local_metrics_json') or '{}')
@@ -124,7 +131,7 @@ class UltraCalibration:
                 samples = [json.loads(r[0]) for r in db.execute('SELECT numbers FROM ultra_timing_samples WHERE profile_key=?', (key,))]
             report = dict(profile=key, coefficients=c, measurements=samples,
                 formula='seconds = overhead + promptTokens / promptRate + outputBudget * outputBudgetFraction / generationRate',
-                notes='Frozen after 10 successful compatible responses, shared across accounts. Output includes reasoning. No prompts, answers, filenames or account identities are collected here. ETA is an estimate: future output length, queueing and PC load vary. Changed runtime/hardware/settings start a separate profile.')
+                notes='Frozen after 10 successful compatible single-pass responses, shared across accounts. Output includes reasoning. No prompts, answers, filenames or account identities are collected here. ETA is an estimate: future output length, queueing and PC load vary. Long-response profiles are isolated and do not display a whole-job ETA. Changed runtime/hardware/settings start a separate profile.')
             directory.mkdir(parents=True, exist_ok=True)
             for suffix, content in [('json', json.dumps(report, indent=2)), ('txt',
                 'QWEN ULTRA — TIMING CALIBRATION\n\nProfile: '+key+'\nCompleted samples: 10 (frozen)\nFrozen at: '+time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(c['frozenAt']))+'\nObserved response duration: '+str(round(min(s['totalSeconds'] for s in samples),1))+'–'+str(round(max(s['totalSeconds'] for s in samples),1))+' seconds\n\n'+report['formula']+'\n\n'+json.dumps(c, indent=2)+'\n\n'+report['notes']+'\n')]:
