@@ -99,7 +99,8 @@ def context_check(profile, runtime_factory=LlamaRuntime):
 def tune(profile, target, max_context):
     quiet_machine()
     deadline = time.monotonic()+7200
-    profile.update(contextTokens=max_context, maxRunSeconds=1800)
+    # Large-context evaluation can be much slower than a short throughput trial.
+    profile.update(contextTokens=max_context, maxRunSeconds=18000)
     results, errors = [], []
     def trial(threads,layers):
         quiet_machine()
@@ -144,7 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',required=True)
     parser.add_argument('--action',choices=['install','download','check','tune','disable'],default='install')
-    parser.add_argument('--context',type=int,choices=[8192,16384],default=8192)
+    parser.add_argument('--context',type=int,choices=list(ultra.CONTEXTS[1:]),default=8192)
     args = parser.parse_args()
     path = checked_path(Path(args.config).absolute())
     config = read_json(path)
@@ -176,9 +177,20 @@ def main():
             print('Ultra model and runtime verified. Run Tune to enable it; no account default changed.')
             return
         quiet_machine()
-        # Revalidation failure must not keep advertising an obsolete receipt.
-        receipt.unlink(missing_ok=True)
-        profiles = tune(profile,target,args.context)
+        # A failed context upgrade must not discard a still-valid smaller context.
+        # Stale/mismatched receipts and ordinary revalidation remain fail-closed.
+        try:
+            keep_smaller = ultra.readiness(profile)['maxContextTokens'] < args.context
+        except (OSError,ValueError,KeyError,TypeError):
+            keep_smaller = False
+        if not keep_smaller:
+            receipt.unlink(missing_ok=True)
+        try:
+            profiles = tune(profile,target,args.context)
+        except Exception:
+            if keep_smaller:
+                print('Larger-context test failed. The previously verified smaller context remains enabled.',flush=True)
+            raise
         atomic_json(receipt,dict(schema=ultra.SCHEMA,passed=True,id=secrets.token_hex(16),
             enabledAt=time.time(),profiles=profiles,maxContextTokens=args.context,
             manifestSha256=digest_file(profile['manifestPath']),modelStamp=stamp(profile['modelPath']),
