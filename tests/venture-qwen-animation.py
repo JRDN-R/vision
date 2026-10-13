@@ -9,7 +9,7 @@ read = lambda name: (ROOT / name).read_text()
 controller = runpy.run_path(str(ROOT / 'web/build.py'))['qwen_animation_script']()
 script = '\n'.join([
     read('web/vendor/lottie_svg.min.js'), controller,
-    "const venture={};function escapeHTML(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}",
+    "const venture={settings:{}};function escapeHTML(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}",
     read('web/venture-models.js'), read('web/venture-local.js'),
     "function paint(){document.querySelectorAll('[data-badge]').forEach(el=>el.innerHTML=ventureModelBadge('qwen3.8-local'));}paint();",
 ])

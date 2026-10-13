@@ -58,6 +58,7 @@ jobs:
           set -o pipefail
           python tests/venture-smoke.py 2>&1 | tee tests/venture-logs/venture.txt
           python tests/local-visual-browser.py 2>&1 | tee tests/venture-logs/local-visual.txt
+          python tests/venture-response-motion.py 2>&1 | tee tests/venture-logs/response-motion.txt
           python tests/venture-qwen-animation.py 2>&1 | tee tests/venture-logs/qwen-animation.txt
           python tests/venture-pending-browser.py 2>&1 | tee tests/venture-logs/pending-upload.txt
           python tests/venture-images-browser.py 2>&1 | tee tests/venture-logs/image-gallery.txt

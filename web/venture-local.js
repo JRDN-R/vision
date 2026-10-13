@@ -54,17 +54,33 @@ async function ventureOpenLocalVisual(run,index){
  const close=document.createElement('button');close.textContent='Close';close.onclick=()=>dialog.close();
  dialog.append(caption,image,close);dialog.addEventListener('close',()=>{URL.revokeObjectURL(url);dialog.remove();},{once:true});document.body.appendChild(dialog);dialog.showModal();
 }
+// Only describe observed stages. Rotating wording is motion, not simulated tool activity.
+function ventureLoadingLabels(run){
+ const q=run.localQueue,phase=String(run.phase||'').toLowerCase();
+ if(q?.requestsAhead)return [q.requestsAhead+' request'+(q.requestsAhead===1?'':'s')+' ahead','Waiting for your turn'];
+ if(run.status==='queued')return ['You’re next in line','Getting ready'];
+ if(run.status==='saving')return ['Saving your answer','Finishing up'];
+ if(run.text)return ['Writing your answer','Putting it into words'];
+ if(/inspect|image|frame|visual/.test(phase))return ['Looking at your images','Taking a closer look'];
+ if(/search/.test(phase))return ['Searching for information','Looking for useful sources'];
+ if(/file|upload|prepar/.test(phase))return ['Reading your request','Getting ready'];
+ if(/load|model|connect/.test(phase))return ['Getting ready','Your answer is on its way'];
+ return ['Thinking it through','Working on your answer'];
+}
 function ventureLocalProgress(run,details=false){
- const q=run.localQueue;if(!q)return '';
- const active=ventureActive(run),wait=Math.round(q.waitingSeconds||0),processing=Math.round(q.processingSeconds||0);
- if(!active&&!details)return '';
- let estimate='Learning response times · estimate available after 3 similar answers';
- const range=q.estimatedRemainingRange;
- if(q.estimateStatus==='estimated'&&Array.isArray(range)&&range.length===2&&range.every(n=>Number.isFinite(n)&&n>=0))estimate='About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' remaining'+(q.requestsAhead?' including queue':'')+' · based on '+Number(q.estimateSamples)+' similar answers';
- else if(q.estimateStatus==='overrun')estimate='Taking longer than recent answers · still working';
- return '<div class="venture-local-progress'+(active?' is-active':' is-complete')+'" role="status"><div class="venture-progress-heading">'+(active?'<span class="venture-thinking-orb" aria-hidden="true"><i></i><i></i><i></i></span>':'')+'<strong>'+(active?(q.requestsAhead?q.requestsAhead+' request'+(q.requestsAhead===1?'':'s')+' ahead':run.status==='queued'?'Queued · next in line':escapeHTML(run.phase||'Your request is running')):'Local inference · no API token charge')+'</strong></div>'+
- (active?'<div class="venture-progress-track" role="progressbar" aria-label="Local answer in progress"><span></span></div><span class="venture-progress-estimate">'+escapeHTML(estimate)+'</span>':'')+
- '<small>Waited '+ventureLocalDuration(wait)+' · Processing '+ventureLocalDuration(processing)+'</small></div>';
+ const q=run.localQueue,active=ventureActive(run);
+ if(details){
+  if(!q)return '';
+  return '<div class="venture-local-progress is-complete"><strong>Local inference · no API token charge</strong><small>Waited '+ventureLocalDuration(q.waitingSeconds||0)+' · Processing '+ventureLocalDuration(q.processingSeconds||0)+'</small></div>';
+ }
+ if(!active)return '';
+ const labels=ventureLoadingLabels(run),range=q?.estimatedRemainingRange;
+ // Conservative time estimate, not a token-completion measurement. Queue and
+ // overruns stay indeterminate; neither can honestly imply near completion.
+ const estimated=q?.estimateStatus==='estimated'&&!q.requestsAhead&&run.status!=='queued'&&Array.isArray(range)&&range.length===2&&range.every(n=>Number.isFinite(n)&&n>=0)&&range[1]>=range[0]&&Number.isFinite(q.processingSeconds)&&q.processingSeconds>0;
+ const percent=estimated?Math.min(95,Math.max(1,Math.round(100*q.processingSeconds/(q.processingSeconds+Math.max(1,range[1]))))):null;
+ const caption=estimated?'About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' left':q?.estimateStatus==='overrun'?'Still working on it':'';
+ return '<div class="venture-loading"'+(estimated?' data-estimated':'')+'><div class="venture-loading-heading"><venture-loading-symbol aria-hidden="true"></venture-loading-symbol><span class="venture-loading-label" role="status" aria-label="'+escapeHTML(labels[0])+'"><span aria-hidden="true">'+labels.map(t=>'<span>'+escapeHTML(t)+'</span>').join('')+'</span></span></div><div class="venture-progress-track'+(estimated?' is-estimated':'')+'" role="progressbar" aria-label="'+(estimated?'Estimated response progress':'Answer in progress')+'"'+(estimated?' aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+percent+'" aria-valuetext="'+escapeHTML(caption)+' (estimated)"':'')+'><span'+(estimated?' style="width:'+percent+'%"':'')+'></span></div><span class="venture-progress-estimate">'+escapeHTML(caption)+'</span></div>';
 }
 function ventureLocalDuration(seconds){seconds=Math.max(0,Math.round(seconds));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m'+(seconds%60?' '+seconds%60+'s':'');}
 function ventureLocalDetailsButton(run){

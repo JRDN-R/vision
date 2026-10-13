@@ -50,9 +50,9 @@ def select_release(requested, previous_raw, changed):
 
 
 def qwen_animation_script():
-    """Bundle the two dotLottie archives using the existing offline SVG player."""
+    """Bundle the badge clips and continuous loading archive using the existing offline SVG player."""
     animations = []
-    for name in ('qwen-p1.lottie', 'qwen-p2.lottie'):
+    for name in ('qwen-p1.lottie', 'qwen-p2.lottie', 'venture-loading.lottie'):
         with zipfile.ZipFile(WEB / name) as archive:
             manifest = json.loads(archive.read('manifest.json'))
             animation_id = manifest['activeAnimationId']

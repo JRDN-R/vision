@@ -16,12 +16,12 @@ test('queue states show actual counts and elapsed time without made-up percent o
  const render=run=>c.ventureLocalProgress({...run,localQueue:{requestsAhead:run.ahead||0,waitingSeconds:15,processingSeconds:3}});
  assert.match(render({status:'queued',ahead:2}),/2 requests ahead/);
  assert.match(render({status:'queued'}),/next in line/);
- assert.match(render({status:'in_progress'}),/request is running/);
+ assert.match(render({status:'in_progress'}),/Thinking it through/);
  assert.equal(render({status:'completed'}),'');
  assert.match(c.ventureLocalProgress({status:'completed',localQueue:{processingSeconds:42}},true),/no API token charge/);
  assert.doesNotMatch(render({status:'completed'}),/<progress/);
  assert.doesNotMatch(render({status:'in_progress'}),/value=|[0-9]+%/);
- assert.match(render({status:'in_progress',phase:'<unsafe>'}),/&lt;unsafe&gt;/);
+ assert.doesNotMatch(render({status:'in_progress',phase:'<unsafe>'}),/<unsafe>|&lt;unsafe&gt;/);
 });
 test('completed local replies use an icon beside the model and a compact optional timing panel',()=>{
  const c=fixture(),run={status:'completed',localQueue:{waitingSeconds:0,processingSeconds:42}};
@@ -79,16 +79,21 @@ test('enabled but unconfirmed image path has a distinct status without advertisi
  c.ventureAcceptLocalCapability({localModel:null});
  assert.match(c.ventureLocalSubtitle(),/vision not ready/);assert.equal(paints,2);
 });
-test('loading uses measured ranges and never turns elapsed time into a percent',()=>{
+test('compact loading distinguishes estimated time progress from unknown and overrun',()=>{
  const c=fixture();
- const run={status:'in_progress',phase:'Inspecting image',localQueue:{processingSeconds:65,waitingSeconds:2,estimateStatus:'estimated',estimatedRemainingRange:[30,120],estimateSamples:4}};
+ const run={status:'in_progress',phase:'Inspecting image',localQueue:{processingSeconds:60,waitingSeconds:2,estimateStatus:'estimated',estimatedRemainingRange:[30,60],estimateSamples:4}};
  let html=c.ventureLocalProgress(run);
- assert.match(html,/About 30s–2m remaining/);assert.match(html,/based on 4 similar answers/);
- assert.match(html,/Inspecting image/);assert.match(html,/Processing 1m 5s/);
- assert.match(html,/venture-thinking-orb/);assert.doesNotMatch(html,/aria-valuenow|[0-9]+%/);
+ assert.match(html,/About 30s–1m left/);assert.match(html,/aria-valuenow="50"/);
+ assert.match(html,/Estimated response progress/);assert.match(html,/Looking at your images/);
+ assert.match(html,/venture-loading-symbol/);assert.doesNotMatch(html,/similar answers|Processing|Learning|installed/);
  run.localQueue.estimateStatus='overrun';html=c.ventureLocalProgress(run);
- assert.match(html,/Taking longer than recent answers/);assert.doesNotMatch(html,/0s remaining/);
- run.localQueue.estimateStatus='learning';assert.match(c.ventureLocalProgress(run),/after 3 similar answers/);
+ assert.match(html,/Still working on it/);assert.doesNotMatch(html,/aria-valuenow|0s left/);
+ run.localQueue.estimateStatus='learning';assert.doesNotMatch(c.ventureLocalProgress(run),/aria-valuenow|after 3 similar answers/);
+ run.localQueue.estimateStatus='estimated';run.localQueue.requestsAhead=2;
+ assert.doesNotMatch(c.ventureLocalProgress(run),/aria-valuenow/);
+ run.localQueue.requestsAhead=0;run.localQueue.estimatedRemainingRange=[NaN,Infinity];
+ assert.doesNotMatch(c.ventureLocalProgress(run),/aria-valuenow|NaN|Infinity/);
+ assert.match(c.ventureLocalProgress({status:'in_progress',model:'gpt-6-astra'}),/venture-loading-symbol/);
 });
 
 test('one local Uncensored switch tracks availability and never resets saved intent',()=>{

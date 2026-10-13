@@ -164,18 +164,110 @@ function venturePaint(){
 function ventureTurnHTML(run,index){
  const uploads=(run.attachments||[]).map((f,i)=>ventureIsImage(f)?'':'<button class="venture-upload" data-v-action="upload" data-file="'+i+'">'+ventureIcon('file')+escapeHTML(f.name)+'</button>').join('');
  const artifacts=(run.artifacts||[]).map((file,i)=>'<div class="venture-file-card"><button data-v-action="preview" data-file="'+i+'" '+(!file.ready?'disabled':'')+'>'+ventureIcon('file')+'<span>'+escapeHTML(file.name)+'<small>'+(file.error?escapeHTML(file.error):file.ready?'Saved on FUPCJ Server':'Saving file…')+'</small></span></button><button class="v-icon" data-v-action="download" data-file="'+i+'" aria-label="Download '+escapeHTML(file.name)+'" '+(!file.ready?'disabled':'')+'>'+ventureIcon('download')+'</button></div>').join('');
- const text=run.text?consoleMarkdown(run.text,run,index):'<p class="venture-placeholder">'+(ventureActive(run)?'Working on it…':run.status==='cancelled'?'Stopped.':'No response text.')+'</p>';
- return ventureImageStrip(run)+'<div class="venture-user"><div>'+escapeHTML(run.message||'Use the attached project.')+'</div>'+(uploads?'<div class="venture-sent-uploads">'+uploads+'</div>':'')+'</div><div class="venture-assistant console-assistant-message"><div class="venture-response-meta">'+ventureModelBadge(run.model,run.runOptions?.mode,ventureLocalDetailsButton(run))+(run.retryOf?' <span>Regenerated response</span>':'')+'</div>'+ventureLocalProgress(run)+text+ventureLocalEvidence(run)+consoleSourceLinks(run)+(typeof ventureContextRunDetails==='function'?ventureContextRunDetails(run):'')+(run.memorySources?.length?'<details class="venture-memory-sources"><summary>Context from past conversations</summary><p>'+run.memorySources.map(x=>escapeHTML(x.title)).join(' · ')+'</p></details>':'')+(artifacts?'<div class="venture-file-grid">'+artifacts+'</div>':'')+(run.preparationNotes?.length?'<details class="venture-preparation"><summary>File preparation notes</summary><p>'+escapeHTML(run.preparationNotes.join('\n'))+'</p></details>':'')+(run.error?'<p class="venture-error">'+escapeHTML(run.error)+'</p>':'')+'<div class="venture-response-actions"><button class="v-icon" data-v-action="copy" title="Copy response" aria-label="Copy response" '+(!run.text?'disabled':'')+'>'+ventureIcon('copy')+'</button><button class="v-icon" data-v-action="retry" title="Regenerate response" aria-label="Regenerate response" '+(ventureActive(run)?'disabled':'')+'>'+ventureIcon('retry')+'</button><span>'+(!ventureActive(run)?run.status==='completed'?'':escapeHTML(run.status):escapeHTML(run.phase||'Working'))+'</span></div></div>';
+ const text=run.text||ventureActive(run)?'':'<p class="venture-placeholder">'+(ventureActive(run)?'Working on it…':run.status==='cancelled'?'Stopped.':'No response text.')+'</p>';
+ return ventureImageStrip(run)+'<div class="venture-user"><div>'+escapeHTML(run.message||'Use the attached project.')+'</div>'+(uploads?'<div class="venture-sent-uploads">'+uploads+'</div>':'')+'</div><div class="venture-assistant console-assistant-message"><div class="venture-response-meta">'+ventureModelBadge(run.model,run.runOptions?.mode,ventureLocalDetailsButton(run))+(run.retryOf?' <span>Regenerated response</span>':'')+'</div>'+'<div data-venture-progress>'+ventureLocalProgress(run)+'</div><div class="venture-response-text" data-venture-text>'+text+'</div>'+ventureLocalEvidence(run)+consoleSourceLinks(run)+(typeof ventureContextRunDetails==='function'?ventureContextRunDetails(run):'')+(run.memorySources?.length?'<details class="venture-memory-sources"><summary>Context from past conversations</summary><p>'+run.memorySources.map(x=>escapeHTML(x.title)).join(' · ')+'</p></details>':'')+(artifacts?'<div class="venture-file-grid">'+artifacts+'</div>':'')+(run.preparationNotes?.length?'<details class="venture-preparation"><summary>File preparation notes</summary><p>'+escapeHTML(run.preparationNotes.join('\n'))+'</p></details>':'')+(run.error?'<p class="venture-error">'+escapeHTML(run.error)+'</p>':'')+'<div class="venture-response-actions"><button class="v-icon" data-v-action="copy" title="Copy response" aria-label="Copy response" '+(!run.text?'disabled':'')+'>'+ventureIcon('copy')+'</button><button class="v-icon" data-v-action="retry" title="Regenerate response" aria-label="Regenerate response" '+(ventureActive(run)?'disabled':'')+'>'+ventureIcon('retry')+'</button><span>'+(!ventureActive(run)?run.status==='completed'?'':escapeHTML(run.status):'')+'</span></div></div>';
 }
+function ventureAnimateNewWords(node){
+ if(!node.parentElement?.closest('.is-revealing'))return;
+ const words=node.nodeType===Node.ELEMENT_NODE?[...(node.matches('.venture-reveal-word')?[node]:[]),...node.querySelectorAll('.venture-reveal-word')]:[];
+ for(const word of words)word.animate([{opacity:0,filter:'blur(3px)'},{opacity:1,filter:'blur(0)'}],{duration:380,easing:'ease-out'});
+}
+// Patch existing nodes in place: polling must never remount a playing Lottie.
+function venturePatchDOM(host,next){
+ const wanted=Array.from(next.childNodes);
+ wanted.forEach((node,index)=>{
+  let old=host.childNodes[index];
+  if(!old){const added=node.cloneNode(true);host.appendChild(added);ventureAnimateNewWords(added);return;}
+  if(old.nodeType!==node.nodeType||old.nodeName!==node.nodeName){const added=node.cloneNode(true);old.replaceWith(added);ventureAnimateNewWords(added);return;}
+  if(node.nodeType===Node.TEXT_NODE){if(old.nodeValue!==node.nodeValue)old.nodeValue=node.nodeValue;return;}
+  if(node.nodeType!==Node.ELEMENT_NODE)return;
+  // Custom elements own their children; response text owns a reveal buffer.
+  if(old.matches('venture-qwen-symbol,venture-loading-symbol,[data-venture-text]'))return;
+  if(old.matches('.venture-photo')&&old.dataset.file===node.dataset.file)return;
+  for(const attr of Array.from(old.attributes)){
+   if(!node.hasAttribute(attr.name)&&!(old.tagName==='DETAILS'&&attr.name==='open'))old.removeAttribute(attr.name);
+  }
+  for(const attr of node.attributes)if(old.getAttribute(attr.name)!==attr.value)old.setAttribute(attr.name,attr.value);
+  venturePatchDOM(old,node);
+ });
+ while(host.childNodes.length>wanted.length)host.lastChild.remove();
+}
+function ventureRenderResponse(host,text,run,index,animate){
+ const next=document.createElement('template');next.innerHTML=consoleMarkdown(text,run,index);
+ // Stable word spans preserve already-visible words and animate only new ones.
+ // Links, tables and code keep their original elements and delegated actions.
+ const walker=document.createTreeWalker(next.content,NodeFilter.SHOW_TEXT),nodes=[];
+ while(walker.nextNode())nodes.push(walker.currentNode);
+ for(const node of nodes){
+  const fragment=document.createDocumentFragment();
+  for(const word of node.nodeValue.match(/\S+\s*|\s+/gu)||[]){const span=document.createElement('span');span.className='venture-reveal-word';span.textContent=word;fragment.appendChild(span);}
+  node.replaceWith(fragment);
+ }
+ host.classList.toggle('is-revealing',animate);
+ venturePatchDOM(host,next.content);
+}
+function ventureUpdateResponse(host,run,index){
+ const target=String(run.text||''),active=ventureActive(run);
+ let reveal=host.ventureReveal;
+ if(!reveal){
+  reveal=host.ventureReveal={shown:target,target,run,index,timer:null};
+  // Restored/history text is immediately readable, never replayed.
+  if(target)ventureRenderResponse(host,target,run,index,false);
+  return;
+ }
+ reveal.run=run;reveal.index=index;
+ if(reveal.target===target){
+  if(!active&&run.status!=='completed'&&reveal.timer){clearTimeout(reveal.timer);reveal.timer=null;reveal.shown=target;}
+  if(!target&&!active)host.innerHTML='<p class="venture-placeholder">'+(run.status==='cancelled'?'Stopped.':'No response text.')+'</p>';
+  // Source/artifact availability can change after the last text batch.
+  if(target&&!active&&!reveal.timer)ventureRenderResponse(host,target,run,index,false);
+  return;
+ }
+ reveal.target=target;reveal.rate=Math.max(160,(target.length-reveal.shown.length)/1.4);
+ const instant=()=>document.hidden||!venture.open||matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const paint=animate=>{
+  const scroll=$('ventureTranscript'),follow=scroll&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<120;
+  ventureRenderResponse(host,reveal.shown,reveal.run,reveal.index,animate);
+  if(follow)scroll.scrollTop=scroll.scrollHeight;
+ };
+ if(!target.startsWith(reveal.shown)||instant()||(!active&&run.status!=='completed')){
+  clearTimeout(reveal.timer);reveal.timer=null;reveal.shown=target;paint(false);return;
+ }
+ if(reveal.timer)return;
+ const step=()=>{
+  reveal.timer=null;if(!host.isConnected)return;
+  const remaining=reveal.target.slice(reveal.shown.length);
+  if(instant())reveal.shown=reveal.target;
+  else{
+   // A small reservoir absorbs 1.2s polling bursts. Drain larger backlogs
+   // faster, including the final batch, without holding up the saved answer.
+   const budget=Math.max(4,Math.ceil(reveal.rate*.045));
+   let take=remaining.slice(0,budget).length;
+   const boundary=remaining.slice(take).search(/\s/u);
+   if(boundary>=0&&boundary<32)take+=boundary+1;
+   if(take<remaining.length&&/[\uD800-\uDBFF]/.test(remaining[take-1]))take++;
+   reveal.shown+=remaining.slice(0,take);
+  }
+  paint(!instant());
+  if(reveal.shown!==reveal.target)reveal.timer=setTimeout(step,45);
+ };
+ reveal.timer=setTimeout(step,140);
+}
+function ventureUpdateTurn(article,run,index){
+ const next=document.createElement('template');next.innerHTML=ventureTurnHTML(run,index);
+ venturePatchDOM(article,next.content);
+ ventureUpdateResponse(article.querySelector('[data-venture-text]'),run,index);
+}
+
 function venturePaintTurns(){
  const scroll=$('ventureTranscript'),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<120,host=$('ventureTurns');
  if(!venture.runs.length){if(!host.querySelector('.venture-welcome'))host.innerHTML='<div class="venture-welcome"><div class="venture-welcome-mark">'+ventureBrandIcon()+'</div><span>VENTURE</span><h1>Where will you venture?</h1><p>Ask a question. Bring your files.<br>Pick up where you left off.</p><div class="venture-welcome-chips"><button data-v-action="attach">'+ventureIcon('plus')+' Bring your files</button><button data-v-action="board">Use your Vision board</button></div></div>';return;}
- host.querySelector('.venture-welcome')?.remove();for(const [index,run] of venture.runs.entries()){let article=host.querySelector('[data-venture-run="'+CSS.escape(run.runId)+'"]');if(!article){article=document.createElement('article');article.className='venture-turn';article.dataset.ventureRun=run.runId;const next=venture.runs[index+1];const nextNode=next&&host.querySelector('[data-venture-run="'+CSS.escape(next.runId)+'"]');host.insertBefore(article,nextNode||null);}const signature=JSON.stringify([run.sequence,run.status,run.text,run.artifacts,run.attachments,run.error,run.preparationNotes,run.localVisualEvidence,run.contextMetrics,run.boardContext,run.memorySources,run.memoryEnabled,run.localQueue,index]);if(venture.rendered.get(run.runId)!==signature){article.innerHTML=ventureTurnHTML(run,index);venture.rendered.set(run.runId,signature);}}
+ host.querySelector('.venture-welcome')?.remove();for(const [index,run] of venture.runs.entries()){let article=host.querySelector('[data-venture-run="'+CSS.escape(run.runId)+'"]');if(!article){article=document.createElement('article');article.className='venture-turn';article.dataset.ventureRun=run.runId;const next=venture.runs[index+1];const nextNode=next&&host.querySelector('[data-venture-run="'+CSS.escape(next.runId)+'"]');host.insertBefore(article,nextNode||null);}const signature=JSON.stringify([run.sequence,run.status,run.text,run.artifacts,run.attachments,run.error,run.preparationNotes,run.localVisualEvidence,run.contextMetrics,run.boardContext,run.memorySources,run.memoryEnabled,run.localQueue,run.phase,index]);if(venture.rendered.get(run.runId)!==signature){ventureUpdateTurn(article,run,index);venture.rendered.set(run.runId,signature);}}
  ventureHydrateImages();if(bottom)scroll.scrollTop=scroll.scrollHeight;
 }
 function venturePaintStatus(){
  const active=venture.runs.find(ventureActive),pending=!!venture.pending;$('ventureSend').hidden=!!active&&!venture.sending;$('ventureStop').hidden=!active||venture.sending;$('ventureSend').disabled=!venture.ready||venture.sending||pending||!!active||ventureDictationBusy();
- $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?(venture.pending.form?'Submission unconfirmed. Retry with the same request ID.':'Earlier submission unconfirmed. Check status or start a new venture.'):active?(active.phase||'Thinking…'):venture.notice?'Review the message above.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);$('ventureActivity').parentElement.classList.toggle('pending',pending);
+ $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?(venture.pending.form?'Submission unconfirmed. Retry with the same request ID.':'Earlier submission unconfirmed. Check status or start a new venture.'):active?ventureLoadingLabels(active)[0]:venture.notice?'Review the message above.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);$('ventureActivity').parentElement.classList.toggle('pending',pending);
  $('ventureCheck').hidden=!venture.notice&&!pending;$('ventureCheck').textContent=venture.pending?.form?'Retry same submission':'Check status';$('ventureCheck').disabled=venture.sending;
  $('venturePendingNew').hidden=!pending||!!venture.pending.form;$('venturePendingNew').disabled=venture.sending||!venture.ready;
  $('ventureFootnote').textContent=venture.sending?'Uploads must finish before you close this page.':pending?'Starting a new venture keeps any accepted work saved in this conversation.':active?'FUPCJ Server is working. You can close Vision and return later.':'Accepted requests keep working when you leave.';

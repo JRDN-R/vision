@@ -1,9 +1,11 @@
-/* Both supplied dotLottie clips are embedded at build time for offline playback. */
+/* The supplied badge and loading dotLottie clips are embedded at build time for offline playback. */
 (() => {
   const clips = /* VISION_QWEN_ANIMATIONS */ [];
   class VentureQwenSymbol extends HTMLElement {
+    get clips() { return clips.slice(0, 2); }
     connectedCallback() {
-      if (this.players || !window.lottie || clips.length !== 2) return;
+      const animations = this.clips;
+      if (this.players || !window.lottie || !animations.length) return;
       this.players = [];
       this.frames = [];
       this.current = 0;
@@ -23,14 +25,14 @@
         });
       };
       let loaded = 0;
-      clips.forEach((data, index) => {
+      animations.forEach((data, index) => {
         const frame = document.createElement('span');
         frame.className = 'venture-qwen-frame';
         frame.hidden = index !== 0;
         this.appendChild(frame);
         this.frames.push(frame);
         const player = window.lottie.loadAnimation({
-          container: frame, renderer: 'svg', loop: false, autoplay: false,
+          container: frame, renderer: 'svg', loop: animations.length === 1, autoplay: false,
           animationData: JSON.parse(JSON.stringify(data)),
           rendererSettings: {preserveAspectRatio: 'xMidYMid meet', hideOnTransparent: false}
         });
@@ -38,7 +40,7 @@
         player.addEventListener('DOMLoaded', () => {
           if (!this.isConnected || !this.players?.includes(player)) return;
           frame.querySelector('svg')?.setAttribute('aria-hidden', 'true');
-          if (++loaded !== clips.length) return;
+          if (++loaded !== animations.length) return;
           this.ready = true;
           this.setAttribute('data-ready', '');
           this.sync();
@@ -75,4 +77,8 @@
     }
   }
   customElements.define('venture-qwen-symbol', VentureQwenSymbol);
+  class VentureLoadingSymbol extends VentureQwenSymbol {
+    get clips() { return clips.slice(2, 3); }
+  }
+  customElements.define('venture-loading-symbol', VentureLoadingSymbol);
 })();
