@@ -1,0 +1,2 @@
+Apply the four checksum-bound source parts.
+Expected SHA256: 8edfd4b116c1ffddb3170265fc6a38c811f5f6302f68a4631a465bb2bc763dd9
