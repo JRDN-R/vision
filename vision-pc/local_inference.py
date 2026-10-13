@@ -8,6 +8,7 @@ from flask import jsonify, request
 from local_preferences import LocalPreferences, MODEL, LOCAL_MODELS
 import local_ultra
 from local_calibration import UltraCalibration
+from local_progress import PROGRESS_INSTRUCTION, ProgressNotes
 from local_runtime import LlamaRuntime, LocalFailure, local_run_seconds
 from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
@@ -53,7 +54,7 @@ class LocalInference:
             for name, declaration in [('provider', "TEXT NOT NULL DEFAULT 'openai'"),
                                       ('local_started_at', 'REAL'), ('local_finished_at', 'REAL'),
                                       ('local_metrics_json', 'TEXT'), ('local_profile_json', 'TEXT'),
-                                      ('local_visual_json', 'TEXT')]:
+                                      ('local_visual_json', 'TEXT'), ('local_progress_json', 'TEXT')]:
                 if name not in columns:
                     db.execute('ALTER TABLE project_runs ADD COLUMN ' + name + ' ' + declaration)
             db.execute('''CREATE TABLE IF NOT EXISTS local_resource_lease(
@@ -148,7 +149,8 @@ class LocalInference:
                     processingSeconds=round(elapsed, 1), **timing,
                     longResponse=local_ultra.long_response(profile),
                     progressKind='indeterminate' if local_ultra.long_response(profile) else 'estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
-                    metrics=json.loads(row.get('local_metrics_json') or '{}'))
+                    metrics=json.loads(row.get('local_metrics_json') or '{}'),
+                    progress=json.loads(row.get('local_progress_json') or 'null'))
 
     def recover(self):
         try:
@@ -168,7 +170,7 @@ class LocalInference:
         chain = self.sessions.lineage(row)
         if len(chain) > 100:
             chain = chain[-100:]
-        messages = [dict(role='system', content=SYSTEM)]
+        messages = [dict(role='system', content=SYSTEM + (PROGRESS_INSTRUCTION if profile.get('thinking', True) else ''))]
         for item in chain[:-1]:
             if item['message']:
                 messages.append(dict(role='user', content=item['message']))
@@ -243,12 +245,19 @@ class LocalInference:
         deadline = time.monotonic() + local_run_seconds(profile)
         def cancelled():
             return time.monotonic() > deadline or s.stop.is_set() or bool(s.row(rid)['cancel_requested'])
-        stage = lambda phase: s.update(rid, phase=phase)
+        progress = ProgressNotes()
+        def note(text, key=None, source='stage'):
+            if progress.add(text, source, key):
+                s.update(rid, local_progress_json=json.dumps(progress.snapshot()))
+        def stage(phase):
+            s.update(rid, phase=phase)
+
         try:
             if cancelled():
                 raise InterruptedError()
             s.update(rid, status='preparing', phase='Preparing local source evidence',
                      local_started_at=row.get('local_started_at') or time.time())
+            note('Getting your request and any selected context ready.', 'preparing')
             check_ready(profile)  # A removed/disabled variant must not run or silently fall back.
             messages, visual_metrics = self.messages(row, profile, cancelled, stage)
             prepared_at = time.monotonic()
@@ -272,11 +281,16 @@ class LocalInference:
                 metrics['preparationSeconds'] = prepared_at - begun
                 metrics['modelLoadSeconds'] = loaded_at - prepared_at
                 s.update(rid, status='in_progress', phase='Qwen processing the prompt', local_metrics_json=json.dumps(metrics))
+                note('Reading the prepared request before starting the response.', 'reading')
                 for event in local_ultra.response_events(runtime, messages, row['max_tokens'], context_tokens, profile):
                     if cancelled():
                         raise InterruptedError()
                     if event.get('error'):
                         raise LocalFailure('The local model reported a generation failure.')
+                    if event.get('localThinking'):
+                        note('Working through your request.', 'thinking')
+                    for summary in event.get('localProgressSummaries', []):
+                        note(summary, source='model')
                     if isinstance(event.get('timings'), dict):
                         metrics['timings'] = {k: v for k, v in event['timings'].items()
                             if k in ('prompt_per_second', 'predicted_per_second') and isinstance(v, (int, float))}
@@ -299,6 +313,8 @@ class LocalInference:
                         boundary = text[-8:] + content
                         if '<think>' in boundary or '</think>' in boundary:
                             raise LocalFailure('The installed template did not separate private reasoning. Check the runtime profile.')
+                        if content:
+                            note('Writing the response as it becomes ready.', 'writing')
                         text += content
                         if len(text) > (local_ultra.MAX_RESPONSE_CHARS if extended else 128000):
                             raise LocalFailure('Local answer exceeded its output safety bound.')
@@ -317,6 +333,7 @@ class LocalInference:
                 metrics['cpuSeconds'] = getattr(runtime, 'cpu_seconds', None)
                 result = dict(provider='local_llama_cpp', model=row['model'], output=[], usage=usage,
                               status='completed' if finish == 'stop' and text.strip() else 'incomplete')
+                note('Saving the response to this conversation.', 'saving')
                 s.update(rid, status='saving', phase='Saving local answer', text=text,
                          response_json=json.dumps(result), local_metrics_json=json.dumps(metrics))
             # The runtime has stopped before committing terminal state/advancing FIFO.

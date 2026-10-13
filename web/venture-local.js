@@ -127,3 +127,44 @@ function venturePaintUncensored(){
   !ready?(on?'Heretic unavailable. Turn off to use Standard.':'Install and enable Heretic on FUPCJ Server first.'):
   on?'Heretic model selected. Refusals may still occur.':'Off uses the original Distill model.';
 }
+
+// Public summaries supplied by the model, or observed server stages. No raw
+// reasoning transcript, synthetic timer, or additional summarizer request.
+function ventureUpdateProgressNotes(host,run){
+ if(!host)return;
+ const data=run.localQueue?.progress;
+ const steps=data?.version===1&&Array.isArray(data.steps)?data.steps.filter(s=>Number.isInteger(s.id)&&typeof s.text==='string'&&s.text.trim().split(/\s+/u).length>=3&&s.text.trim().split(/\s+/u).length<=30&&s.text.length<=500).slice(-128):[];
+ if(!steps.length){host.replaceChildren();delete host.progressState;return;}
+ const active=ventureActive(run),latest=steps[steps.length-1];
+ const signature=JSON.stringify([active,run.status,steps]);
+ if(host.progressState?.signature===signature)return;
+ let state=host.progressState;
+ if(!state){
+  const panel=document.createElement('details');panel.className='venture-progress-notes';panel.open=active;
+  const title=document.createElement('summary');
+  const current=document.createElement('p');current.className='venture-progress-current';current.setAttribute('role','status');current.setAttribute('aria-live','polite');current.setAttribute('aria-atomic','true');
+  const history=document.createElement('details');history.className='venture-progress-history';
+  const historyTitle=document.createElement('summary'),list=document.createElement('div');list.className='venture-progress-steps';
+  history.append(historyTitle,list);panel.append(title,current,history);host.appendChild(panel);
+  state=host.progressState={panel,title,current,history,historyTitle,list,rows:new Map()};
+ }
+ const changed=state.latest!==latest.id;
+ // Polling leaves manually opened notes alone. A genuine new step collapses
+ // old sections once; a terminal transition collapses the entire panel once.
+ if(changed){state.history.open=false;for(const row of state.rows.values())row.open=false;}
+ if(state.active&&!active){state.panel.open=false;for(const row of state.rows.values())row.open=false;}
+ if(!active&&state.active!==false)state.history.open=true;
+ state.title.textContent=active?'Progress update':run.status==='completed'?'Progress summary':run.status==='cancelled'?'Stopped · progress summary':'Progress summary';
+ const historySteps=active?steps.slice(0,-1):steps;
+ state.current.hidden=!active;
+ if(state.current.textContent!==latest.text)state.current.textContent=latest.text;
+ state.history.hidden=!historySteps.length;
+ state.historyTitle.textContent=(active?'Earlier updates':'Saved updates')+' · '+historySteps.length;
+ const keep=new Set(historySteps.map(s=>s.id));
+ for(const [id,row] of state.rows)if(!keep.has(id)){row.remove();state.rows.delete(id);}
+ for(const step of historySteps){
+  let row=state.rows.get(step.id);
+  if(!row){row=document.createElement('details');const label=document.createElement('summary'),copy=document.createElement('p');label.textContent='Step '+step.id;copy.textContent=step.text;row.append(label,copy);state.list.appendChild(row);state.rows.set(step.id,row);}
+ }
+ state.latest=latest.id;state.active=active;state.signature=signature;
+}
