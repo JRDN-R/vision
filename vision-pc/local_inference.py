@@ -8,7 +8,7 @@ from flask import jsonify, request
 from local_preferences import LocalPreferences, MODEL, LOCAL_MODELS
 import local_ultra
 from local_calibration import UltraCalibration
-from local_runtime import LlamaRuntime, LocalFailure
+from local_runtime import LlamaRuntime, LocalFailure, local_run_seconds
 from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
 
@@ -236,7 +236,7 @@ class LocalInference:
         context_tokens=max(4096,min(16384,int(profile.get('contextTokens',4096))))
         text, last_flush, usage, finish, runtime = '', 0, {}, None, None
         begun = time.monotonic()
-        deadline = time.monotonic() + max(60, min(7200, int(profile.get('maxRunSeconds', 1800))))
+        deadline = time.monotonic() + local_run_seconds(profile)
         def cancelled():
             return time.monotonic() > deadline or s.stop.is_set() or bool(s.row(rid)['cancel_requested'])
         stage = lambda phase: s.update(rid, phase=phase)
@@ -295,6 +295,7 @@ class LocalInference:
                     raise LocalFailure('The local stream disconnected before a final result. Partial output is retained.')
                 if cancelled():
                     raise InterruptedError()
+                metrics['finishReason'] = finish
                 metrics['usage'] = usage
                 metrics['peakResidentBytes'] = getattr(runtime, 'peak_rss', None)
                 metrics['minimumAvailableRamBytes'] = getattr(runtime, 'minimum_available_ram', None)
@@ -307,8 +308,18 @@ class LocalInference:
             incomplete = finish != 'stop' or not text.strip()
             if not incomplete and visual_metrics.get('runtimeChecked'):
                 self.visual.confirm(profile)
-            s.update(rid, status='incomplete' if incomplete else 'completed', phase='Output budget reached' if incomplete else 'Complete',
-                     local_finished_at=time.time(), error='Qwen exhausted its output/reasoning budget. Narrow the question or retry with a validated profile.' if incomplete else None)
+            if incomplete and finish == 'length':
+                detail = ('before producing visible text' if not text.strip()
+                          else 'before completing the visible answer')
+                completion_error = ('Qwen reached its selected output/reasoning token budget ' + detail +
+                                    '. This was a token limit, not a timeout; internal thinking uses the same budget.')
+            elif incomplete:
+                completion_error = 'Qwen did not return a complete visible answer. Check the local model status before retrying.'
+            else:
+                completion_error = None
+            s.update(rid, status='incomplete' if incomplete else 'completed',
+                     phase='Output token budget reached' if finish == 'length' else 'Incomplete response' if incomplete else 'Complete',
+                     local_finished_at=time.time(), error=completion_error)
             if not incomplete:
                 try:
                     self.calibration.record(s.row(rid))
