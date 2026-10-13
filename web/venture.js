@@ -266,7 +266,7 @@ function venturePaintTurns(){
  ventureHydrateImages();if(bottom)scroll.scrollTop=scroll.scrollHeight;
 }
 function venturePaintStatus(){
- const active=venture.runs.find(ventureActive),pending=!!venture.pending;$('ventureSend').hidden=!!active&&!venture.sending;$('ventureStop').hidden=!active||venture.sending;$('ventureSend').disabled=!venture.ready||venture.sending||pending||!!active||ventureDictationBusy();
+ const active=venture.runs.find(ventureActive),pending=!!venture.pending;$('ventureSend').hidden=!!active&&!venture.sending;$('ventureStop').hidden=!active||venture.sending;$('ventureStop').disabled=!!venture.cancelling;$('ventureSend').disabled=!venture.ready||venture.sending||pending||!!active||ventureDictationBusy();
  $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?(venture.pending.form?'Submission unconfirmed. Retry with the same request ID.':'Earlier submission unconfirmed. Check status or start a new venture.'):active?ventureLoadingLabels(active)[0]:venture.notice?'Review the message above.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);$('ventureActivity').parentElement.classList.toggle('pending',pending);
  $('ventureCheck').hidden=!venture.notice&&!pending;$('ventureCheck').textContent=venture.pending?.form?'Retry same submission':'Check status';$('ventureCheck').disabled=venture.sending;
  $('venturePendingNew').hidden=!pending||!!venture.pending.form;$('venturePendingNew').disabled=venture.sending||!venture.ready;
