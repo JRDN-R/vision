@@ -7,6 +7,7 @@ from flask import jsonify, request
 
 from local_preferences import LocalPreferences, MODEL, LOCAL_MODELS
 import local_ultra
+from local_calibration import UltraCalibration
 from local_runtime import LlamaRuntime, LocalFailure
 from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
@@ -27,6 +28,7 @@ class LocalInference:
         self.sessions, self.app, self.db = sessions, sessions.app, sessions.db
         self.settings = {}
         self.preferences = LocalPreferences(self)
+        self.calibration = UltraCalibration(self)
         self.runtime_factory = LlamaRuntime
         from local_visual import LocalVisual
         self.visual = LocalVisual(self)
@@ -45,6 +47,7 @@ class LocalInference:
         self.visual.confirmed = None
         self.visual.confirmed_variants.clear()
         self.preferences.initialize()
+        self.calibration.initialize()
         with self.db() as db:
             columns = {r[1] for r in db.execute('PRAGMA table_info(project_runs)')}
             for name, declaration in [('provider', "TEXT NOT NULL DEFAULT 'openai'"),
@@ -126,7 +129,9 @@ class LocalInference:
         started, finished = row.get('local_started_at'), row.get('local_finished_at')
         elapsed = max(0, (finished or now) - started) if started else 0
         timing = dict(estimatedRemainingSeconds=None,estimatedRemainingRange=None,estimateStatus='complete',estimateSamples=0)
-        if row['status'] not in ('completed','incomplete','cancelled','error'):
+        profile = json.loads(row.get('local_profile_json') or '{}')
+        variant = profile.get('modelVariant','standard')
+        if variant != 'ultra' and row['status'] not in ('completed','incomplete','cancelled','error'):
             from local_timing import estimate
             # Only this owner's timing samples are used. No other user's prompts,
             # filenames, identities or individual timings enter the response.
@@ -136,19 +141,12 @@ class LocalInference:
                     AND r.provider='local_llama_cpp' AND r.status='completed' AND r.local_finished_at>?
                     ORDER BY r.local_finished_at DESC LIMIT 60''', (row['project_id'],now-30*86400)).fetchall()
             timing = estimate(row, [dict(item) for item in history], elapsed, ahead)
-        profile = json.loads(row.get('local_profile_json') or '{}')
-        variant = profile.get('modelVariant','standard')
-        if variant == 'ultra' and timing['estimateStatus'] == 'learning' and not ahead:
-            metrics = json.loads(row.get('local_metrics_json') or '{}')
-            # Before tokenization, use the full available prompt budget; do not
-            # claim a calibrated visual/preparation estimate from a text benchmark.
-            if not json.loads(row.get('inputs_json') or '[]') and not row.get('board_context_json') and not row.get('previous_id'):
-                timing = local_ultra.benchmark_estimate(profile,metrics.get('inputTokens',
-                    profile['contextTokens']-row['max_tokens']-64),row['max_tokens'],elapsed) or timing
+        if variant == 'ultra':
+            timing = self.calibration.predict(row, profile, elapsed, ahead)
         return dict(provider='local_llama_cpp', modelVariant=variant, requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
-                    progressKind='indeterminate', noApiTokenCharge=True,
+                    progressKind='estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
                     metrics=json.loads(row.get('local_metrics_json') or '{}'))
 
     def recover(self):
@@ -237,6 +235,7 @@ class LocalInference:
             profile['gpuLayers'] = 0
         context_tokens=max(4096,min(16384,int(profile.get('contextTokens',4096))))
         text, last_flush, usage, finish, runtime = '', 0, {}, None, None
+        begun = time.monotonic()
         deadline = time.monotonic() + max(60, min(7200, int(profile.get('maxRunSeconds', 1800))))
         def cancelled():
             return time.monotonic() > deadline or s.stop.is_set() or bool(s.row(rid)['cancel_requested'])
@@ -248,7 +247,10 @@ class LocalInference:
                      local_started_at=row.get('local_started_at') or time.time())
             check_ready(profile)  # A removed/disabled variant must not run or silently fall back.
             messages, visual_metrics = self.messages(row, profile, cancelled, stage)
-            with self.runtime_factory(profile, cancelled, stage) as runtime:
+            prepared_at = time.monotonic()
+            runtime_profile = dict(profile, benchmark=True) if profile.get('modelVariant') == 'ultra' else profile
+            with self.runtime_factory(runtime_profile, cancelled, stage) as runtime:
+                loaded_at = time.monotonic()
                 stage('Counting the rendered local prompt')
                 count = runtime.count(messages)
                 dropped = 0
@@ -263,12 +265,17 @@ class LocalInference:
                                contextTokens=context_tokens, maxOutputTokens=row['max_tokens'],
                                excludedHistoryMessages=dropped)
                 metrics['visual'] = visual_metrics
+                metrics['preparationSeconds'] = prepared_at - begun
+                metrics['modelLoadSeconds'] = loaded_at - prepared_at
                 s.update(rid, status='in_progress', phase='Qwen processing the prompt', local_metrics_json=json.dumps(metrics))
                 for event in runtime.generate(messages, row['max_tokens']):
                     if cancelled():
                         raise InterruptedError()
                     if event.get('error'):
                         raise LocalFailure('The local model reported a generation failure.')
+                    if isinstance(event.get('timings'), dict):
+                        metrics['timings'] = {k: v for k, v in event['timings'].items()
+                            if k in ('prompt_per_second', 'predicted_per_second') and isinstance(v, (int, float))}
                     if isinstance(event.get('usage'), dict):
                         usage = {key: value for key, value in event['usage'].items()
                                  if key in ('prompt_tokens', 'completion_tokens', 'total_tokens') and isinstance(value, int)}
@@ -302,6 +309,11 @@ class LocalInference:
                 self.visual.confirm(profile)
             s.update(rid, status='incomplete' if incomplete else 'completed', phase='Output budget reached' if incomplete else 'Complete',
                      local_finished_at=time.time(), error='Qwen exhausted its output/reasoning budget. Narrow the question or retry with a validated profile.' if incomplete else None)
+            if not incomplete:
+                try:
+                    self.calibration.record(s.row(rid))
+                except Exception:
+                    self.app.logger.exception('Ultra calibration/report export failed; answer retained')
         except Exception as error:
             from context_integration import ContextPending
             if time.monotonic() > deadline:
@@ -322,6 +334,11 @@ class LocalInference:
         return True
 
     def register_routes(self):
+        @self.app.route('/api/venture/ultra/notice', methods=['GET', 'POST'])
+        def ultra_notice():
+            uid = self.sessions.venture.account()
+            return jsonify(self.preferences.ultra_notice(uid, request.method == 'POST'))
+
         @self.app.post('/api/venture/local/disclosure')
         def local_disclosure():
             uid = self.sessions.venture.account()

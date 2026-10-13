@@ -25,6 +25,8 @@ class LocalPreferences:
             db.execute('''CREATE TABLE IF NOT EXISTS venture_selection (
                 uid TEXT PRIMARY KEY, epoch TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0,
                 explicit_at REAL, disclosure TEXT, profiles_json TEXT NOT NULL DEFAULT '{}')''')
+            if 'ultra_notice_at' not in {r[1] for r in db.execute('PRAGMA table_info(venture_selection)')}:
+                db.execute('ALTER TABLE venture_selection ADD COLUMN ultra_notice_at REAL')
 
     def _read(self, db, uid):
         from venture import DEFAULT_SETTINGS
@@ -113,3 +115,14 @@ class LocalPreferences:
         with self.db() as db:
             db.execute('UPDATE venture_selection SET disclosure=? WHERE uid=?', (version, uid))
         return self.get(uid)
+
+    def ultra_notice(self, uid, acknowledge=False):
+        self.get(uid)
+        now = time.time()
+        with self.db() as db:
+            if acknowledge:
+                db.execute('UPDATE venture_selection SET ultra_notice_at=?,disclosure=? WHERE uid=?',
+                           (now, DISCLOSURE, uid))
+            acknowledged = db.execute('SELECT ultra_notice_at FROM venture_selection WHERE uid=?', (uid,)).fetchone()[0]
+        remaining = max(0, (acknowledged or 0) + 86400 - now)
+        return dict(due=remaining <= 0, remainingSeconds=remaining)

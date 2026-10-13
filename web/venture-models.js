@@ -66,7 +66,7 @@ async function ventureLoadModels(force=false) {
   venture.modelNotice=data.status==='no-key'?'Qwen does not need an API key. Cloud models require your own key.':data.status==='local-only'?'Local mode: cloud model names are from the bundled catalog; availability has not been checked.':data.status==='cloud-unavailable'?'Cloud catalog unavailable. Qwen remains listed.':'';
   const local=data.models?.find(m=>m.id==='qwen3.8-local');venture.localCapability=local||null;if(local){local.ultra=data.models?.find(m=>m.id==='qwen-ultra-local')||local.ultra;}if(local){const p=VENTURE_PARAMETER_REGISTRY.models?.['qwen3.8-local'];if(p){p.context=local.contextTokens;p.maxOutput=local.maxOutputTokens;}}
  }catch(error){if(epoch!==venture.epoch||loadId!==venture.modelLoadId)return;venture.localCapability=null;venture.modelNotice=error.status===404?'Update FUPCJ Server to load your available models.':'Could not refresh models. '+ventureError(error);}
- finally{if(epoch===venture.epoch&&loadId===venture.modelLoadId){venture.modelsLoading=false;venturePaintModelPicker();venturePaintUltra();venturePaintUltraWait();}}
+ finally{if(epoch===venture.epoch&&loadId===venture.modelLoadId){venture.modelsLoading=false;venturePaintModelPicker();venturePaintUltra();}}
 }
 function ventureModelPickerOpen(open) {
  $('ventureModelsPanel').hidden=!open;$('ventureModel').setAttribute('aria-expanded',String(open));ventureSettingsIdle();

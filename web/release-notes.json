@@ -1,10 +1,8 @@
 {
-  "title": "Local Qwen and RAG preview",
+  "title": "A calmer wait for Qwen Ultra",
   "items": [
-    "Qwen3.8 9B Distill appears first in the model picker. It requires a separate, verified FUPCJ runtime installation and enable step.",
-    "Local text and extracted-file requests use the saved server queue, with no API key or token charge. Queue position and elapsed time appear with the response.",
-    "RAG shows actual indexing stages and source counts. Reusable extraction caches are compressed without changing the evidence; an optional gzip snapshot download is available.",
-    "The local model and all-user default migration remain off in ordinary updates. Photo input, measured completion estimates, and large streamed source ingestion are still pending.",
-    "The opt-in retained-import groundwork is preserved. Existing cloud models, authentication and account data remain available."
+    "Qwen Ultra welcomes you with a coffee break notice at most once per 24 hours per account.",
+    "Ultra responses now show a gold progress bar and estimated completion time. The server saves a shared calibration after ten compatible completed responses.",
+    "Accepted prompts appear in history immediately, even before an answer arrives. Reopen a running conversation or use the labeled Stop button to cancel it."
   ]
 }
