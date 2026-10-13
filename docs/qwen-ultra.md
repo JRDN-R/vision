@@ -94,8 +94,19 @@ to runtime parameters. Hardware profiles are server-resolved, never client paths
 or arbitrary command arguments. Each queued job snapshots its effective profile.
 
 The 27B profile reserves at least 10 GiB system RAM (or the existing higher
-reserve), stops over 30 GiB process RSS, and has a two-hour job time limit.
-These checks and a short benchmark do not certify livestream coexistence.
+reserve), stops over 30 GiB process RSS, and has a **five-hour processing limit**
+for each accepted run (excluding time waiting in the FIFO queue). Browser
+navigation, Safari suspension, and client polling timeouts do not cancel accepted
+work; the server keeps the run and saves visible text as it arrives. The local
+stream/tokenization read deadline is also extended so a slow CPU response does
+not fail after 120 seconds without data. Server/Windows restarts still interrupt
+active inference; already saved partial text remains available, not replayed.
+
+The separate **4,096 output-token cap** is unchanged. Hidden thinking and
+visible answer text share it, so an output-budget failure can yield zero visible
+text long before the five-hour processing limit. Venture distinguishes that
+failure from a timeout. These controls and a short benchmark do not certify
+livestream coexistence.
 
 ## Capabilities and waiting time
 
