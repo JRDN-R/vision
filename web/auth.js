@@ -81,6 +81,7 @@ async function accountSetUser(user){
  await projectSwitchAccountScope(user?uid:'signed-out');
  accountLastUID=uid;
  accountGateLocked=false;
+ if(!user&&location.protocol!=='file:')void accountGoogleLogin.prepare().catch(()=>{});
  accountPaint();
 }
 async function accountLoad(){
@@ -89,7 +90,7 @@ async function accountLoad(){
  accountLoadPromise=(async()=>{
   const bundled=window.VisionFirebaseSDK;
   if(location.protocol==='file:'&&!bundled)throw new Error('This local copy is missing its bundled sign-in runtime. Download a fresh Vision-Local.html.');
-  const [appSDK,authSDK]=bundled?[bundled.app,bundled.auth]:await accountWait(Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js')]),'Sign-in could not load. Check your connection and retry.');
+  const [appSDK,authSDK]=bundled?[bundled.app,bundled.auth]:await accountWait(Promise.all([import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js')]),'Sign-in could not load. Check your connection and retry.');
   accountSDK=authSDK;const app=appSDK.initializeApp(VISION_FIREBASE,'vision-account-login');
   // Restoring a local session must not wait for Google's popup iframe on iOS.
   // Load that resolver only when the user actually asks to sign in with Google.
@@ -123,21 +124,22 @@ async function accountIdToken(){
 async function accountGoogleSignIn(){
  if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
  try{
-  const local=location.protocol==='file:'?localGoogleConnect('signin'):null;
-  if(local)local.catch(()=>{});
-  const auth=await accountLoad();
+  // Load before the gesture that opens Google, never await then launch a popup.
+  if(!accountFirebase||accountRestoring||accountRestoreFailed){await accountLoad();accountError='Ready. Press Continue with Google to sign in.';return;}
+  const auth=accountFirebase;
   // An existing session may finish restoring between the user's tap and this point.
   // Never open a fresh Google window when Firebase already knows the account.
   if(auth.currentUser){
    await accountTransition;await accountSetUser(auth.currentUser);
   }else{
-   const provider=new accountSDK.GoogleAuthProvider();
-   // Don't force Google's account chooser on every sign-in.
-   const credential=local?await local:null;
-   const result=credential
-    ?await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken,credential.accessToken))
-    :await accountWait(accountSDK.signInWithPopup(auth,provider,accountSDK.browserPopupRedirectResolver),
-      'Google sign-in did not finish. Close the Google window and try again. You can also sign in with your Vision email and password.',90000);
+   const local=location.protocol==='file:';
+   if(!local&&!accountGoogleLogin.ready()){
+    await accountGoogleLogin.prepare();accountError='Ready. Press Continue with Google to sign in.';return;
+   }
+   const epoch=accountAuthEpoch;
+   const credential=local?await localGoogleConnect('signin'):{accessToken:await accountGoogleLogin.request()};
+   if(epoch!==accountAuthEpoch||auth.currentUser)throw new Error('The signed-in account changed. Please try again.');
+   const result=await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken||null,credential.accessToken));
    await accountTransition;await accountSetUser(result.user);
   }
   if(accountForwarding)return;
