@@ -36,6 +36,9 @@ HERETIC_SPEC = dict(
 
 def model_spec(settings):
     variant = settings.get('modelVariant', 'standard')
+    if variant == 'ultra':
+        from local_ultra import SPEC
+        return dict(SPEC)
     if variant == 'heretic':
         return dict(HERETIC_SPEC)
     if variant != 'standard':
@@ -65,6 +68,8 @@ class LlamaRuntime:
 
     def __init__(self, settings, cancelled, stage):
         self.settings, self.cancelled, self.stage = settings, cancelled, stage
+        self.alias = settings.get('modelId', self.alias)
+        self.thinking = settings.get('thinking', self.thinking)
         self.process = None
         self.guard = None
         self.done = threading.Event()
@@ -128,7 +133,8 @@ class LlamaRuntime:
                 '--host', '127.0.0.1', '--port', str(self.port), '--parallel', '1',
                 '--ctx-size', str(int(self.settings.get('contextTokens', 4096))),
                 '--threads', str(max(1, min(16, int(self.settings.get('threads', 8))))),
-                '--batch-size', '256', '--ubatch-size', '64',
+                '--batch-size', str(int(self.settings.get('batchSize',256))),
+                '--ubatch-size', str(int(self.settings.get('ubatchSize',64))),
                 '--n-gpu-layers', str(max(0, min(99, int(self.settings.get('gpuLayers', 0))))),
                 '--api-key', self.token, '--jinja', '--reasoning-format', 'deepseek',
                 '--no-webui', '--no-context-shift']
@@ -194,7 +200,7 @@ class LlamaRuntime:
                 psutil.Process(self.process.pid).resume()
             self.watch = threading.Thread(target=self.monitor, daemon=True)
             self.watch.start()
-            end = time.monotonic() + 240
+            end = time.monotonic() + (600 if self.settings.get('modelVariant') == 'ultra' else 240)
             while time.monotonic() < end and self.process.poll() is None:
                 if self.cancelled():
                     raise InterruptedError()
@@ -222,7 +228,7 @@ class LlamaRuntime:
             self.http.close()
 
     def count(self, messages):
-        rendered = self.json('/apply-template', {'messages': messages, 'chat_template_kwargs': {'enable_thinking': True}})
+        rendered = self.json('/apply-template', {'messages': messages, 'chat_template_kwargs': {'enable_thinking': self.thinking}})
         if not isinstance(rendered.get('prompt'), str):
             raise LocalFailure('The installed runtime cannot render this chat template.')
         tokens = self.json('/tokenize', {'content': rendered['prompt'], 'add_special': True, 'parse_special': True})
@@ -231,11 +237,16 @@ class LlamaRuntime:
         return len(tokens['tokens'])
 
     def generate(self, messages, max_tokens):
+        sampling = self.settings.get('sampling') or {}
         payload = dict(model=self.alias, messages=messages, stream=True,
                        stream_options={'include_usage': True}, max_tokens=max_tokens,
-                       temperature=0.6, top_p=.95, top_k=20, min_p=0.0,
-                       presence_penalty=0.0, repeat_penalty=1.0,
+                       temperature=sampling.get('temperature',.6), top_p=sampling.get('topP',.95),
+                       top_k=sampling.get('topK',20), min_p=sampling.get('minP',0.),
+                       presence_penalty=sampling.get('presencePenalty',0.), repeat_penalty=sampling.get('repeatPenalty',1.),
+                       seed=sampling.get('seed',-1),
                        chat_template_kwargs={'enable_thinking': self.thinking}, cache_prompt=False, sse_ping_interval=5)
+        if self.settings.get('benchmark'):
+            payload['timings_per_token'] = True
         with self.request('/v1/chat/completions', payload, stream=True) as response:
             for line in response.iter_lines(chunk_size=512):
                 if self.cancelled():

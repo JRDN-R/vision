@@ -1,19 +1,21 @@
 /* Local provider UI. All model access still goes through the account backend. */
 VENTURE_MODEL_SYMBOLS.qwen = "<svg role=\"img\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><title>QWen</title><path d=\"M23.919 14.545 20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.57.57 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801-6.205-.002 1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315-1.634-2.83c2.129-3.673 4.25-7.351 6.373-11.028h3.592l3.102 5.374z\"/></svg>";
-function ventureIsLocal(model=venture.settings.model){return model==='qwen3.8-local';}
-function ventureLocalVisionReady(){return venture.settings?.qwenUncensored===true?venture.localCapability?.variants?.heretic?.vision===true:venture.localCapability?.capabilities?.vision===true;}
-function ventureLocalSubtitle(){return ventureLocalVisionReady()?'9B Distill + Vision':venture.localCapability?.enabled===true&&venture.localCapability?.visual?.status==='awaiting-integrated-check'?'9B Distill':'9B Distill · vision not ready';}
+function ventureIsLocal(model=venture.settings?.model){return model==='qwen3.8-local'||model==='qwen-ultra-local';}
+function ventureLocalVisionReady(model=venture.settings?.model){return model==='qwen-ultra-local'?venture.localCapability?.ultra?.capabilities?.vision===true:venture.settings?.qwenUncensored===true?venture.localCapability?.variants?.heretic?.vision===true:venture.localCapability?.capabilities?.vision===true;}
+function ventureLocalSubtitle(model='qwen3.8-local'){if(model==='qwen-ultra-local')return '27B Heretic'+(ventureLocalVisionReady(model)?' + Vision':venture.localCapability?.ultra?.enabled?' · local':' · install to enable');return ventureLocalVisionReady(model)?'9B Distill + Vision':venture.localCapability?.enabled===true&&venture.localCapability?.visual?.status==='awaiting-integrated-check'?'9B Distill':'9B Distill · vision not ready';}
 function ventureAcceptLocalCapability(data){
  if(!Object.prototype.hasOwnProperty.call(data,'localModel'))return;
- const before=ventureLocalSubtitle();venture.localCapability=data.localModel||null;
+ const before=ventureLocalSubtitle(venture.settings.model);venture.localCapability=data.localModel||null;
  if(typeof $==='function')venturePaintUncensored();
- if(before!==ventureLocalSubtitle()){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
+ if(typeof venturePaintUltra==='function'){venturePaintUltra();venturePaintUltraWait();}
+ if(before!==ventureLocalSubtitle(venture.settings.model)){venture.rendered.clear();venturePaintModelPicker();venturePaintTurns();}
 }
 function ventureLocalSourceLink(label,url,run){
  const index=run?.localVisualEvidence?.findIndex(e=>e.sourceURL===url)??-1;
  return index<0?label+' (source unavailable)':'<button type="button" data-v-action="local-visual" data-index="'+index+'">'+label+'</button>';
 }
-function ventureLocalDisclosure(){
+function ventureLocalDisclosure(model=venture.settings?.model){
+ if(model==='qwen-ultra-local')return '<h2 id="qwenNoticeTitle">Qwen Ultra</h2><p>The 27B Ultra-Uncensored Heretic model runs on FUPCJ, one local request at a time. It reads extracted file evidence, writes code and can use the existing visual worker for source-linked image findings. The worker and answering model run in sequence.</p><p>This larger model can take several minutes or longer. Venture estimates time from the installed benchmark and comparable completed requests, including the output budget used for thinking. Queueing, files, images and other PC work may add time. Accepted work continues when you leave.</p><p>Web search, code execution and image generation are not integrated. There is no API token charge and no automatic cloud fallback. Authorized server administrators may access server-held data. “Uncensored” describes the publisher’s modification, not a guarantee of accuracy or zero refusals.</p>';
  return '<h2 id="qwenNoticeTitle">Qwen Local</h2><p>9B Distill + Vision combines a local visual worker with the 9B answering model. For images and selected video frames, the visual worker provides source-linked findings and timestamps, then the 9B model writes the answer. They run in sequence. A new question can trigger a focused inspection when saved findings do not cover it.</p><p>'+ (ventureLocalVisionReady()?'This backend has confirmed the integrated image analysis path.':'This backend has not yet confirmed image analysis. Visual requests may be unavailable until the integrated path is checked.')+'</p><p>Qwen runs on the FUPCJ server, not this phone. Requests run one at a time, with queue position and elapsed time shown. Response time is not yet calibrated. Authorized server administrators may access server-held data; this is not an end-to-end encryption guarantee.</p><p>Visual findings can miss details or misread small text. Only the identified frames and crops are inspected. Web search and code execution are unavailable. Local dictation uses PC Whisper. No API token charge and no automatic cloud fallback.</p>';
 }
 function ventureAcceptPreferences(prefs){
@@ -21,13 +23,13 @@ function ventureAcceptPreferences(prefs){
  venture.disclosureVersion=prefs.disclosureVersion;venture.localAcknowledged=prefs.disclosureAcknowledged===true;
  venture.profiles=prefs.profiles||{};
 }
-async function ventureLocalNotice(){
+async function ventureLocalNotice(model=venture.settings?.model){
  if(venture.localAcknowledged)return true;
  if(venture.localNoticePromise)return venture.localNoticePromise;
  const epoch=venture.epoch;
  venture.localNoticePromise=new Promise(resolve=>{
   const dialog=document.createElement('dialog');dialog.className='venture-local-notice';dialog.setAttribute('aria-labelledby','qwenNoticeTitle');
-  dialog.innerHTML=ventureLocalDisclosure()+'<p class="qwen-notice-error" role="status"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button type="button" data-accept>OK</button></div>';
+  dialog.innerHTML=ventureLocalDisclosure(model)+'<p class="qwen-notice-error" role="status"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button type="button" data-accept>OK</button></div>';
   document.body.appendChild(dialog);
   let accepted=false;
   dialog.querySelector('[data-close]').onclick=()=>dialog.close();
@@ -79,7 +81,7 @@ function ventureLocalProgress(run,details=false){
  // overruns stay indeterminate; neither can honestly imply near completion.
  const estimated=q?.estimateStatus==='estimated'&&!q.requestsAhead&&run.status!=='queued'&&Array.isArray(range)&&range.length===2&&range.every(n=>Number.isFinite(n)&&n>=0)&&range[1]>=range[0]&&Number.isFinite(q.processingSeconds)&&q.processingSeconds>0;
  const percent=estimated?Math.min(95,Math.max(1,Math.round(100*q.processingSeconds/(q.processingSeconds+Math.max(1,range[1]))))):null;
- const caption=estimated?'About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' left':q?.estimateStatus==='overrun'?'Still working on it':'';
+ const caption=estimated?(run.model==='qwen-ultra-local'&&typeof ventureUltraCoffee==='function'?ventureUltraCoffee(range):'About '+ventureLocalDuration(range[0])+'–'+ventureLocalDuration(range[1])+' left'):q?.estimateStatus==='overrun'?'Still working on it':run.model==='qwen-ultra-local'?'Ultra can take a while. You can leave and return later.':'';
  return '<div class="venture-loading"'+(estimated?' data-estimated':'')+'><div class="venture-loading-heading"><venture-loading-symbol aria-hidden="true"></venture-loading-symbol><span class="venture-loading-label" role="status" aria-label="'+escapeHTML(labels[0])+'"><span aria-hidden="true">'+labels.map(t=>'<span>'+escapeHTML(t)+'</span>').join('')+'</span></span></div><div class="venture-progress-track'+(estimated?' is-estimated':'')+'" role="progressbar" aria-label="'+(estimated?'Estimated response progress':'Answer in progress')+'"'+(estimated?' aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+percent+'" aria-valuetext="'+escapeHTML(caption)+' (estimated)"':'')+'><span'+(estimated?' style="width:'+percent+'%"':'')+'></span></div><span class="venture-progress-estimate">'+escapeHTML(caption)+'</span></div>';
 }
 function ventureLocalDuration(seconds){seconds=Math.max(0,Math.round(seconds));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m'+(seconds%60?' '+seconds%60+'s':'');}
@@ -90,7 +92,7 @@ let ventureLocalInfo=null;
 function ventureCloseLocalInfo(){if(ventureLocalInfo){ventureLocalInfo.close();ventureLocalInfo=null;}}
 function ventureOpenLocalInfo(run,button){
  const same=ventureLocalInfo?.runId===run.runId;ventureCloseLocalInfo();if(same)return;
- const controller=new AbortController(),popover=document.createElement('section');popover.className='venture-response-popover';popover.setAttribute('role','dialog');popover.setAttribute('aria-label','Local response information');popover.setAttribute('popover','auto');popover.tabIndex=-1;popover.innerHTML='<p>'+((run.localQueue?.modelVariant||'standard')==='heretic'?'Qwen3.8-9B Heretic · Uncensored':'Qwen3.8-9B Distill · Standard')+'</p>'+ventureLocalProgress(run,true);
+ const controller=new AbortController(),popover=document.createElement('section');popover.className='venture-response-popover';popover.setAttribute('role','dialog');popover.setAttribute('aria-label','Local response information');popover.setAttribute('popover','auto');popover.tabIndex=-1;popover.innerHTML='<p>'+(run.model==='qwen-ultra-local'?'Qwen3.5-27B Ultra-Uncensored Heretic':(run.localQueue?.modelVariant||'standard')==='heretic'?'Qwen3.8-9B Heretic · Uncensored':'Qwen3.8-9B Distill · Standard')+'</p>'+ventureLocalProgress(run,true);
  const close=()=>{controller.abort();button.setAttribute('aria-expanded','false');if(popover.matches(':popover-open'))popover.hidePopover();popover.remove();if(ventureLocalInfo?.element===popover)ventureLocalInfo=null;};
  ventureLocalInfo={runId:run.runId,element:popover,close};document.body.appendChild(popover);button.setAttribute('aria-expanded','true');
  if(popover.showPopover)popover.showPopover();
@@ -115,7 +117,7 @@ function ventureHereticAvailable(){return venture.localCapability?.variants?.her
 function venturePaintUncensored(){
  const row=$('ventureUncensoredRow'),toggle=$('ventureUncensored'),help=$('ventureUncensoredHelp');
  if(!row||!toggle||!help)return;
- const local=ventureIsLocal(),on=venture.settings.qwenUncensored===true,ready=ventureHereticAvailable();
+ const local=venture.settings.model==='qwen3.8-local',on=venture.settings.qwenUncensored===true,ready=ventureHereticAvailable();
  row.hidden=help.hidden=!local;toggle.checked=local&&on;
  // A missing variant can always be switched OFF; never silently reset saved intent.
  toggle.disabled=!local||(!ready&&!on);

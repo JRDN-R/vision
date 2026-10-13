@@ -286,3 +286,7 @@ does not yet complete board attachment on the server.
 ### Local Qwen and RAG preview
 
 The optional Qwen provider, durable local queue, versioned preferences, lossless RAG cache/export compression, and indexing progress are documented in [the implementation and installation guide](docs/local-qwen-rag.md). Ordinary updates keep Qwen disabled and do not activate account defaults. Photo input, FUPCJ hardware validation, and streamed 400+ MB source ingestion remain pending.
+
+### Qwen Ultra
+
+The additional gold **Qwen Ultra** 27B model, Windows PowerShell installer, measured CPU/Vulkan tuning, model controls and wait estimates are documented in [the Ultra installation guide](docs/qwen-ultra.md). Existing Qwen models and account defaults are preserved.

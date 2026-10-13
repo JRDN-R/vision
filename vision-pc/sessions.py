@@ -404,7 +404,7 @@ class Sessions:
                 old = db.execute('SELECT * FROM project_runs WHERE project_id=? AND client_id=?', (project_id, client_id)).fetchone()
             if old:
                 return jsonify(self.snapshot(dict(old))), 202
-            local = options.get('model') == 'qwen3.8-local'
+            local = options.get('model') in ('qwen3.8-local','qwen-ultra-local')
             selected_local_profile = None
             if g.auth_kind == 'firebase-google' and venture:
                 selected_local_profile = self.local.accept(g.uid, options)

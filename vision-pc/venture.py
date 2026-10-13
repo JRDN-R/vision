@@ -230,10 +230,10 @@ class Venture:
 
     def settings(self,value) -> dict:
         from sessions import model_output_token_limit, normalize_run_options
-        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled','qwenUncensored'}:
+        if not isinstance(value,dict) or set(value)-{'model','maxOutputTokens','runOptions','memoryEnabled','qwenUncensored','qwenUltra'}:
             raise self.Error('Invalid Venture settings.')
         model=value.get('model',DEFAULT_SETTINGS['model'])
-        limit=value.get('maxOutputTokens',2048 if model=='qwen3.8-local' else 16000)
+        limit=value.get('maxOutputTokens',2048 if model in ('qwen3.8-local','qwen-ultra-local') else 16000)
         if not isinstance(model,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',model):
             raise self.Error('Enter a valid API model ID.')
         max_limit=model_output_token_limit(model)
@@ -249,7 +249,16 @@ class Venture:
         uncensored=value.get('qwenUncensored',False)
         if not isinstance(uncensored,bool):raise self.Error('Uncensored must be on or off.')
         if uncensored and model!='qwen3.8-local':raise self.Error('Uncensored is only available for Qwen Local.')
-        return dict(model=model,maxOutputTokens=limit,runOptions=options,memoryEnabled=memory,
+        ultra = {}
+        if model == 'qwen-ultra-local':
+            from local_ultra import normalize
+            try:ultra = {'qwenUltra':normalize(value.get('qwenUltra'))}
+            except ValueError as error:raise self.Error(str(error))
+            if limit + 576 > ultra['qwenUltra']['contextTokens']:
+                raise self.Error('Leave at least 576 context tokens for the Ultra prompt.')
+        elif value.get('qwenUltra') is not None:
+            raise self.Error('Ultra controls are only available for Qwen Ultra.')
+        return dict(model=model,maxOutputTokens=limit,runOptions=options,memoryEnabled=memory, **ultra,
                     **({'qwenUncensored':uncensored} if model=='qwen3.8-local' else {}))
 
     def current_key_id(self,uid: str):
@@ -519,31 +528,32 @@ class Venture:
             from sessions import OPENAI, unprotect_secret
             uid=self.account()
             local_model=self.sessions.local.catalog()
-            if self.sessions.local.preferences.get(uid)['settings']['model']=='qwen3.8-local':
+            local_models=[local_model,local_model['ultra']]
+            if self.sessions.local.preferences.get(uid)['settings']['model'] in ('qwen3.8-local','qwen-ultra-local'):
                 from model_parameters import REGISTRY
-                return jsonify(models=[local_model,*[dict(id=mid) for mid in REGISTRY['models'] if mid!='qwen3.8-local']],status='local-only')
+                return jsonify(models=[*local_models,*[dict(id=mid) for mid in REGISTRY['models'] if mid not in ('qwen3.8-local','qwen-ultra-local')]],status='local-only')
             with self.db() as db:
                 saved=db.execute('SELECT openai_key_cipher FROM account_credentials WHERE uid=?',(uid,)).fetchone()
-            if not saved:return jsonify(models=[local_model],status='no-key')
+            if not saved:return jsonify(models=local_models,status='no-key')
             try:key=unprotect_secret(saved[0])
-            except Exception:return jsonify(models=[local_model],status='cloud-unavailable')
+            except Exception:return jsonify(models=local_models,status='cloud-unavailable')
             cache_key=(uid,key_id(key));cached=self.model_cache.get(cache_key)
             if cached and time.monotonic()-cached[0]<300 and request.args.get('refresh')!='1':
-                return jsonify(models=[local_model,*cached[1]],status='available')
+                return jsonify(models=[*local_models,*cached[1]],status='available')
             try:
                 # Read-only discovery, never a model request or a billed probe.
                 with requests.get(OPENAI+'/models',headers={'Authorization':'Bearer '+key},timeout=(5,10)) as response:
-                    if response.status_code!=200:return jsonify(models=[local_model],status='cloud-unavailable')
+                    if response.status_code!=200:return jsonify(models=local_models,status='cloud-unavailable')
                     payload=response.json()
                 items=payload.get('data')
                 if not isinstance(items,list):raise ValueError('Invalid model list')
                 ids={m['id'] for m in items if isinstance(m,dict) and isinstance(m.get('id'),str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',m['id'])}
                 models=[dict(id=id) for id in sorted(ids)]
             except (requests.RequestException,ValueError,AttributeError,TypeError):
-                return jsonify(models=[local_model],status='cloud-unavailable')
+                return jsonify(models=local_models,status='cloud-unavailable')
             if len(self.model_cache)>200:self.model_cache.clear()
             self.model_cache[cache_key]=(time.monotonic(),models)
-            return jsonify(models=[local_model,*models],status='available')
+            return jsonify(models=[*local_models,*models],status='available')
 
         @app.route('/api/venture/funding',methods=['GET','POST'])
         def venture_funding():

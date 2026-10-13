@@ -3,6 +3,7 @@ import json
 import time
 
 MODEL = 'qwen3.8-local'
+LOCAL_MODELS = (MODEL, 'qwen-ultra-local')
 EPOCH = 'qwen3_8_local_v1'
 DISCLOSURE = 'qwen-local-vision-v2'
 
@@ -102,7 +103,7 @@ class LocalPreferences:
                     (options.get('model') == MODEL and
                      options.get('qwenUncensored',False) != value['settings'].get('qwenUncensored',False))):
                 raise self.Error('Your account model changed. Refresh Venture; your draft has been kept.', 409)
-        if options.get('model') == MODEL and not value['disclosureAcknowledged']:
+        if options.get('model') in LOCAL_MODELS and not value['disclosureAcknowledged']:
             raise self.Error('Acknowledge the Qwen local-server notice before sending.', 409, 'local-disclosure-required')
 
     def acknowledge(self, uid, version):

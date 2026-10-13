@@ -12,6 +12,7 @@ function fixture(){
   accountUpdateGate(){},openVisionConsole(){},consoleArtifactBlob(){},
   clearTimeout(){},setTimeout(){},matchMedia:()=>({matches:false})};
  vm.createContext(c);
+ vm.runInContext(fs.readFileSync('web/venture-ultra.js','utf8'),c);
  const source=fs.readFileSync('web/venture.js','utf8');
  assert.ok(source.includes('ventureInstall();$(\'runProjectBtn\').onclick=openVisionConsole;'));
  vm.runInContext(source.replace("ventureInstall();$('runProjectBtn').onclick=openVisionConsole;",'')+'\nglobalThis.state=venture;',c);

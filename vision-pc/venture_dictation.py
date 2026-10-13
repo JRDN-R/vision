@@ -255,7 +255,7 @@ class Dictation:
             provider = request.form.get('provider', 'gemini')
             if request.form.get('localOnly') == 'true' and provider != 'whisper':
                 raise self.Error('Local mode only permits PC Whisper dictation.')
-            if self.v.sessions.local.preferences.get(uid)['settings']['model'] == 'qwen3.8-local' and provider != 'whisper':
+            if self.v.sessions.local.preferences.get(uid)['settings']['model'] in ('qwen3.8-local','qwen-ultra-local') and provider != 'whisper':
                 raise self.Error('Qwen local mode uses PC Whisper. Select a cloud model explicitly before cloud dictation.')
             if provider not in ('gemini', 'whisper'):
                 raise self.Error('Choose Gemini or PC Whisper for dictation.')

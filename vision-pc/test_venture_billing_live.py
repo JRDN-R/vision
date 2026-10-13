@@ -139,7 +139,7 @@ class LivePriceTests(unittest.TestCase):
         for model in curated['models']:
             with self.subTest(model=model):
                 result=self.price(model)
-                if model=='qwen3.8-local':
+                if model in ('qwen3.8-local','qwen-ultra-local'):
                     self.assertEqual(result['micro'],0)
                     self.assertEqual(result['usageKind'],'local-no-api-charge')
                 else:

@@ -35,22 +35,23 @@ def atomic_json(path, value):
         temp.unlink(missing_ok=True)
 
 
-def download_model(destination):
+def download_model(destination, spec=None):
     """Bounded streaming and resumable staging; never replace existing weights."""
+    spec = HERETIC_SPEC if spec is None else spec
     destination = checked_path(destination)
-    size, digest = HERETIC_SPEC['modelBytes'], HERETIC_SPEC['modelSha256']
+    size, digest = spec['modelBytes'], spec['modelSha256']
     if destination.exists():
         if destination.stat().st_size != size or digest_file(destination) != digest:
-            raise LocalFailure('Existing Heretic bytes differ from the pin. Nothing was replaced.')
+            raise LocalFailure('Existing model bytes differ from the pin. Nothing was replaced.')
         return
     partial = checked_path(str(destination) + '.part')
     offset = partial.stat().st_size if partial.exists() else 0
     if offset > size:
         raise LocalFailure('Oversized partial model. Inspect it before retrying.')
     if shutil.disk_usage(destination.parent).free < size - offset + 2 * 1024**3:
-        raise LocalFailure('Insufficient space for Heretic plus 2 GiB operating headroom.')
-    url = ('https://huggingface.co/' + HERETIC_SPEC['modelRepository'] + '/resolve/' +
-           HERETIC_SPEC['modelRevision'] + '/' + HERETIC_SPEC['modelFile'])
+        raise LocalFailure('Insufficient space for the model plus 2 GiB operating headroom.')
+    url = ('https://huggingface.co/' + spec['modelRepository'] + '/resolve/' +
+           spec['modelRevision'] + '/' + spec['modelFile'])
     if offset < size:
         with requests.Session() as http:
             http.trust_env = False
@@ -79,16 +80,22 @@ def download_model(destination):
                 else:
                     raise LocalFailure('Unexpected model download response.')
                 total = offset
+                reported = time.monotonic()
+                started, start_bytes = reported, offset
                 with partial.open('ab' if offset else 'wb') as stream:
                     for chunk in response.iter_content(1024 * 1024):
                         total += len(chunk)
                         if total > size:
                             raise LocalFailure('Model download exceeded its pinned byte length.')
                         stream.write(chunk)
+                        if spec is not HERETIC_SPEC and time.monotonic() - reported >= 10:
+                            reported = time.monotonic()
+                            rate = (total-start_bytes)/max(1,reported-started)
+                            print(f'Model download {total/size:.0%}; approximately {(size-total)/max(1,rate)/60:.0f} minutes left.',flush=True)
                     stream.flush()
                     os.fsync(stream.fileno())
     if partial.stat().st_size != size or digest_file(partial) != digest:
-        raise LocalFailure('Heretic checksum failed. Staging was retained, not activated.')
+        raise LocalFailure('Model checksum failed. Staging was retained, not activated.')
     partial.rename(destination)
 
 
