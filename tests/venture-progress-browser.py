@@ -49,7 +49,7 @@ with sync_playwright() as pw:
         page.evaluate("run.sequence++;venturePaintTurns()")
         assert panel.evaluate('(e)=>e.open')
         page.locator('.venture-progress-steps details > summary').nth(1).click()
-        assert 'Comparing the available space' in page.locator('.venture-progress-steps').inner_text()
+        assert 'Comparing the available space' in page.locator('.venture-progress-steps').text_content()
         # Reopening history does not replay or auto-expand saved summaries.
         page.evaluate("venture.rendered.clear();$('ventureTurns').replaceChildren();venturePaintTurns()")
         assert not panel.evaluate('(e)=>e.open')
@@ -63,7 +63,7 @@ with sync_playwright() as pw:
         page.evaluate("""()=>{
           run.status='completed';
           run.localQueue.progress.steps=[{id:1,text:'Getting your request ready.',source:'stage'}];
-          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\n\n## Answer\n\n**Ready.**';
+          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\\n\\n## Answer\\n\\n**Ready.**';
           venturePaintTurns();
         }""")
         assert page.locator('.venture-progress-notes').count()==1
