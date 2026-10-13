@@ -56,6 +56,9 @@ def receipt_path(profile):
 
 def check_ready(profile):
     variant = profile.get('modelVariant', 'standard')
+    if variant == 'ultra':
+        from local_ultra import check_ready as check_ultra
+        return check_ultra(profile)
     if variant == 'standard':
         return
     if variant != 'heretic':

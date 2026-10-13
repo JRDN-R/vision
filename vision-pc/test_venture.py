@@ -223,7 +223,7 @@ class VentureTests(unittest.TestCase):
         with patch('venture.requests.get',return_value=response) as transport:
             result=self.client.get('/api/venture/models',headers=self.a)
             self.assertEqual(result.status_code,200,result.json)
-            self.assertEqual([m['id'] for m in result.json['models']],['qwen3.8-local','gpt-6-astra','gpt-6-luna','text-embedding-3-small'])
+            self.assertEqual([m['id'] for m in result.json['models']],['qwen3.8-local','qwen-ultra-local','gpt-6-astra','gpt-6-luna','text-embedding-3-small'])
             self.assertNotIn('sk-test-venture',json.dumps(result.json))
             self.client.get('/api/venture/models',headers=self.a)
             self.assertEqual(transport.call_count,1)

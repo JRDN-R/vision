@@ -43,7 +43,8 @@ class VisualRuntime(LlamaRuntime):
     def __init__(self, settings, cancelled, stage):
         self.main_settings = dict(settings)
         # An accepted request cannot inherit experimental GPU offload for pixels.
-        super().__init__({**settings, 'gpuLayers': 0, 'contextTokens': 4096,
+        super().__init__({**settings, 'modelId': self.alias, 'thinking': False, 'sampling': {},
+                          'gpuLayers': 0, 'contextTokens': 4096,
                           'threads': 4, 'port': 8102, 'maxRunSeconds': 600,
                           'maxResidentGiB': 4}, cancelled, stage)
 

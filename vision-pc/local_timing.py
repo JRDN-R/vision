@@ -15,8 +15,9 @@ def workload(row):
     # Path changes invalidate comparisons; enabled flags do not affect speed.
     values = {key:profile.get(key, default) for key,default in (
         ('threads',8),('contextTokens',4096),('visualEnabled',False),('gpuLayers',0),
-        ('runtimePath',None),('modelPath',None),('manifestPath',None),('visualManifestPath',None))}
-    if values['visualEnabled']:
+        ('runtimePath',None),('modelPath',None),('manifestPath',None),('visualManifestPath',None),
+        ('thinking',True),('ultraReceipt',None),('sampling',None))}
+    if values['visualEnabled'] and profile.get('modelVariant') != 'ultra':
         values['gpuLayers'] = 0
     kinds = Counter()
     for file in json.loads(row.get('inputs_json') or '[]'):

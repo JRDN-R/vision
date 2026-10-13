@@ -32,5 +32,7 @@ jobs:
           $Errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'vision-pc/Local-AI.ps1'), [ref]$Tokens, [ref]$Errors) | Out-Null
           if ($Errors.Count) { $Errors | Format-List; throw 'PowerShell parse failed' }
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'vision-pc/Qwen-Ultra.ps1'), [ref]$Tokens, [ref]$Errors) | Out-Null
+          if ($Errors.Count) { $Errors | Format-List; throw 'Ultra PowerShell parse failed' }
           if ((Get-FileHash vision-pc/Local-AI.ps1).Hash -ne (Get-FileHash vision-pc/Local-AI.txt).Hash) { throw 'Transfer copy differs' }
           & ./tests/test-local-ai-installer.ps1

@@ -5,7 +5,8 @@ import time
 
 from flask import jsonify, request
 
-from local_preferences import LocalPreferences, MODEL
+from local_preferences import LocalPreferences, MODEL, LOCAL_MODELS
+import local_ultra
 from local_runtime import LlamaRuntime, LocalFailure
 from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
@@ -67,7 +68,13 @@ class LocalInference:
                 heretic['vision'] = self.visual.capability(select_profile(self.settings, True))['available']
             except (OSError, ValueError, KeyError, TypeError):
                 heretic.update(available=False, status='needs-enable')
-        return dict(id=MODEL, name='Qwen Local', subtitle='9B Distill + Vision', provider='local_llama_cpp',
+        ultra = local_ultra.status(self.settings)
+        if ultra['enabled']:
+            try:
+                ultra['capabilities']['vision'] = self.visual.capability(local_ultra.select_profile(self.settings))['available']
+            except (OSError,ValueError,KeyError,TypeError):
+                pass
+        return dict(id=MODEL, name='Qwen Local', subtitle='9B Distill + Vision', provider='local_llama_cpp', ultra=ultra,
                     status='installed' if installed and enabled else 'disabled' if installed else 'not-installed',
                     enabled=enabled and installed, contextTokens=self.context_tokens,
                     maxOutputTokens=self.max_output, noApiTokenCharge=True,
@@ -85,8 +92,19 @@ class LocalInference:
         if not isinstance(uncensored, bool) or (uncensored and options.get('model') != MODEL):
             raise self.sessions.Error('Uncensored must be an on/off setting for Qwen Local.')
         self.preferences.validate_send(uid, options)
-        if options.get('model') != MODEL:
+        if options.get('model') not in LOCAL_MODELS:
             return
+        if options.get('model') == local_ultra.MODEL:
+            if not local_ultra.status(self.settings)['enabled']:
+                raise self.sessions.Error('Install and tune Qwen Ultra on FUPCJ first. Your draft is kept; no fallback was used.',503)
+            try:
+                profile = local_ultra.select_profile(self.settings,options.get('qwenUltra'))
+                limit = options.get('maxOutputTokens',2048)
+                if type(limit) is not int or not 512 <= limit <= min(4096,profile['contextTokens']-576):
+                    raise LocalFailure('Ultra needs 512–4,096 output tokens and at least 576 context tokens left for the prompt.')
+                return profile
+            except (OSError,ValueError,KeyError,TypeError) as error:
+                raise self.sessions.Error(str(error) if isinstance(error,LocalFailure) else 'Ultra profile unavailable. Run its installer again.',409) from error
         if not self.catalog()['enabled']:
             raise self.sessions.Error('Qwen is not installed/enabled on FUPCJ. Your draft is kept; select another model explicitly or install the local runtime.', 503)
         limit=options.get('maxOutputTokens',self.max_output)
@@ -118,7 +136,15 @@ class LocalInference:
                     AND r.provider='local_llama_cpp' AND r.status='completed' AND r.local_finished_at>?
                     ORDER BY r.local_finished_at DESC LIMIT 60''', (row['project_id'],now-30*86400)).fetchall()
             timing = estimate(row, [dict(item) for item in history], elapsed, ahead)
-        variant = json.loads(row.get('local_profile_json') or '{}').get('modelVariant','standard')
+        profile = json.loads(row.get('local_profile_json') or '{}')
+        variant = profile.get('modelVariant','standard')
+        if variant == 'ultra' and timing['estimateStatus'] == 'learning' and not ahead:
+            metrics = json.loads(row.get('local_metrics_json') or '{}')
+            # Before tokenization, use the full available prompt budget; do not
+            # claim a calibrated visual/preparation estimate from a text benchmark.
+            if not json.loads(row.get('inputs_json') or '[]') and not row.get('board_context_json') and not row.get('previous_id'):
+                timing = local_ultra.benchmark_estimate(profile,metrics.get('inputTokens',
+                    profile['contextTokens']-row['max_tokens']-64),row['max_tokens'],elapsed) or timing
         return dict(provider='local_llama_cpp', modelVariant=variant, requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
@@ -207,7 +233,7 @@ class LocalInference:
         profile=json.loads(row.get('local_profile_json') or '{}') or dict(self.settings)
         # Combined-path acceptance initially uses CPU for BOTH stages, regardless
         # of a previously benchmarked text-only GPU setting.
-        if profile.get('visualEnabled') is True:
+        if profile.get('visualEnabled') is True and profile.get('modelVariant') != 'ultra':
             profile['gpuLayers'] = 0
         context_tokens=max(4096,min(16384,int(profile.get('contextTokens',4096))))
         text, last_flush, usage, finish, runtime = '', 0, {}, None, None
@@ -266,7 +292,7 @@ class LocalInference:
                 metrics['peakResidentBytes'] = getattr(runtime, 'peak_rss', None)
                 metrics['minimumAvailableRamBytes'] = getattr(runtime, 'minimum_available_ram', None)
                 metrics['cpuSeconds'] = getattr(runtime, 'cpu_seconds', None)
-                result = dict(provider='local_llama_cpp', model=MODEL, output=[], usage=usage,
+                result = dict(provider='local_llama_cpp', model=row['model'], output=[], usage=usage,
                               status='completed' if finish == 'stop' and text.strip() else 'incomplete')
                 s.update(rid, status='saving', phase='Saving local answer', text=text,
                          response_json=json.dumps(result), local_metrics_json=json.dumps(metrics))

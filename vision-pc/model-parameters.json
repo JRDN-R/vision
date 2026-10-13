@@ -128,6 +128,21 @@
       },
       "localProfile": true,
       "source": "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/tree/760121cd70bb4c36b2b5ec58eb765e0df5987efe"
+    },
+    "qwen-ultra-local": {
+      "context": 8192,
+      "maxOutput": 4096,
+      "efforts": [
+        "auto"
+      ],
+      "pro": false,
+      "verbosity": false,
+      "tools": {
+        "webSearch": false,
+        "codeInterpreter": false
+      },
+      "localProfile": true,
+      "source": "https://huggingface.co/JunLee88999/Qwen3.5-27B-heretic-v2-GGUF/tree/85183955df1ec9eb613a816e0a6afc74e2807abb"
     }
   }
 }
