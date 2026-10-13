@@ -40,7 +40,7 @@ async function ventureUltraNotice(){
   if(notice.due===false){venture.localAcknowledged=true;return true;}
   return new Promise(resolve=>{
    const dialog=document.createElement('dialog');dialog.className='venture-ultra-notice';dialog.setAttribute('aria-labelledby','ventureUltraNoticeTitle');dialog.setAttribute('aria-describedby','ventureUltraNoticeCopy');
-   dialog.innerHTML='<img class="venture-ultra-coffee" src="'+VENTURE_ULTRA_COFFEE_IMAGE+'" alt="A smiling character relaxing with a cup of coffee"><span class="venture-ultra-eyebrow">QWEN ULTRA</span><h2 id="ventureUltraNoticeTitle">Good things take a little time.</h2><p id="ventureUltraNoticeCopy">Qwen Ultra runs locally on the FUPCJ server. Long responses may take hours, so grab yourself a coffee and settle in. Your accepted request keeps running if you leave, and visible progress is saved.</p><p class="venture-ultra-notice-error" role="status"></p><button type="button" data-accept>Acknowledge</button>';
+   dialog.innerHTML='<img class="venture-ultra-coffee" src="'+VENTURE_ULTRA_COFFEE_IMAGE+'" alt="A smiling character relaxing with a cup of coffee"><span class="venture-ultra-eyebrow">QWEN ULTRA</span><h2 id="ventureUltraNoticeTitle">Good things take a little time.</h2><p id="ventureUltraNoticeCopy">Qwen Ultra runs locally on the FUPCJ server. Responses can take significantly longer, and long responses may take hours, so grab yourself a coffee and settle in. Your accepted request keeps running if you leave, and visible progress is saved.</p><p class="venture-ultra-notice-error" role="status"></p><button type="button" data-accept>Acknowledge</button>';
    let accepted=false;document.body.appendChild(dialog);
    dialog.querySelector('[data-accept]').onclick=async()=>{
     const button=dialog.querySelector('[data-accept]');button.disabled=true;
@@ -55,6 +55,10 @@ async function ventureUltraNotice(){
 }
 function ventureUltraProgress(run){
  const active=ventureActive(run),q=run.localQueue||{};
+ if(!active&&q.longResponse){
+  ventureUltraProgressState.delete(run.runId);
+  return q.metrics?.generation?.continuationContextTruncated?'<p class="venture-fine-print">Long-answer note: later sections used the ending of the saved answer rather than all earlier sections. The original request and source evidence were kept. Review continuity across sections.</p>':'';
+ }
  if(active&&q.longResponse){
   const generation=q.metrics?.generation||{},parts=Math.max(0,Math.min(64,Number(generation.completedPasses)||0));
   const waiting=q.requestsAhead||run.status==='queued';
