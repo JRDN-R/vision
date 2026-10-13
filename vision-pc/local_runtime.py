@@ -77,6 +77,8 @@ class LlamaRuntime:
         self.settings, self.cancelled, self.stage = settings, cancelled, stage
         self.alias = settings.get('modelId', self.alias)
         self.thinking = settings.get('thinking', self.thinking)
+        # Job-local, server-computed allowance. None preserves legacy behavior.
+        self.thinking_budget = None
         self.process = None
         self.guard = None
         self.done = threading.Event()
@@ -256,6 +258,12 @@ class LlamaRuntime:
                        presence_penalty=sampling.get('presencePenalty',0.), repeat_penalty=sampling.get('repeatPenalty',1.),
                        seed=sampling.get('seed',-1),
                        chat_template_kwargs={'enable_thinking': self.thinking}, cache_prompt=False, sse_ping_interval=5)
+        if self.thinking_budget is not None:
+            if type(self.thinking_budget) is not int or not 0 <= self.thinking_budget < max_tokens:
+                raise LocalFailure('Invalid native thinking budget.')
+            # Supported by the pinned server-common.cpp sampling bridge. This
+            # ends the thinking section before it consumes the answer reserve.
+            payload['thinking_budget_tokens'] = self.thinking_budget
         if self.settings.get('benchmark'):
             payload['timings_per_token'] = True
         with self.request('/v1/chat/completions', payload, stream=True) as response:
