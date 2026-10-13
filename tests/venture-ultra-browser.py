@@ -115,6 +115,8 @@ with sync_playwright() as pw:
         assert 'Taking longer' in page.locator('.venture-progress-estimate').inner_text()
         assert '%' not in page.locator('.venture-ultra-loading').inner_text()
         assert page.locator('#ventureStop').is_visible()
+        stop=page.locator('#ventureStop').bounding_box();label=page.locator('#ventureStop span').bounding_box()
+        assert label['y']>=stop['y'] and label['y']+label['height']<=stop['y']+stop['height']
         page.screenshot(path=str(shots/f'qwen-ultra-progress-{width}.png'))
         page.evaluate("ultraRun.status='completed';ultraRun.text='Gravity attracts objects.';venturePaint()")
         assert bar.get_attribute('aria-valuenow')=='100'
