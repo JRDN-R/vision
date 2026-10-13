@@ -59,6 +59,23 @@ with sync_playwright() as pw:
             assert not panel.evaluate('(e)=>e.open')
         page.emulate_media(reduced_motion='reduce')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        # Pre-fix responses may have saved the marker in final answer content.
+        page.evaluate("""()=>{
+          run.status='completed';
+          run.localQueue.progress.steps=[{id:1,text:'Getting your request ready.',source:'stage'}];
+          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\n\n## Answer\n\n**Ready.**';
+          venturePaintTurns();
+        }""")
+        assert page.locator('.venture-progress-notes').count()==1
+        assert 'Checking the supplied background' in page.locator('.venture-progress-steps').inner_text()
+        assert page.locator('.venture-progress-steps details').count()==2
+        assert page.locator('[data-venture-text] strong').inner_text()=='Ready.'
+        assert '<progress_summary>' not in page.locator('[data-venture-text]').inner_text()
+        assert '</progress_summary>' not in page.locator('[data-venture-text]').inner_html()
+        page.evaluate("()=>{window.consoleCopyText=async value=>{window.copiedAnswer=value;}}")
+        page.locator('[data-v-action="copy"]').click()
+        assert page.evaluate("window.copiedAnswer")=='## Answer\n\n**Ready.**'
+
         # Malformed notes are omitted. Model text is always rendered as text.
         page.evaluate("run.status='in_progress';run.localQueue.progress.steps=[{id:4,text:'Checking <img onerror=alert(1)> supplied material.',source:'model'},{id:5,text:'word '.repeat(31),source:'model'}];venturePaintTurns()")
         assert page.locator('[data-venture-notes] img').count()==0
