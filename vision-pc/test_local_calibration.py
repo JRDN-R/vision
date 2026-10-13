@@ -1,5 +1,6 @@
 """Synthetic timing contracts; never advertised as real model measurements."""
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -13,7 +14,13 @@ class CalibrationTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.path = Path(self.folder.name)
-        self.db = lambda: sqlite3.connect(self.path/'test.db')
+        @contextmanager
+        def connect():
+            db=sqlite3.connect(self.path/'test.db')
+            try:
+                with db:yield db
+            finally:db.close()
+        self.db = connect
         local = SimpleNamespace(db=self.db, app=SimpleNamespace(config={'DATA_DIR':self.path,
             'AUDIT_LOGS':SimpleNamespace(directory=self.path/'Desktop'/'Vision Logs')}))
         self.cal = UltraCalibration(local)
