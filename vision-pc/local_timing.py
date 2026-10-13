@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 from statistics import median
+from local_runtime import MAX_LOCAL_RUN_SECONDS
 
 
 def workload(row):
@@ -47,7 +48,7 @@ def estimate(row, history, elapsed, ahead):
             tokens = json.loads(item.get('local_metrics_json') or '{}').get('inputTokens')
             if current_tokens and tokens and not .5 <= tokens/current_tokens <= 2:
                 continue
-            if math.isfinite(seconds) and 1 <= seconds <= 7200:
+            if math.isfinite(seconds) and 1 <= seconds <= MAX_LOCAL_RUN_SECONDS:
                 samples.append(seconds)
         pending['estimateSamples'] = len(samples)
         if len(samples) < 3:
