@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 def read(name):return (ROOT/name).read_text()
 base=read('web/base.js');download=base[base.index('function download('):].split('\n')[0]
+plain_dictation=base[base.index('function plainDictationText('):base.index('function finishQueuedTranscript(')]
 setup=r'''
 let fixtureUUIDCounter=0;if(!crypto.randomUUID)crypto.randomUUID=()=>('10000000-1000-4000-8000-'+String(++fixtureUUIDCounter).padStart(12,'0'));
 const $=id=>document.getElementById(id), state={title:'Unchanged board',nodes:[],settings:{},consoleSession:null};let busy=false,ioBusy=false;
@@ -19,7 +20,7 @@ function accountSignedIn(){return !!accountFirebase.currentUser;}function accoun
 function openAccountDialog(){}function openCloudSettings(){}function trialActive(){return false;}
 async function cloudFetch(path,opts={}){if(window.ventureHTTPToken){const headers=new Headers(opts.headers||{});headers.set('Authorization','Bearer '+window.ventureHTTPToken);return fetch('/api'+path,{...opts,headers});}const result=await window.ventureTestAPI(path,opts.method||'GET',typeof opts.body==='string'?opts.body:null);return new Response(result.body,{status:result.status,headers:{'Content-Type':result.type}});}
 '''
-code=setup+download+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-local.js')+'\n'+read('web/venture-images.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
+code=setup+download+'\n'+plain_dictation+'\n'+read('web/console.js')+'\n'+read('web/run-tools.js')+'\n'+read('web/model-parameters.js').replace('/* VISION_PARAMETERS */ {}', read('vision-pc/model-parameters.json'))+'\n'+read('web/venture-controls.js')+'\n'+read('web/venture-models.js')+'\n'+read('web/venture-local.js')+'\n'+read('web/venture-images.js')+'\n'+read('web/venture-funding.js')+'\n'+read('web/venture.js')+r'''
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
@@ -64,6 +65,7 @@ def run():
                 context=browser.new_context(viewport={'width':width,'height':844},accept_downloads=True)
                 context.route('**/*',lambda r:r.abort());p=context.new_page();p.expose_function('ventureTestAPI',api);errors=[];p.on('pageerror',lambda e:errors.append(str(e)))
                 p.set_content(fixture,wait_until='load');assert not errors,errors
+                assert p.evaluate("plainDictationText('[00:00:01.000] Alpha.\\n[00:00:03.500] Beta.')")=='Alpha. Beta.'
                 p.locator('#runProjectBtn').click();p.wait_for_timeout(400)
                 assert p.locator('#visionVenture').is_visible()
                 assert p.locator('.venture-monocle image').count()>=2
