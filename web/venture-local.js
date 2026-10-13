@@ -133,7 +133,7 @@ function venturePaintUncensored(){
 // render control tags or their contents as answer Markdown.
 function ventureLocalResponseParts(value){
  const original=String(value||''),open='<progress_summary>',close='</progress_summary>';
- if(!original.includes(open)&&!original.includes(close)&&!original.endsWith('<'))return {text:original,notes:[]};
+ if(!original.includes('<'))return {text:original,notes:[]};
  const notes=[],pattern=/<progress_summary>([\s\S]*?)<\/progress_summary>/g;
  let text='',offset=0,removed=false;
  for(const match of original.matchAll(pattern)){
