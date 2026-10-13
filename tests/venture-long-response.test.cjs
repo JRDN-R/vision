@@ -50,6 +50,11 @@ test('queued, stopping and limited continuation context are labelled', () => {
   run.phase = 'Continuing';
   run.localQueue.metrics.generation = {continuationContextTruncated: true};
   assert.match(sandbox.ventureUltraProgress(run), /Earlier sections remain saved/);
+  run.status = 'completed';
+  assert.match(sandbox.ventureUltraProgress(run), /Review continuity across sections/);
+  assert.doesNotMatch(sandbox.ventureUltraProgress(run), /venture-loading-symbol/);
+  run.localQueue.metrics.generation.continuationContextTruncated = false;
+  assert.equal(sandbox.ventureUltraProgress(run), '');
 });
 
 test('checkbox reflects explicit off and old servers keep the control disabled', () => {
