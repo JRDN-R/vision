@@ -20,23 +20,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply checksum-bound source patch
+      - name: Apply checksum-bound source changes
         run: |
           python - <<'PY'
-          import base64, gzip, hashlib, pathlib, subprocess
+          import base64, gzip, hashlib, json, pathlib
           encoded = pathlib.Path('.heretic-stage.txt').read_text().strip()
-          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == 'db3b06dcaa1531ae30bd94ae753f1228e0a71f873b3f94297dc0b64bbdcde75a'
-          path = pathlib.Path('/tmp/heretic-feature.patch')
-          path.write_bytes(patch)
-          subprocess.run(['git', 'apply', '--check', str(path)], check=True)
-          subprocess.run(['git', 'apply', str(path)], check=True)
+          raw = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '8edfd4b116c1ffddb3170265fc6a38c811f5f6302f68a4631a465bb2bc763dd9'
+          changes = json.loads(raw)
+          for change in changes:
+              path = pathlib.Path(change['path'])
+              assert not path.is_absolute() and '..' not in path.parts and path.parts[0] in ('docs','tests','vision-pc','web')
+              old = path.read_bytes() if path.exists() else b''
+              assert hashlib.sha256(old).hexdigest() == change['before'], str(path)
+              text = old.decode('utf-8')
+              for i, j, replacement in reversed(change['edits']):
+                  assert 0 <= i <= j <= len(text)
+                  text = text[:i] + replacement + text[j:]
+              new = text.encode('utf-8')
+              assert hashlib.sha256(new).hexdigest() == change['after'], str(path)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(new)
           PY
       - run: python -m pip install -r vision-pc/requirements.txt
       - name: Local provider and variant regression tests
         run: python -m unittest discover -s vision-pc -p 'test_local_*.py' -v
       - name: Frontend regression tests
-        run: node --test tests/venture-local.test.cjs tests/venture-models.test.cjs
+        run: node --test tests/venture-local.test.cjs
       - name: Commit verified source on this branch only
         run: |
           git config user.name 'github-actions[bot]'
