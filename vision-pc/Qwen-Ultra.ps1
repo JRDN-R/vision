@@ -11,7 +11,7 @@ param(
     [ValidateSet('Install','Download','Check','Tune','Disable')]
     [string]$Action = 'Install',
     [string]$SourceRef = 'main',
-    [ValidateSet(8192,16384)][int]$ContextTokens = 8192,
+    [ValidateSet(8192,16384,32768,65536)][int]$ContextTokens = 8192,
     [switch]$SkipCodeUpdate
 )
 $ErrorActionPreference = 'Stop'
@@ -49,10 +49,13 @@ if ($Action -eq 'Install' -and -not $SkipCodeUpdate) {
 if (-not (Test-Path -LiteralPath $Helper)) { throw 'Run Install first to update Venture with Qwen Ultra support.' }
 Write-Host 'Qwen Ultra adds 16.54 GB (15.40 GiB). Keep at least 18.7 GB free for download and working headroom.'
 Write-Host 'Tuning compares measured thread counts and partial GPU offload. Utilization percentages cannot be fixed.'
+if ($ContextTokens -ge 32768) {
+    Write-Host 'Large-context validation can take hours. Memory protections remain enabled; the setting is offered only after it passes.'
+}
 $HelperAction = $Action.ToLowerInvariant()
 & $Python $Helper --config $ConfigPath --action $HelperAction --context $ContextTokens
 if ($LASTEXITCODE -ne 0) { throw "Qwen Ultra $Action failed. Read the message above; rerun to resume the download or tuning." }
 if ($Action -in @('Install','Tune')) {
     Write-Host 'Qwen Ultra is ready. Refresh the updated Vision app and select the gold Qwen Ultra model.' -ForegroundColor Green
-    Write-Host 'The app estimates waiting time from these measurements. Actual load, reasoning, and attachments can take longer.'
+    Write-Host 'Select the tested context in Ultra settings. Long responses reserve answer space and save visible progress; completion time is not guaranteed.'
 }
