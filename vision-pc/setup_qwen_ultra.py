@@ -18,27 +18,33 @@ from owned_assets import exclusive_file
 from setup_local_variant import atomic_json, download_model, smoke_test
 
 
-def quiet_machine():
-    # The installer never kills another application to win a benchmark.
+def quiet_machine(activity='tuning'):
+    # Never take GPU headroom away from a live streaming/recording process.
+    # The installer/runtime never closes OBS or changes clocks.
     for process in psutil.process_iter(['name']):
         if (process.info['name'] or '').lower() in ('obs64.exe','obs32.exe','streamlabs obs.exe'):
-            raise LocalFailure('Close OBS/Streamlabs before tuning. Download can be run separately; no process was stopped.')
+            raise LocalFailure('Close OBS/Streamlabs before '+activity+'. No process was stopped.')
 
 
-def cpu_candidates(cores):
-    cap = max(1,min(16,cores-2 if cores > 4 else cores))
+def cpu_candidates(cores, reserve=2):
+    # Standard mode leaves two physical cores free for Windows and OBS.
+    # An operator may explicitly bench all 16 physical cores in Boost.
+    cap = max(1,min(16,cores-reserve if cores > 4 else cores))
     return sorted({min(n,cap) for n in (8,12,16)})
 
 
-def gpu_candidates(devices):
-    # llama.cpp reports real backend free VRAM, unlike Win32_VideoController.
+def gpu_candidates(devices, boost=False):
+    # Use backend-reported free VRAM, not total VRAM or Windows' adapter size.
     free = [int(n) for n in re.findall(r'(\d+)\s*MiB\s+free',devices,re.I)]
     if not free:
         return []
-    # Conservative trial budget: leave >=2 GiB AND half free. This is not a
-    # GPU-utilization percentage or a guarantee of livestream coexistence.
-    budget = min(max(free)/2, max(free)-2048)
-    return [layers for layers in (4,8,12) if layers*400+512 <= budget]
+    # Boost explores up to 75% of reported free VRAM, while still reserving
+    # >=2 GiB. These are candidate estimates, not promised allocations;
+    # every profile must complete a real inference and context smoke test.
+    available = max(free)
+    budget = min(available * (.75 if boost else .5), available-2048)
+    return [layers for layers in ((4,8,12,16) if boost else (4,8,12))
+            if layers*400+512 <= budget]
 
 
 def benchmark(profile, runtime_factory=LlamaRuntime):
@@ -96,13 +102,17 @@ def context_check(profile, runtime_factory=LlamaRuntime):
             raise LocalFailure('Ultra did not pass the large-context check.')
 
 
-def tune(profile, target, max_context):
+def tune(profile, target, max_context, boost=False):
     quiet_machine()
     deadline = time.monotonic()+7200
     # Large-context evaluation can be much slower than a short throughput trial.
     profile.update(contextTokens=max_context, maxRunSeconds=18000)
-    results, errors = [], []
-    def trial(threads,layers):
+    results, errors, attempted = [], [], set()
+
+    def trial(threads, layers):
+        if (threads,layers) in attempted:
+            return
+        attempted.add((threads,layers))
         quiet_machine()
         if time.monotonic()>deadline:
             raise LocalFailure('Tuning reached two hours. Partial measurements are retained; rerun Tune later.')
@@ -116,29 +126,53 @@ def tune(profile, target, max_context):
             errors.append(dict(profile=knobs,error=str(error)[:600]))
             print('Profile rejected: '+str(error),flush=True)
         atomic_json(target/'tuning-report.json',dict(results=results,errors=errors))
-    for threads in cpu_candidates(psutil.cpu_count(logical=False) or 4):
+
+    physical = psutil.cpu_count(logical=False) or 4
+    for threads in cpu_candidates(physical):
         trial(threads,0)
     if not results:
         raise LocalFailure('No CPU profile passed. See tuning-report.json; Ultra remains unavailable.')
     cpu = min(results,key=score)
     try:
         devices = subprocess.run([profile['runtimePath'],'--list-devices'],capture_output=True,text=True,timeout=30,check=True)
-        layers_to_test = gpu_candidates(devices.stdout+devices.stderr)
+        inventory = devices.stdout+devices.stderr
+        layers_to_test = gpu_candidates(inventory)
     except (OSError,subprocess.SubprocessError):
+        inventory = ''
         layers_to_test = []
         print('GPU inventory unavailable; retaining measured CPU candidates.',flush=True)
     for layers in layers_to_test:
         trial(cpu['profile']['threads'],layers)
-    # Avoid calling tiny measurement noise a boost.
+    # Auto never changes the existing conservative search envelope.
     fastest = min(results,key=score)
-    best = fastest if score(fastest)<score(cpu)*.95 else cpu
-    for chosen in [cpu] + ([best] if best is not cpu else []):
+    auto = fastest if score(fastest)<score(cpu)*.95 else cpu
+    selected = dict(cpu=cpu,auto=auto)
+
+    if boost:
+        # This is an explicit opt-in benchmark: try the full physical-core
+        # allowance and wider (still reserved) VRAM budgets. No clocks,
+        # BIOS, power limits, memory reserves, or model provenance change.
+        for threads in cpu_candidates(physical,reserve=0):
+            trial(threads,0)
+        boost_cpu = min((r for r in results if r['profile']['gpuLayers']==0),key=score)
+        for layers in gpu_candidates(inventory,boost=True):
+            trial(boost_cpu['profile']['threads'],layers)
+        fastest_boost = min(results,key=score)
+        # Reject trivial measurement noise rather than promising faster output.
+        selected['boost'] = fastest_boost if score(fastest_boost)<score(auto)*.95 else auto
+
+    validated = set()
+    for chosen in selected.values():
+        key = (chosen['profile']['threads'],chosen['profile']['gpuLayers'])
+        if key in validated:
+            continue
+        validated.add(key)
         quiet_machine()
         tested = {**profile,**chosen['profile']}
         print('Checking conversation, thinking and the selected context…',flush=True)
         smoke_test(tested)
         context_check(tested)
-    return dict(cpu=cpu,auto=best)
+    return selected
 
 
 def main():
@@ -146,7 +180,10 @@ def main():
     parser.add_argument('--config',required=True)
     parser.add_argument('--action',choices=['install','download','check','tune','disable'],default='install')
     parser.add_argument('--context',type=int,choices=list(ultra.CONTEXTS[1:]),default=8192)
+    parser.add_argument('--boost',action='store_true',help='Bench extra threads and GPU layers; no overclocking')
     args = parser.parse_args()
+    if args.boost and args.action not in ('install','tune'):
+        parser.error('--boost is only available with install or tune')
     path = checked_path(Path(args.config).absolute())
     config = read_json(path)
     settings = config.get('localAI') or {}
@@ -186,7 +223,7 @@ def main():
         if not keep_smaller:
             receipt.unlink(missing_ok=True)
         try:
-            profiles = tune(profile,target,args.context)
+            profiles = tune(profile,target,args.context,boost=args.boost)
         except Exception:
             if keep_smaller:
                 print('Larger-context test failed. The previously verified smaller context remains enabled.',flush=True)
@@ -198,6 +235,12 @@ def main():
         b = profiles['auto']['benchmark']
         print(f"Qwen Ultra ready: {profiles['auto']['profile']['threads']} threads, "
               f"{profiles['auto']['profile']['gpuLayers']} GPU layers; {b['generationTokensPerSecond']:.2f} tokens/sec.")
+        if 'boost' in profiles:
+            boosted = profiles['boost']
+            print(f"Optional Boost validated: {boosted['profile']['threads']} threads, "
+                  f"{boosted['profile']['gpuLayers']} GPU layers; "
+                  f"{boosted['benchmark']['generationTokensPerSecond']:.2f} tokens/sec. "
+                  'Selecting Boost does not guarantee a speedup for every prompt.')
         print('Refresh Venture and select Qwen Ultra. No account default, BIOS, power plan, or clock was changed.')
         print('Image analysis uses the existing sequential visual worker when installed. This benchmark does not certify OBS coexistence.')
 

@@ -190,6 +190,11 @@ class LlamaRuntime:
     def __enter__(self):
         if os.name != 'nt':
             raise LocalFailure('This managed Qwen runtime requires the reviewed Windows installation.')
+        if self.settings.get('ultraPerformance') == 'boost':
+            # Opt-in Boost cannot compete with OBS at launch. A previously
+            # accepted job fails explicitly, never switches models/profiles.
+            from setup_qwen_ultra import quiet_machine
+            quiet_machine('starting Ultra Boost')
         runtime, model = self.verify()
         import psutil
         reserve = max(8, float(self.settings.get('reserveRamGiB', 10))) * 1024**3

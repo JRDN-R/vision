@@ -12,8 +12,10 @@ param(
     [string]$Action = 'Install',
     [string]$SourceRef = 'main',
     [ValidateSet(8192,16384,32768,65536)][int]$ContextTokens = 8192,
-    [switch]$SkipCodeUpdate
+    [switch]$SkipCodeUpdate,
+    [switch]$Boost
 )
+if ($Boost -and $Action -notin @('Install','Tune')) { throw 'Boost is only available with Install or Tune.' }
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -49,13 +51,17 @@ if ($Action -eq 'Install' -and -not $SkipCodeUpdate) {
 if (-not (Test-Path -LiteralPath $Helper)) { throw 'Run Install first to update Venture with Qwen Ultra support.' }
 Write-Host 'Qwen Ultra adds 16.54 GB (15.40 GiB). Keep at least 18.7 GB free for download and working headroom.'
 Write-Host 'Tuning compares measured thread counts and partial GPU offload. Utilization percentages cannot be fixed.'
+if ($Boost) { Write-Host 'Optional Boost: benchmark up to 16 physical CPU cores and wider GPU offload with at least 2 GiB free VRAM reserved. No overclocking, BIOS or power-limit changes.' }
 if ($ContextTokens -ge 32768) {
     Write-Host 'Large-context validation can take hours. Memory protections remain enabled; the setting is offered only after it passes.'
 }
 $HelperAction = $Action.ToLowerInvariant()
-& $Python $Helper --config $ConfigPath --action $HelperAction --context $ContextTokens
+$HelperArgs = @($Helper, '--config', $ConfigPath, '--action', $HelperAction, '--context', [string]$ContextTokens)
+if ($Boost) { $HelperArgs += '--boost' }
+& $Python @HelperArgs
 if ($LASTEXITCODE -ne 0) { throw "Qwen Ultra $Action failed. Read the message above; rerun to resume the download or tuning." }
 if ($Action -in @('Install','Tune')) {
     Write-Host 'Qwen Ultra is ready. Refresh the updated Vision app and select the gold Qwen Ultra model.' -ForegroundColor Green
     Write-Host 'Select the tested context in Ultra settings. Long responses reserve answer space and save visible progress; completion time is not guaranteed.'
+    if ($Boost) { Write-Host 'Venture now offers a verified Boost profile. Only select it outside OBS/Streamlabs sessions.' }
 }
