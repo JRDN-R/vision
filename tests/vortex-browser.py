@@ -1012,7 +1012,7 @@ def run():
             assert page.locator('#navigation .nav-brand-name').inner_text() == 'Vortex'
             version = page.locator('#navigation #vortexVersion')
             assert version.inner_text() == 'v1.0.4'
-            assert version.get_attribute('aria-label') == 'Vortex web app version 1.0.3'
+            assert version.get_attribute('aria-label') == 'Vortex web app version ' + version.inner_text().removeprefix('v')
             name_box = page.locator('#navigation .nav-brand-name').bounding_box()
             version_box = version.bounding_box()
             links_box = page.locator('#navigation nav').bounding_box()
