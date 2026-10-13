@@ -57,6 +57,7 @@ with sync_playwright() as pw:
         page.locator('#ventureUltraContext').select_option('4096')
         page.locator('#ventureUltraPerformance').select_option('cpu')
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='3520'
+        assert '3,520 output tokens within 4,096 context tokens' in page.locator('#ventureParameterDetails').text_content()
         assert '8 CPU threads · 0 GPU layers' in page.locator('#ventureUltraHardware').inner_text()
         page.locator('#ventureUltraControls summary').click()
         page.locator('#ventureUltra_temperature').fill('0.25')
