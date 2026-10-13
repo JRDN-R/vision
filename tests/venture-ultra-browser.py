@@ -117,6 +117,9 @@ with sync_playwright() as pw:
         assert page.locator('#ventureStop').is_visible()
         stop=page.locator('#ventureStop').bounding_box();label=page.locator('#ventureStop span').bounding_box()
         assert label['y']>=stop['y'] and label['y']+label['height']<=stop['y']+stop['height']
+        compose=page.locator('#ventureCompose').bounding_box()
+        assert stop['x']>=compose['x'] and stop['x']+stop['width']<=compose['x']+compose['width']
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path=str(shots/f'qwen-ultra-progress-{width}.png'))
         page.evaluate("ultraRun.status='completed';ultraRun.text='Gravity attracts objects.';venturePaint()")
         assert bar.get_attribute('aria-valuenow')=='100'
