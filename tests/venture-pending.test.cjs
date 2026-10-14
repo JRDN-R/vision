@@ -89,7 +89,7 @@ test('closing the browser restores the selected server job and reconciles its re
  assert.equal(reopened.ventureRecall('pending-old-conversation').clientRequestId,'original-request');
  assert.equal(reopened.ventureRecall('funding-return'),null,'only IDs, not unrelated session data, survive');
  reopened.state.current=null;reopened.state.runs=[];
- reopened.ventureClosePopover=()=>{};reopened.venturePaintSettings=()=>{};reopened.venturePaint=()=>{};reopened.ventureSchedule=()=>{};
+ reopened.ventureAcceptLocalCapability=()=>{};reopened.ventureClosePopover=()=>{};reopened.venturePaintSettings=()=>{};reopened.venturePaint=()=>{};reopened.ventureSchedule=()=>{};
  const calls=[];
  reopened.ventureJSON=async(path,method)=>{
   calls.push([path,method]);
