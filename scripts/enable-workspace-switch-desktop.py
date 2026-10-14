@@ -51,6 +51,10 @@ replacements = (
      "if(panel&&board){const parent=mobile?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}"),
     ("if(header)header.inert=venture.open||(matchMedia('(max-width:760px)').matches&&!document.documentElement.classList.contains('header-open'));",
      "if(header)header.inert=venture.open||(mobile&&!document.documentElement.classList.contains('header-open'));"),
+    # The mobile switch remains in the menu's focus cycle; when docked in a
+    # desktop header it is outside the open menu and must not receive focus.
+    ("""const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),$('workspaceSwitchButton')].filter(""",
+     """const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),...(matchMedia('(max-width:760px)').matches?[$('workspaceSwitchButton')]:[])].filter("""),
 )
 for old, new in replacements:
     assert html.count(old) == 1, f"Unexpected source for switch replacement: {old[:75]}"
