@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -136,13 +137,19 @@ class LlamaRuntime:
                 raise LocalFailure('A runtime library failed its integrity check.')
         if {str(p.relative_to(root)).replace('\\','/') for p in root.rglob('*') if p.is_file()} != set(expected):
             raise LocalFailure('Unexpected files in the private runtime directory.')
+        # The original model and FUPCJ runtime are still verified on EVERY turn.
+        # RPC uses a separate, operator-installed and SHA-pinned Windows build.
+        remote = self.settings.get('overdriveRPC')
+        if remote:
+            from local_overdrive import verified_runtime
+            runtime = verified_runtime(remote)
         return runtime, model
 
     def model_bytes(self):
         return model_spec(self.settings)['modelBytes']
 
     def command(self, runtime, model):
-        return [str(runtime), '--model', str(model), '--alias', self.alias,
+        args = [str(runtime), '--model', str(model), '--alias', self.alias,
                 '--host', '127.0.0.1', '--port', str(self.port), '--parallel', '1',
                 '--ctx-size', str(int(self.settings.get('contextTokens', 4096))),
                 '--threads', str(max(1, min(16, int(self.settings.get('threads', 8))))),
@@ -151,6 +158,16 @@ class LlamaRuntime:
                 '--n-gpu-layers', str(max(0, min(99, int(self.settings.get('gpuLayers', 0))))),
                 '--api-key', self.token, '--jinja', '--reasoning-format', 'deepseek',
                 '--no-webui', '--no-context-shift']
+        remote = self.settings.get('overdriveRPC')
+        if remote:
+            port = remote.get('rpcPort')
+            split = remote.get('tensorSplit')
+            if (self.settings.get('modelVariant') != 'ultra' or type(port) is not int or
+                    not 1024 <= port <= 65535 or not isinstance(split, str) or
+                    not re.fullmatch(r'[1-9]\\d{0,3},[1-9]\\d{0,3}', split)):
+                raise LocalFailure('Invalid pinned Overdrive RPC profile.')
+            args.extend(['--rpc', '127.0.0.1:' + str(port), '--tensor-split', split])
+        return args
 
     @staticmethod
     def stop_child(process):
@@ -190,11 +207,21 @@ class LlamaRuntime:
     def __enter__(self):
         if os.name != 'nt':
             raise LocalFailure('This managed Qwen runtime requires the reviewed Windows installation.')
-        if self.settings.get('ultraPerformance') == 'boost':
-            # Opt-in Boost cannot compete with OBS at launch. A previously
+        if self.settings.get('ultraPerformance') == 'boost' or self.settings.get('overdriveRPC'):
+            # Opt-in Boost/Overdrive cannot compete with OBS at launch. A previously
             # accepted job fails explicitly, never switches models/profiles.
             from setup_qwen_ultra import quiet_machine
             quiet_machine('starting Ultra Boost')
+        remote = self.settings.get('overdriveRPC')
+        if remote:
+            from local_overdrive import probe
+            if not probe(remote['workerConfig']):
+                # The Mac went away between queue routing and process startup.
+                # This is the same pinned Qwen model, not a cloud/model fallback.
+                fallback = self.settings.get('overdriveFallback') or {}
+                self.settings.update(threads=fallback['threads'], gpuLayers=fallback['gpuLayers'])
+                self.settings.pop('overdriveRPC', None)
+                self.stage('Mac worker offline; using FUPCJ for this response')
         runtime, model = self.verify()
         import psutil
         reserve = max(8, float(self.settings.get('reserveRamGiB', 10))) * 1024**3
