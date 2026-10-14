@@ -82,6 +82,8 @@ and preserves the board instructions and attachment bytes. Preparation errors
 no longer appear as a connection diagnosis. This update only changes the webpage;
 the existing FUPCJ Server installation does not need an update or restart.
 
+The circle-chevron workspace switch is also available in desktop layouts. It uses the same animated button in Vision's top toolbar and Venture's top-right header; the arrow reverses with the active workspace. Mobile positioning, the existing Board return button, and reduced-motion behavior are preserved.
+
 Mobile navigation in **v1.0.2.3** uses one fixed circle-chevron button just left
 of the account avatar position: right opens Venture, left returns to Vision.
 Venture's new-conversation and Sources controls sit to its left. The switch stays
