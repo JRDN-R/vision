@@ -7,6 +7,8 @@ on:
     paths:
       - scripts/enable-workspace-switch-desktop.py
       - .github/workflows/apply-workspace-switch.yml
+      - tests/workspace-switch-layout.py
+      - tests/compact-navigation.py
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,13 @@ jobs:
         run: |
           python3 tests/workspace-switch-layout.py
           python3 tests/compact-navigation.py
+      - name: Save workspace switch screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-switch-screenshots
+          path: tests/venture-screenshots/
+          retention-days: 3
       - name: Commit the generated bundle change
         run: |
           git config user.name "github-actions[bot]"
