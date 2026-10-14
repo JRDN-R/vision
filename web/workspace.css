@@ -15,10 +15,10 @@
 
 #ventureDictation.failed #ventureDictationStatus{color:#ff8f91} .venture-coming-soon{opacity:.5;cursor:not-allowed}.venture-coming-soon small{display:block;font-size:11px;margin-top:4px}.venture-coming-soon input{cursor:not-allowed}
 
-/* The shared Lottie switch flows with desktop headers and stays fixed on mobile. */
+/* Persistent Vision/Venture Lottie switch, independent of either header. */
 .workspace-switch-slot{display:none}
 .workspace-switch[hidden],.workspace-chevron[hidden]{display:none!important}
-.workspace-switch{display:grid;place-items:center;flex:0 0 44px;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.workspace-switch{position:fixed;z-index:86;top:16px;right:72px;display:grid;place-items:center;flex:0 0 44px;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
 .workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
 .workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
