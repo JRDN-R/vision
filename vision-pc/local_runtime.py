@@ -164,7 +164,7 @@ class LlamaRuntime:
             split = remote.get('tensorSplit')
             if (self.settings.get('modelVariant') != 'ultra' or type(port) is not int or
                     not 1024 <= port <= 65535 or not isinstance(split, str) or
-                    not re.fullmatch(r'[1-9]\\d{0,3},[1-9]\\d{0,3}', split)):
+                    not re.fullmatch(r'[1-9]\d{0,3},[1-9]\d{0,3}', split)):
                 raise LocalFailure('Invalid pinned Overdrive RPC profile.')
             args.extend(['--rpc', '127.0.0.1:' + str(port), '--tensor-split', split])
         return args
