@@ -64,9 +64,11 @@ with sync_playwright() as pw:
         assert page.locator('#ventureUltraContext option').all_text_contents()==['Maximum verified · 8,192 tokens','4,096 tokens','8,192 tokens']
         assert page.locator('#ventureUltraContext').input_value()=='max-tested'
         assert page.evaluate('venture.settings.qwenUltra.contextTokens')=='max-tested'
-        ultra['contextTokens']=32768
-        ultra['contexts']=[4096,8192,16384,32768]
-        page.evaluate('venturePaintUltra()')
+        page.evaluate('''() => {
+          venture.localCapability.ultra.contextTokens=32768;
+          venture.localCapability.ultra.contexts=[4096,8192,16384,32768];
+          venturePaintUltra();
+        }''')
         assert page.locator('#ventureUltraContext').input_value()=='max-tested'
         assert '32,768 tokens' in page.locator('#ventureUltraContext option:first-child').inner_text()
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='4096'
