@@ -196,3 +196,12 @@ document.addEventListener('keydown',event=>{
 new MutationObserver(records=>{if(records.some(r=>r.target instanceof HTMLDialogElement&&!r.target.open))navigationCheckNews();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['open']});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)navigationCheckNews();});
 if(typeof accountReady!=='undefined')void accountReady.then(()=>{navigationSync();navigationCheckNews();});
+// A quick horizontal swipe opens or dismisses the active mobile workspace menu.
+// Ignore draggable board objects; plain board space remains swipe-accessible.
+window.MobileMenuSwipe.install({
+ enabled:()=>accountCanUseApp()&&!document.hidden&&!document.documentElement.classList.contains('mobile-portrait-required')&&!$('workspaceMenuButton').hidden,
+ isOpen:navigationMenuOpen,
+ open:navigationToggleMenu,
+ close:()=>navigationCloseMenu(false),
+ ignoreOpeningFrom:target=>!venture.open&&!!target.closest('.node,.port,.tools,.toolbelt,.prompt-editor,.prompt-resize,.annotation-selection')
+});
