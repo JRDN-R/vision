@@ -215,10 +215,16 @@ class LlamaRuntime:
         remote = self.settings.get('overdriveRPC')
         if remote:
             from local_overdrive import probe
-            if not probe(remote['workerConfig']):
-                # The Mac went away between queue routing and process startup.
-                # This is the same pinned Qwen model, not a cloud/model fallback.
+            worker = remote.get('workerConfig')
+            if not worker or not probe(worker):
+                # A tuning/acceptance trial must never quietly benchmark the PC.
+                if self.settings.get('overdriveTuning'):
+                    raise LocalFailure('Mac worker disconnected during Overdrive tuning.')
+                # If the Mac vanished before model startup, use the already
+                # accepted, exact same Qwen Ultra model and its original PC profile.
                 fallback = self.settings.get('overdriveFallback') or {}
+                if not {'threads', 'gpuLayers'} <= set(fallback):
+                    raise LocalFailure('The remote worker disappeared without a verified PC fallback.')
                 self.settings.update(threads=fallback['threads'], gpuLayers=fallback['gpuLayers'])
                 self.settings.pop('overdriveRPC', None)
                 self.stage('Mac worker offline; using FUPCJ for this response')
