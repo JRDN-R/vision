@@ -1,4 +1,5 @@
 import {BACKEND, accountEpoch, authError, initAuth, request, signOut, user} from './auth.js?v=1.0.4&rev=moises.1';
+import '../mobile-menu-swipe.js?rev=swipe.1';
 
 const $ = id => document.getElementById(id);
 const ACTIVE = new Set(['queued', 'processing']);
@@ -980,6 +981,13 @@ $('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.exp
 window.addEventListener('pagehide', () => { resetMoisesHandoff(); state.visitEpoch++; state.sessionJobs.clear(); renderJobs(); renderProcessing(); });
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { showServerVersion(); $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { checkAutoSaves(); void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { checkAutoSaves(); void refresh(); void loadProfile(); } });
+// Same touch thresholds and protections as Vision and Venture.
+window.MobileMenuSwipe.install({
+ enabled:()=>!!user()&&!$('application').inert&&!$('application').hidden&&!document.documentElement.classList.contains('mobile-portrait-required'),
+ isOpen:()=>state.menu,
+ open:()=>setMenu(true,false),
+ close:()=>closeMenu(false)
+});
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { settleAuth(null); $('authStatus').textContent = authError(error); });
 

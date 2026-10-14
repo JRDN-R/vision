@@ -1,6 +1,8 @@
 {
-  "title": "Portrait-ready mobile workspaces",
+  "title": "Mobile swipe menus and portrait view",
   "items": [
+    "On mobile, swipe right to open the current app menu and swipe left or tap outside to close it in Vision, Venture, and Vortex.",
+    "Vertical scrolling, text fields, pinching, and draggable board components retain their existing touch behavior.",
     "Vision, Venture and Vortex now request portrait orientation on supported mobile devices.",
     "Browsers that cannot lock orientation keep your work intact and show a rotate-device screen in landscape.",
     "Desktop views and existing projects are unchanged."
