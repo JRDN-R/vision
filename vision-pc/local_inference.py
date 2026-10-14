@@ -262,8 +262,21 @@ class LocalInference:
             messages, visual_metrics = self.messages(row, profile, cancelled, stage)
             prepared_at = time.monotonic()
             runtime_profile = dict(profile, benchmark=True) if profile.get('modelVariant') == 'ultra' else profile
+            overdrive_configured = False
+            if profile.get('modelVariant') == 'ultra':
+                from local_overdrive import configuration, route
+                overdrive_configured = configuration(self.settings) is not None
+                # Choose afresh for EACH accepted run. Never change the account's
+                # pinned model, selected context, history or local readiness receipt.
+                runtime_profile, _ = route(self.settings, runtime_profile)
             with self.runtime_factory(runtime_profile, cancelled, stage) as runtime:
                 loaded_at = time.monotonic()
+                active_runtime = getattr(runtime, 'settings', runtime_profile)
+                compute_route = 'mac-rpc' if active_runtime.get('overdriveRPC') else 'fupcj'
+                if overdrive_configured:
+                    note('Mac Metal worker active; distributing this Qwen Ultra run.' if
+                         compute_route == 'mac-rpc' else
+                         'Mac acceleration unavailable; using the FUPCJ processor.', 'overdrive')
                 stage('Counting the rendered local prompt')
                 count = runtime.count(messages)
                 dropped = 0
@@ -278,6 +291,9 @@ class LocalInference:
                                contextTokens=context_tokens, maxOutputTokens=row['max_tokens'],
                                excludedHistoryMessages=dropped)
                 metrics['visual'] = visual_metrics
+                metrics['computeRoute'] = compute_route
+                if compute_route == 'mac-rpc':
+                    metrics['macMemoryBudgetGiB'] = active_runtime['overdriveRPC']['workerConfig']['macBudgetGiB']
                 metrics['preparationSeconds'] = prepared_at - begun
                 metrics['modelLoadSeconds'] = loaded_at - prepared_at
                 s.update(rid, status='in_progress', phase='Qwen processing the prompt', local_metrics_json=json.dumps(metrics))
