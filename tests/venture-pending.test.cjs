@@ -3,11 +3,12 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const test=require('node:test');
 
-function fixture(){
+function fixture({persistentStorage=new Map()}={}){
  const storage=new Map(),elements=new Map();
  const element=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:true,disabled:false,textContent:'',innerHTML:'',classList:{toggle(){}},parentElement:{classList:{toggle(){}}},replaceChildren(){},focus(){}});return elements.get(id);};
  const c={console,Map,Set,FormData,Blob,URLSearchParams,crypto:require('node:crypto').webcrypto,
-  $:element,sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
+  $:element,sessionStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
+  localStorage:{getItem:k=>persistentStorage.get(k)??null,setItem:(k,v)=>persistentStorage.set(k,v),removeItem:k=>persistentStorage.delete(k)},
   normalizeRunOptions:o=>o,ventureParameterProfile:()=>({tools:{},efforts:['auto']}),
   accountUpdateGate(){},openVisionConsole(){},consoleArtifactBlob(){},
   clearTimeout(){},setTimeout(){},matchMedia:()=>({matches:false})};
@@ -18,7 +19,7 @@ function fixture(){
  vm.runInContext(source.replace("ventureInstall();$('runProjectBtn').onclick=openVisionConsole;",'')+'\nglobalThis.state=venture;',c);
  Object.assign(c,{venturePaint(){c.venturePaintStatus();c.venturePaintAttachments();},ventureStopDictation(){},venturePaintModelPicker(){},ventureDictationBusy:()=>false,ventureIsLocal:()=>true,ventureLocalVisionReady:()=>false,escapeHTML:String,ventureSchedule(){}});
  Object.assign(c.state,{uid:'owner',epoch:1,selection:1,ready:true,current:{id:'old-conversation'},settings:{model:'qwen3.8-local',runOptions:{}}});
- c.element=element;c.storage=storage;
+ c.element=element;c.storage=storage;c.persistentStorage=persistentStorage;
  c.restorePending=()=>{c.ventureRemember('pending-old-conversation',{cid:'old-conversation',clientRequestId:'original-request'});c.state.pending=c.ventureRecall('pending-old-conversation');};
  return c;
 }
@@ -76,4 +77,47 @@ test('an active upload cannot switch conversations or change attachments',async(
  c.ventureJSON=async()=>{throw Error('Should not check during upload');};
  await c.ventureCheckPending();await c.ventureNew();c.ventureAddFiles([{name:'new.png',size:5}]);
  assert.equal(c.state.current.id,'old-conversation');assert.ok(c.state.pending);assert.equal(c.state.files.length,0);
+});
+
+test('closing the browser restores the selected server job and reconciles its request ID',async()=>{
+ const persistentStorage=new Map(),original=fixture({persistentStorage});
+ original.ventureRemember('selection','old-conversation');
+ original.ventureRemember('pending-old-conversation',{cid:'old-conversation',clientRequestId:'original-request'});
+ original.ventureRemember('funding-return',{temporary:'session-only'});
+ const reopened=fixture({persistentStorage}); // a new page session, with fresh sessionStorage
+ assert.equal(reopened.ventureRecall('selection'),'old-conversation');
+ assert.equal(reopened.ventureRecall('pending-old-conversation').clientRequestId,'original-request');
+ assert.equal(reopened.ventureRecall('funding-return'),null,'only IDs, not unrelated session data, survive');
+ reopened.state.current=null;reopened.state.runs=[];
+ reopened.ventureClosePopover=()=>{};reopened.venturePaintSettings=()=>{};reopened.venturePaint=()=>{};reopened.ventureSchedule=()=>{};
+ const calls=[];
+ reopened.ventureJSON=async(path,method)=>{
+  calls.push([path,method]);
+  if(path==='/venture/conversations/old-conversation')return {conversation:{id:'old-conversation',title:'Ongoing answer',settings:{model:'qwen3.8-local',runOptions:{}},revision:1},runs:[],cursor:0,nextCursor:null};
+  if(path==='/projects/old-conversation/runs')return {runs:[{clientRequestId:'original-request',runId:'accepted',status:'in_progress',createdAt:'2026-10-14T12:00:00Z',text:'Saved so far.'}]};
+  throw Error('Unexpected request: '+path);
+ };
+ await reopened.ventureSelect(reopened.ventureRecall('selection'));
+ await new Promise(resolve=>setImmediate(resolve)); // let automatic server reconciliation settle
+ assert.equal(reopened.state.current.id,'old-conversation');
+ assert.equal(reopened.state.runs[0].runId,'accepted');
+ assert.equal(reopened.state.runs[0].text,'Saved so far.');
+ assert.equal(reopened.state.pending,null);
+ assert.equal(reopened.ventureRecall('pending-old-conversation'),null);
+ assert.ok(calls.some(([path])=>path==='/projects/old-conversation/runs'));
+ assert.ok(calls.every(([,method])=>method===undefined),'reopening must never resubmit a model request');
+ reopened.state.uid='another-account';
+ assert.equal(reopened.ventureRecall('selection'),null,'another account cannot inherit the last selected conversation');
+ reopened.state.uid='owner';
+ reopened.ventureRemember('selection',null);
+ assert.equal(fixture({persistentStorage}).ventureRecall('selection'),null,'new conversation clears durable selection');
+});
+
+test('browser storage restrictions fall back to the existing session behavior',()=>{
+ const c=fixture();
+ Object.defineProperty(c,'localStorage',{get(){throw Error('Storage disabled');},configurable:true});
+ c.ventureRemember('selection','old-conversation');
+ assert.equal(c.ventureRecall('selection'),'old-conversation');
+ c.ventureRemember('selection',null);
+ assert.equal(c.ventureRecall('selection'),null);
 });
