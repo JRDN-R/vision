@@ -12,13 +12,14 @@ import local_ultra as ultra
 import local_variants
 import test_local_inference as existing
 from setup_local_variant import atomic_json
-from setup_qwen_ultra import cpu_candidates, gpu_candidates, tune, context_check, quiet_machine
+from setup_qwen_ultra import cpu_candidates, gpu_candidates, tune, context_check, quiet_machine, tune_max_context
 
 
 class UltraControlsTests(unittest.TestCase):
     def test_strict_controls_and_real_limits(self):
-        self.assertEqual(ultra.normalize()['contextTokens'],8192)
-        for bad in ({'contextTokens':262144},{'contextTokens':True},{'thinking':'false'},
+        self.assertEqual(ultra.normalize()['contextTokens'],'max-tested')
+        self.assertEqual(ultra.normalize({'contextTokens':262144})['contextTokens'],262144)
+        for bad in ({'contextTokens':524288},{'contextTokens':True},{'thinking':'false'},
                     {'temperature':float('nan')},{'seed':2.5},{'topK':True},
                     {'performance':'cloud'},{'runtimePath':'anything'},{'topP':0}):
             with self.assertRaises(ValueError):ultra.normalize(bad)
@@ -127,6 +128,38 @@ class UltraControlsTests(unittest.TestCase):
                 yield {'choices':[{'delta':{'content':'COBALT-731'},'finish_reason':'stop'}]}
         context_check({'contextTokens':8192},Fixture)
 
+
+    def test_max_tuning_stops_at_first_failure_and_preserves_receipt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)
+            tried=[]
+            def controlled(profile, directory, context, boost=False):
+                tried.append(context)
+                if context>=32768:raise local_runtime.LocalFailure('simulated memory guard')
+                return {'auto': {'profile': {'threads':8,'gpuLayers':0}}}
+            with patch('setup_qwen_ultra.ultra.readiness',
+                       return_value={'maxContextTokens':8192,'profiles':{'auto':{}}}), \
+                 patch('setup_qwen_ultra.publish_readiness') as saved:
+                result=tune_max_context({},target,target/'ready.json',tuner=controlled)
+            self.assertEqual(result,16384)
+            self.assertEqual(tried,[16384,32768])
+            self.assertEqual(saved.call_count,1)
+            self.assertEqual(saved.call_args.args[3],16384)
+            report=json.loads((target/'context-ceiling-report.json').read_text())
+            self.assertEqual(report['highestVerifiedContext'],16384)
+            self.assertFalse(report['attempts'][-1]['passed'])
+
+    def test_max_tuning_never_enables_a_failed_first_context(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)
+            def fail(*args,**kwargs):
+                raise local_runtime.LocalFailure('simulated allocation failure')
+            with patch('setup_qwen_ultra.ultra.readiness',
+                       side_effect=local_runtime.LocalFailure('not ready')), \
+                 patch('setup_qwen_ultra.publish_readiness') as saved:
+                with self.assertRaisesRegex(local_runtime.LocalFailure,'allocation'):
+                    tune_max_context({},target,target/'ready.json',tuner=fail)
+            saved.assert_not_called()
 
 class UltraIntegrationTests(unittest.TestCase):
     setUpClass=classmethod(existing.LocalInferenceTests.setUpClass.__func__)
@@ -267,6 +300,16 @@ class UltraIntegrationTests(unittest.TestCase):
         self.assertEqual(self.s.snapshot(sent.json['runId'])['status'],'error')
         self.assertEqual(self.selected,[])
         self.assertEqual(self.send(model=ultra.MODEL,request_id='second').status_code,503)
+
+    def test_automatic_context_follows_validated_receipt_not_unverified_sizes(self):
+        self.assertEqual(ultra.select_profile(self.local.settings)['contextTokens'],8192)
+        self.receipt['maxContextTokens']=32768
+        atomic_json(self.receipt_path,self.receipt)
+        self.assertEqual(ultra.select_profile(self.local.settings)['contextTokens'],32768)
+        self.assertEqual(ultra.select_profile(self.local.settings,{'contextTokens':8192})['contextTokens'],8192)
+        self.receipt['maxContextTokens']=131072
+        atomic_json(self.receipt_path,self.receipt)
+        self.assertEqual(ultra.select_profile(self.local.settings)['contextTokens'],131072)
 
     def test_unbenchmarked_context_and_excess_output_rejected(self):
         for options in ({'qwenUltra':{'contextTokens':16384}},

@@ -61,7 +61,9 @@ with sync_playwright() as pw:
         assert page.locator('#ventureUltraControls').is_visible()
         assert page.locator('#ventureUltraThinking').is_checked()
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='4096'
-        assert page.locator('#ventureUltraContext option').all_text_contents()==['4,096 tokens','8,192 tokens']
+        assert page.locator('#ventureUltraContext option').all_text_contents()==['Maximum verified · 8,192 tokens','4,096 tokens','8,192 tokens']
+        assert page.locator('#ventureUltraContext').input_value()=='max-tested'
+        assert page.evaluate('venture.settings.qwenUltra.contextTokens')=='max-tested'
         assert page.locator('#ventureWeb').is_disabled() and page.locator('#ventureCode').is_disabled()
         assert page.locator('#ventureUltraWait').count()==0
         page.locator('#ventureUltraThinking').uncheck()

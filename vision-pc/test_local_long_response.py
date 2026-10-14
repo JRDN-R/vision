@@ -51,7 +51,7 @@ class LongResponseTests(unittest.TestCase):
             self.assertGreaterEqual(b['maxTokens']-b['thinkingBudgetTokens'], 1024)
         self.assertGreater(ultra.response_budget(8192,200,2048,True)['maxTokens'],4096)
         self.assertEqual(ultra.response_budget(8192,200,2048,False)['thinkingBudgetTokens'],0)
-        for args in [(8192,8100,1024,True),(262144,100,1024,True),(8192,100,True,True)]:
+        for args in [(8192,8100,1024,True),(524288,100,1024,True),(8192,100,True,True)]:
             with self.assertRaises(LocalFailure):ultra.response_budget(*args)
 
     def test_length_continues_without_replaying_original_and_sums_usage(self):

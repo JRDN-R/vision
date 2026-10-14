@@ -175,15 +175,69 @@ def tune(profile, target, max_context, boost=False):
     return selected
 
 
+def publish_readiness(profile, receipt, profiles, context):
+    """Publish only a context that passed the real runtime tests."""
+    atomic_json(receipt, dict(schema=ultra.SCHEMA, passed=True, id=secrets.token_hex(16),
+        enabledAt=time.time(), profiles=profiles, maxContextTokens=context,
+        manifestSha256=digest_file(profile['manifestPath']),
+        modelStamp=stamp(profile['modelPath']),
+        runtimeStamp=stamp(profile['runtimePath'])))
+
+
+def tune_max_context(profile, target, receipt, boost=False, tuner=None):
+    """Try successive context sizes, preserving the previous verified readiness receipt."""
+    tuner = tuner or tune
+    try:
+        current = ultra.readiness(profile)
+    except (OSError, ValueError, KeyError, TypeError):
+        current = None
+    previous = int(current['maxContextTokens']) if current else 0
+    achieved = previous
+    needs_boost = bool(boost and current and 'boost' not in current['profiles'])
+    candidates = [n for n in ultra.CONTEXTS[1:] if n > previous or
+                  (needs_boost and n == previous)]
+    report = dict(schema='vision-ultra-max-context-v1',
+                  previousVerifiedContext=previous,
+                  highestVerifiedContext=achieved, attempts=[])
+    if not candidates:
+        print(f'Maximum model context is already verified: {achieved:,} tokens.',flush=True)
+        return achieved
+    for context in candidates:
+        print(f'Validating context {context:,} / {max(ultra.CONTEXTS):,} tokens with RAM safeguards.',flush=True)
+        try:
+            profiles = tuner(dict(profile), target, context, boost=boost)
+        except (OSError, ValueError, requests.RequestException, subprocess.SubprocessError) as error:
+            report['attempts'].append(dict(contextTokens=context,passed=False,
+                                           reason=str(error)[:600]))
+            atomic_json(target/'context-ceiling-report.json',report)
+            if not achieved:
+                raise
+            print(f'Context {context:,} did not pass: {error}',flush=True)
+            print(f'Keeping verified {achieved:,}-token context. No untested setting was enabled.',flush=True)
+            break
+        publish_readiness(profile, receipt, profiles, context)
+        achieved = context
+        report['highestVerifiedContext'] = achieved
+        report['attempts'].append(dict(contextTokens=context,passed=True))
+        atomic_json(target/'context-ceiling-report.json',report)
+        print(f'Context {context:,} passed and was activated. Testing whether more fits.',flush=True)
+    print(f'Highest successfully verified context: {achieved:,} tokens.',flush=True)
+    return achieved
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',required=True)
     parser.add_argument('--action',choices=['install','download','check','tune','disable'],default='install')
     parser.add_argument('--context',type=int,choices=list(ultra.CONTEXTS[1:]),default=8192)
     parser.add_argument('--boost',action='store_true',help='Bench extra threads and GPU layers; no overclocking')
+    parser.add_argument('--auto-max-context',action='store_true',
+                        help='Test successively larger contexts through native 262144; stop at first failure')
     args = parser.parse_args()
     if args.boost and args.action not in ('install','tune'):
         parser.error('--boost is only available with install or tune')
+    if args.auto_max_context and args.action not in ('install','tune'):
+        parser.error('--auto-max-context is only available with install or tune')
     path = checked_path(Path(args.config).absolute())
     config = read_json(path)
     settings = config.get('localAI') or {}
@@ -214,24 +268,13 @@ def main():
             print('Ultra model and runtime verified. Run Tune to enable it; no account default changed.')
             return
         quiet_machine()
-        # A failed context upgrade must not discard a still-valid smaller context.
-        # Stale/mismatched receipts and ordinary revalidation remain fail-closed.
-        try:
-            keep_smaller = ultra.readiness(profile)['maxContextTokens'] < args.context
-        except (OSError,ValueError,KeyError,TypeError):
-            keep_smaller = False
-        if not keep_smaller:
-            receipt.unlink(missing_ok=True)
-        try:
-            profiles = tune(profile,target,args.context,boost=args.boost)
-        except Exception:
-            if keep_smaller:
-                print('Larger-context test failed. The previously verified smaller context remains enabled.',flush=True)
-            raise
-        atomic_json(receipt,dict(schema=ultra.SCHEMA,passed=True,id=secrets.token_hex(16),
-            enabledAt=time.time(),profiles=profiles,maxContextTokens=args.context,
-            manifestSha256=digest_file(profile['manifestPath']),modelStamp=stamp(profile['modelPath']),
-            runtimeStamp=stamp(profile['runtimePath'])))
+        # Never delete a valid receipt before testing a replacement context.
+        if args.auto_max_context:
+            tune_max_context(profile,target,receipt,boost=args.boost)
+            print('Refresh Venture and choose Maximum verified in Ultra context settings.')
+            return
+        profiles = tune(dict(profile),target,args.context,boost=args.boost)
+        publish_readiness(profile,receipt,profiles,args.context)
         b = profiles['auto']['benchmark']
         print(f"Qwen Ultra ready: {profiles['auto']['profile']['threads']} threads, "
               f"{profiles['auto']['profile']['gpuLayers']} GPU layers; {b['generationTokensPerSecond']:.2f} tokens/sec.")

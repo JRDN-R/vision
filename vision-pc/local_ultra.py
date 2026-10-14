@@ -12,11 +12,12 @@ SPEC = dict(modelRepository='JunLee88999/Qwen3.5-27B-heretic-v2-GGUF',
 SOURCE = 'llmfan46/Qwen3.5-27B-ultra-uncensored-heretic-v1'
 SOURCE_REVISION = '0b134ea2c3e0fef5f4f78194d1c86258c1c81b8f'
 SCHEMA = 'vision-ultra-ready-v1'
-CONTEXTS = (4096, 8192, 16384, 32768, 65536)
+CONTEXTS = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
+MAX_TESTED = 'max-tested'  # Resolve against verified hardware receipt at job acceptance.
 CONTEXT_MARGIN = 256
 MAX_RESPONSE_PASSES = 64
 MAX_RESPONSE_CHARS = 1_000_000
-DEFAULTS = dict(contextTokens=8192, thinking=True, longResponses=True, performance='auto',
+DEFAULTS = dict(contextTokens=MAX_TESTED, thinking=True, longResponses=True, performance='auto',
     temperature=.6, topP=.95, topK=20, minP=0., repeatPenalty=1., presencePenalty=0., seed=-1)
 RANGES = dict(temperature=(0.,2.), topP=(.01,1.), topK=(0,100), minP=(0.,1.),
               repeatPenalty=(.8,1.5), presencePenalty=(-2.,2.), seed=(-1,2147483647))
@@ -29,7 +30,8 @@ def normalize(value=None):
     if not isinstance(value, dict) or set(value) - set(DEFAULTS):
         raise LocalFailure('Invalid Qwen Ultra controls.')
     result = {**DEFAULTS, **value}
-    if (type(result['contextTokens']) is not int or result['contextTokens'] not in CONTEXTS or
+    if ((result['contextTokens'] != MAX_TESTED and
+            (type(result['contextTokens']) is not int or result['contextTokens'] not in CONTEXTS)) or
             type(result['thinking']) is not bool or type(result['longResponses']) is not bool or
             result['performance'] not in ('auto','cpu','boost')):
         raise LocalFailure('Choose supported Ultra context, thinking, long-response and performance settings.')
@@ -80,13 +82,15 @@ def select_profile(settings, options=None):
     controls = normalize(options)
     profile = base_profile(settings)
     receipt = readiness(profile)
-    if controls['contextTokens'] > receipt['maxContextTokens']:
+    chosen_context = (receipt['maxContextTokens'] if controls['contextTokens'] == MAX_TESTED
+                      else controls['contextTokens'])
+    if chosen_context > receipt['maxContextTokens']:
         raise LocalFailure('This Ultra context has not been tested on the server. Run Tune with the larger context first.')
     if controls['performance'] == 'boost' and 'boost' not in receipt['profiles']:
         raise LocalFailure('Ultra Boost is not measured on this PC. Run Qwen-Ultra.ps1 -Action Tune -Boost before selecting it.')
     selected = receipt['profiles'][controls['performance']]
     profile.update(selected['profile'])
-    profile.update(contextTokens=controls['contextTokens'], thinking=controls['thinking'],
+    profile.update(contextTokens=chosen_context, thinking=controls['thinking'],
                    longResponses=controls['longResponses'],
                    sampling={k:controls[k] for k in RANGES}, ultraPerformance=controls['performance'],
                    ultraBenchmark=selected['benchmark'], ultraReceipt=receipt['id'])

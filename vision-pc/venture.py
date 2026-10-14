@@ -254,7 +254,11 @@ class Venture:
             from local_ultra import normalize
             try:ultra = {'qwenUltra':normalize(value.get('qwenUltra'))}
             except ValueError as error:raise self.Error(str(error))
-            if limit + 576 > ultra['qwenUltra']['contextTokens']:
+            chosen_context = ultra['qwenUltra']['contextTokens']
+            # Automatic maximum resolves from the readiness receipt at job acceptance.
+            # The smallest valid verified receipt is 8192, so preferences can save offline.
+            if chosen_context == 'max-tested': chosen_context = 8192
+            if limit + 576 > chosen_context:
                 raise self.Error('Leave at least 576 context tokens for the Ultra prompt.')
         elif value.get('qwenUltra') is not None:
             raise self.Error('Ultra controls are only available for Qwen Ultra.')

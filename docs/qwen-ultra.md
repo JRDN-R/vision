@@ -37,13 +37,33 @@ After the code update, these commands operate without a server restart:
 .\Qwen-Ultra.ps1 -Action Disable
 ```
 
-An optional explicit `-ContextTokens 65536` is also supported. It is not enabled
-until the actual PC passes its larger-context checks. Large-context validation
+Explicit `-ContextTokens 65536`, `-ContextTokens 131072`, and
+`-ContextTokens 262144` are supported only when the actual Windows PC passes
+the larger-context checks. To find the largest verified context automatically,
+run the updated installer during a quiet maintenance window:
+
+```powershell
+.\Qwen-Ultra.ps1 -Action Tune -MaxContext
+```
+
+`-MaxContext` tests progressively larger windows (8,192 through the model's
+262,144-token architectural ceiling), commits each passing context, then stops
+at the first failed or resource-limited test. The last passing context remains
+in service. Failures and results are recorded locally in
+`context-ceiling-report.json`. Large tests can take considerable time.
+RAM, clock, VRAM and runtime guards are unchanged.
+
+In Venture, choose **Context window → Maximum verified**. New Ultra choices
+use this automatically. Previously saved explicit numeric context selections
+remain unchanged until the user changes them. Every accepted job snapshots the
+verified numeric context from the receipt, so later tuning cannot silently
+change queued work. A larger window makes room for more supporting material;
+it does **not guarantee** that the model is more accurate. Large-context validation
 can take hours or fail because of memory, drivers, or speed; it is not a promise
 that a 48 GB machine can run every setting. A failed attempt to upgrade a still-
 valid smaller context keeps that smaller readiness receipt. Stale or mismatched
-receipts remain disabled. Select the successfully tested context in Venture
-settings after tuning; the default stays 8,192, not an automatic RAM increase.
+receipts remain disabled. Select an explicitly tested context in Venture or choose **Maximum verified**
+to follow the highest passing size. The RAM limit is not increased automatically.
 
 Tune uses the same OS inference lock as Venture and exits if local work is
 active. Requests accepted while tuning remain queued. Disable removes only the
