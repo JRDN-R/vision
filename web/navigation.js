@@ -187,7 +187,7 @@ document.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();navigationCloseMenu();return;}
  if(event.key!=='Tab')return;
  const menu=venture.open?$('ventureSidebar'):$('workspaceMenu');
- const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),$('workspaceSwitchButton')].filter(el=>el&&el.tabIndex>=0&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
+ const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),...(matchMedia('(max-width:760px)').matches?[$('workspaceSwitchButton')]:[])].filter(el=>el&&el.tabIndex>=0&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
  const index=focusable.indexOf(document.activeElement),next=index<0?(event.shiftKey?focusable.length-1:0):(index+(event.shiftKey?-1:1)+focusable.length)%focusable.length;
  event.preventDefault();focusable[next]?.focus();
 },true);
