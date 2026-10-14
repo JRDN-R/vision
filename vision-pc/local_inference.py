@@ -1,7 +1,10 @@
 """Qwen provider integrated with durable project_runs and account authorization."""
 import json
+from contextlib import ExitStack
 from pathlib import Path
 import time
+
+import requests
 
 from flask import jsonify, request
 
@@ -269,9 +272,23 @@ class LocalInference:
                 # Choose afresh for EACH accepted run. Never change the account's
                 # pinned model, selected context, history or local readiness receipt.
                 runtime_profile, _ = route(self.settings, runtime_profile)
-            with self.runtime_factory(runtime_profile, cancelled, stage) as runtime:
+            with ExitStack() as started:
+                used_profile = runtime_profile
+                try:
+                    runtime = started.enter_context(self.runtime_factory(used_profile, cancelled, stage))
+                except (LocalFailure, OSError, requests.RequestException):
+                    # Only retry when the remote worker is verifiably offline
+                    # BEFORE ANY GENERATION. A genuine model/runtime error,
+                    # cancellation, or interrupted stream must not be replayed.
+                    from local_overdrive import probe
+                    mac = (runtime_profile.get('overdriveRPC') or {}).get('workerConfig')
+                    if not mac or probe(mac) or cancelled():
+                        raise
+                    stage('Mac disconnected during model startup; using FUPCJ')
+                    used_profile = dict(profile, benchmark=True)
+                    runtime = started.enter_context(self.runtime_factory(used_profile, cancelled, stage))
                 loaded_at = time.monotonic()
-                active_runtime = getattr(runtime, 'settings', runtime_profile)
+                active_runtime = getattr(runtime, 'settings', used_profile)
                 compute_route = 'mac-rpc' if active_runtime.get('overdriveRPC') else 'fupcj'
                 if overdrive_configured:
                     note('Mac Metal worker active; distributing this Qwen Ultra run.' if
