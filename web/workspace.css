@@ -15,15 +15,16 @@
 
 #ventureDictation.failed #ventureDictationStatus{color:#ff8f91} .venture-coming-soon{opacity:.5;cursor:not-allowed}.venture-coming-soon small{display:block;font-size:11px;margin-top:4px}.venture-coming-soon input{cursor:not-allowed}
 
-/* A single viewport anchor for both workspaces, outside the sliding content. */
-.workspace-switch,.workspace-switch-slot{display:none}
+/* The shared Lottie switch flows with desktop headers and stays fixed on mobile. */
+.workspace-switch-slot{display:none}
 .workspace-switch[hidden],.workspace-chevron[hidden]{display:none!important}
+.workspace-switch{display:grid;place-items:center;flex:0 0 44px;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
+.workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
+.workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
+.workspace-chevron>svg{display:block;width:100%!important;height:100%!important}
 @media(max-width:760px){
- .workspace-switch{position:fixed;z-index:86;top:calc(10px + env(safe-area-inset-top,0px));right:calc(40px + max(12px,env(safe-area-inset-right,0px)));display:grid;place-items:center;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
- .workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
- .workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
- .workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
- .workspace-chevron>svg{display:block;width:100%!important;height:100%!important}
+ .workspace-switch{position:fixed;z-index:86;top:calc(10px + env(safe-area-inset-top,0px));right:calc(40px + max(12px,env(safe-area-inset-right,0px)))}
  .workspace-switch-slot{display:block;flex:0 0 44px;width:44px;height:44px}
  .venture-root .venture-header{height:calc(65px + env(safe-area-inset-top,0px));min-height:calc(65px + env(safe-area-inset-top,0px));padding-top:calc(9px + env(safe-area-inset-top,0px));gap:8px}
  .venture-root .venture-avatar{margin-left:0}
