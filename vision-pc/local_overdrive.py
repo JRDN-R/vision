@@ -149,8 +149,17 @@ def route(settings, profile):
         verified_runtime(config)
     except (OSError, ValueError):
         return original, "fupcj"
+    # Preserve livestream headroom: only activate optional remote work when
+    # OBS/Streamlabs is not running. The local Auto/CPU profile remains available.
+    try:
+        from setup_qwen_ultra import quiet_machine
+        quiet_machine("starting Ultra Overdrive")
+    except (OSError, ValueError):
+        return original, "fupcj"
     original.update(threads=tested["threads"], gpuLayers=tested["gpuLayers"],
+                    overdriveFallback=dict(threads=profile["threads"], gpuLayers=profile["gpuLayers"]),
                     overdriveRPC=dict(rpcPort=config["rpcPort"],
                                       tensorSplit=tested["tensorSplit"],
-                                      runtimeManifestPath=config["runtimeManifestPath"]))
+                                      runtimeManifestPath=config["runtimeManifestPath"],
+                                      workerConfig=config))
     return original, "mac-rpc"
