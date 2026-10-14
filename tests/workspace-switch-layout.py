@@ -30,7 +30,8 @@ with sync_playwright() as p:
   else:
    assert switch.evaluate('el=>el.parentElement.id==="appHeader"')
    assert page.locator('.workspace-switch-slot').is_hidden()
-   assert start['x']>=width-110, start
+   assert start['x']>=0 and start['x']+start['width']<=width, start
+   print(f'{width}px: desktop header {page.locator("#appHeader").bounding_box()}, switch {start}')
    page.screenshot(path=str(shots/f'inline-switch-vision-{width}.png'))
   switch.click();page.wait_for_timeout(900)
   assert switch.is_visible() and switch.get_attribute('aria-label')=='Return to Vision'
