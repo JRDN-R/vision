@@ -72,12 +72,20 @@ def main():
     identity = worker_id()
     ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     log = ROOT / "rpc.log"
-    log_stream = log.open("ab", buffering=0)
+    # Keep only this worker lifetime's device inventory; old logs cannot fake Metal.
+    log_stream = log.open("wb", buffering=0)
     command = [str(binary), "--host", "127.0.0.1", "--port", str(args.rpc_port)]
     if args.cache:
         command.append("--cache")
     child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log_stream,
                              stderr=subprocess.STDOUT, start_new_session=True)
+
+    def metal_reported():
+        try:
+            inventory = log.read_text(encoding="utf-8", errors="replace")[-16384:]
+            return bool(re.search(r"\b(?:Metal|MTL[0-9]+)\b", inventory, re.IGNORECASE))
+        except OSError:
+            return False
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -86,9 +94,10 @@ def main():
                 return
             resident = rss_bytes(child.pid) if child.poll() is None else None
             # Check process liveness and its actual listening port, not only ping.
-            ready = (child.poll() is None and rpc_listening(args.rpc_port) and
+            metal = metal_reported()
+            ready = (child.poll() is None and metal and rpc_listening(args.rpc_port) and
                      resident is not None and resident < args.budget_gib * 1024**3)
-            response = dict(schema=SCHEMA, workerId=identity, metal=True,
+            response = dict(schema=SCHEMA, workerId=identity, metal=bool(metal),
                             rpcReady=bool(ready), macBudgetGiB=args.budget_gib,
                             rpcResidentBytes=resident)
             body = json.dumps(response, separators=(",", ":")).encode("utf-8")
