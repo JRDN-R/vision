@@ -46,17 +46,10 @@ The companion starts RPC only on localhost, checks the actual process/socket, an
 With Tailscale running on both systems, in Windows PowerShell:
 
 ~~~powershell
-ssh.exe -N \
-  -o ExitOnForwardFailure=yes \
-  -o StrictHostKeyChecking=yes \
-  -o ServerAliveInterval=10 \
-  -o ServerAliveCountMax=2 \
-  -L 127.0.0.1:51052:127.0.0.1:50052 \
-  -L 127.0.0.1:51053:127.0.0.1:50053 \
-  macOS-user@mac-tailscale-address
+ssh.exe -N -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -L 127.0.0.1:51052:127.0.0.1:50052 -L 127.0.0.1:51053:127.0.0.1:50053 macOS-user@mac-tailscale-address
 ~~~
 
-For PowerShell, run the command on a single line or replace each trailing backslash with a PowerShell backtick. These forwards carry:
+Keep this SSH terminal session open for the first test. These forwards carry:
 - Windows localhost 51052 => Mac localhost RPC 50052
 - Windows localhost 51053 => Mac localhost health 50053
 
