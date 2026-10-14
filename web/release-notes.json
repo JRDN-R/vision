@@ -1,8 +1,8 @@
 {
-  "title": "A clearer view of Qwen’s progress",
+  "title": "Portrait-ready mobile workspaces",
   "items": [
-    "Qwen can share brief, plain-language progress summaries while working, with 3–30 words per update.",
-    "Only the current update stays visible. Earlier steps collapse automatically, and the panel closes when the response finishes or stops.",
-    "Progress summaries stay with the conversation. If the model supplies no summary, Venture shows the actual processing stage."
+    "Vision, Venture and Vortex now request portrait orientation on supported mobile devices.",
+    "Browsers that cannot lock orientation keep your work intact and show a rotate-device screen in landscape.",
+    "Desktop views and existing projects are unchanged."
   ]
 }

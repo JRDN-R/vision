@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "Vortex",
+  "short_name": "Vortex",
+  "description": "Find, convert and download media.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#101314",
+  "theme_color": "#101314",
+  "icons": [
+    {
+      "src": "../vortex_character.png",
+      "type": "image/png",
+      "sizes": "any"
+    }
+  ]
+}
