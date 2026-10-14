@@ -5,6 +5,7 @@
     "Vertical scrolling, text fields, pinching, and draggable board components retain their existing touch behavior.",
     "Vision, Venture and Vortex now request portrait orientation on supported mobile devices.",
     "Browsers that cannot lock orientation keep your work intact and show a rotate-device screen in landscape.",
-    "Desktop views and existing projects are unchanged."
+    "Desktop views and existing projects are unchanged.",
+    "When you reopen Venture after closing the browser, the last conversation and saved answer progress return automatically. Accepted jobs keep running on FUPCJ while the server is online."
   ]
 }

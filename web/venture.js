@@ -11,8 +11,19 @@ const venture={uid:'',epoch:0,selection:0,open:false,ready:false,current:null,ru
 function ventureActive(run){return !VENTURE_TERMINAL.has(run.status);}
 function ventureScope(){return accountSignedIn()?accountFirebase.currentUser.uid:'';}
 function ventureStorageKey(kind){return 'vision-venture-'+kind+'-'+encodeURIComponent(venture.uid);}
-function ventureRemember(kind,value){try{if(value===null)sessionStorage.removeItem(ventureStorageKey(kind));else sessionStorage.setItem(ventureStorageKey(kind),JSON.stringify(value));}catch{}}
-function ventureRecall(kind){try{return JSON.parse(sessionStorage.getItem(ventureStorageKey(kind))||'null');}catch{return null;}}
+// Only conversation and submission IDs persist across a browser restart; never
+// save drafts, attachments, API keys or request contents in localStorage.
+function ventureDurableKey(kind){return kind==='selection'||kind.startsWith('pending-');}
+function ventureRemember(kind,value){
+ const key=ventureStorageKey(kind),saved=value===null?null:JSON.stringify(value);
+ try{if(saved===null)sessionStorage.removeItem(key);else sessionStorage.setItem(key,saved);}catch{}
+ if(ventureDurableKey(kind))try{if(saved===null)localStorage.removeItem(key);else localStorage.setItem(key,saved);}catch{}
+}
+function ventureRecall(kind){
+ const key=ventureStorageKey(kind);
+ if(ventureDurableKey(kind))try{const saved=localStorage.getItem(key);if(saved!==null)return JSON.parse(saved);}catch{}
+ try{return JSON.parse(sessionStorage.getItem(key)||'null');}catch{return null;}
+}
 function ventureError(error){if(error?.name==='AbortError')return 'Connection timed out. Your accepted work is still on FUPCJ Server.';return error?.message||'Venture could not connect. Check FUPCJ Server.';}
 async function ventureFetch(path,options={}){
  const {timeoutMs,...fetchOptions}=options;const epoch=venture.epoch,controller=new AbortController(),parentSignal=options.signal;const abort=()=>controller.abort();if(parentSignal?.aborted)abort();else parentSignal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(()=>controller.abort(),Number.isFinite(timeoutMs)?Math.max(1000,Math.min(720000,timeoutMs)):options.body instanceof FormData?180000:20000);
@@ -40,7 +51,7 @@ function ventureInstall(){
  <div class="venture-compose-tools"><input type="file" id="ventureFileInput" multiple hidden><button class="v-icon" id="ventureAttach" type="button" aria-label="Attach files" title="Attach files">${ventureIcon('plus')}</button>
  <label class="venture-board-check"><input type="checkbox" id="ventureIncludeBoard">Include board</label><span class="venture-tools-label" id="ventureToolsLabel">Code &amp; files ready</span><button type="button" class="venture-context-status" id="ventureContextStatus" aria-haspopup="dialog" aria-controls="ventureContextDialog" hidden>Context updating</button>
  <button class="v-icon" id="ventureMic" type="button" aria-label="Dictate a message" aria-pressed="false">${ventureIcon('mic')}</button><button class="venture-send" id="ventureSend" type="submit" aria-label="Send message">${ventureIcon('arrow')}</button><button class="venture-send" id="ventureStop" type="button" aria-label="Cancel response" title="Cancel this response" hidden>${ventureIcon('stop')}<span>Stop</span></button></div></form>
- <p class="venture-footnote" id="ventureFootnote">Accepted requests keep working when you leave.</p></div></div>
+ <p class="venture-footnote" id="ventureFootnote">Accepted requests continue when the browser is closed, while FUPCJ stays online.</p></div></div>
  <section class="venture-popover venture-settings" id="ventureSettings" role="dialog" aria-label="Venture settings" tabindex="-1" hidden><div class="venture-settings-top"><label id="ventureModelHeading" class="sr-only">Model</label><button type="button" id="ventureModel" class="venture-model-select" aria-haspopup="listbox" aria-controls="ventureModels" aria-expanded="false"></button><button class="v-icon" id="ventureSettingsClose" aria-label="Close settings">${ventureIcon('close')}</button></div>
  <div id="ventureModelsPanel" class="venture-models-panel" hidden><div id="ventureModels" role="listbox" aria-labelledby="ventureModelHeading"></div><p class="venture-fine-print" id="ventureModelsStatus"></p><button type="button" id="ventureRefreshModels" class="v-text-button">Refresh models</button></div>
  <label id="ventureUncensoredRow" class="venture-pro-toggle" hidden><span>Uncensored</span><input id="ventureUncensored" type="checkbox" role="switch" aria-describedby="ventureUncensoredHelp"><span class="venture-switch-track" aria-hidden="true"></span></label><p id="ventureUncensoredHelp" class="venture-fine-print" hidden></p>
@@ -124,6 +135,9 @@ async function ventureSelect(cid){if(typeof ventureCloseLocalInfo==='function')v
  if(venture.sending)return;
  const serial=++venture.selection;ventureStopDictation();if(venture.current)venture.drafts.set(venture.current.id,$('ventureMessage').value);ventureClosePopover('settings',false);clearTimeout(venture.poll);ventureSetNotice('');
  try{const value=await ventureJSON(venturePath(cid));if(serial!==venture.selection)return;ventureAcceptLocalCapability(value);venture.current=value.conversation;venture.runs=value.runs.map(r=>({...r,ventureId:cid}));venture.cursor=value.cursor;venture.messageCursor=value.nextCursor;venture.settings=ventureSettings(value.conversation.settings);venture.files=[];venture.pending=ventureRecall('pending-'+cid);venture.rendered.clear();$('ventureTurns').replaceChildren();$('ventureMessage').value=venture.drafts.get(cid)||'';ventureRemember('selection',cid);venturePaintSettings();ventureResolvePending();venturePaint();$('ventureTranscript').scrollTop=$('ventureTranscript').scrollHeight;if(matchMedia('(max-width:760px)').matches)ventureSidebar(false);ventureSchedule(1200);
+  // A closed browser loses the upload FormData, not the durable request ID.
+  // Check the server before allowing an unconfirmed submission to be retried.
+  if(venture.pending&&!venture.pending.form)void ventureCheckPending();
  }catch(error){if(serial===venture.selection){ventureAcceptLocalCapability({localModel:null});if(error.status===404||error.status===410){ventureRemember('selection',null);ventureBlank();void ventureLoadHistory();}ventureSetNotice(ventureError(error));venturePaintStatus();}}
 }
 function ventureResolvePending(){if(!venture.pending)return;const found=venture.runs.find(r=>r.clientRequestId===venture.pending.clientRequestId);if(found){ventureRemember('pending-'+venture.current.id,null);venture.pending=null;venture.files=[];$('ventureMessage').value='';venture.drafts.delete(venture.current.id);venturePaintAttachments();}}
@@ -271,7 +285,7 @@ function venturePaintStatus(){
  $('ventureActivity').textContent=venture.sending?'Uploading. Keep this page open until accepted…':pending?(venture.pending.form?'Submission unconfirmed. Retry with the same request ID.':'Earlier submission unconfirmed. Check status or start a new venture.'):active?ventureLoadingLabels(active)[0]:venture.notice?'Review the message above.':'Ready when you are.';$('ventureActivity').classList.toggle('working',!!active||venture.sending);$('ventureActivity').parentElement.classList.toggle('pending',pending);
  $('ventureCheck').hidden=!venture.notice&&!pending;$('ventureCheck').textContent=venture.pending?.form?'Retry same submission':'Check status';$('ventureCheck').disabled=venture.sending;
  $('venturePendingNew').hidden=!pending||!!venture.pending.form;$('venturePendingNew').disabled=venture.sending||!venture.ready;
- $('ventureFootnote').textContent=venture.sending?'Uploads must finish before you close this page.':pending?'Starting a new venture keeps any accepted work saved in this conversation.':active?'FUPCJ Server is working. You can close Vision and return later.':'Accepted requests keep working when you leave.';
+ $('ventureFootnote').textContent=venture.sending?'Uploads must finish before you close this page.':pending?'Starting a new venture keeps any accepted work saved in this conversation.':active?'FUPCJ Server keeps working after you close the browser. Reopen Venture to see progress.':'Accepted requests continue after closing the browser while FUPCJ stays online.';
  $('ventureToolsLabel').textContent=ventureIsLocal()?(ventureLocalVisionReady()?'Local text, images & files · no API token charge':'Local text & files · no API token charge'):venture.settings.runOptions.codeInterpreter?'Code & files ready':'Text only';if(typeof ventureContextPaint==='function')ventureContextPaint();
 }
 function venturePaintAttachments(){const host=$('ventureAttachments');host.innerHTML=venture.files.map((file,index)=>'<span class="venture-attachment">'+ventureIcon('file')+'<span>'+escapeHTML(file.name)+'</span><button type="button" data-remove="'+index+'" aria-label="Remove '+escapeHTML(file.name)+'">×</button></span>').join('');}

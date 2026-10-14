@@ -31,12 +31,29 @@ Optional document tools and local Whisper remain opt-in installs; see
 no new language model and requires no additional paid title/embedding service.
 
 Keep FUPCJ Server **awake, running and online**. A browser must stay open until an
-upload is accepted. After acceptance, work is server-owned: closing the browser
-does not cancel it. An outage of the FUPCJ computer is different from closing a
-browser; it can interrupt preparation or prevent timely retention of upstream
-files. A saved response ID is resumed rather than submitting a duplicate request.
-An interrupted submission without an upstream ID is surfaced for review, never
-blindly retried as another paid request.
+upload is accepted. After acceptance, **all Venture models continue server-side**:
+closing the tab, the entire browser, or the webpage does not cancel the request.
+Qwen Ultra's **Long responses** switch controls multi-pass answer continuation,
+not whether work keeps running after the browser closes. The Ultra local runtime
+has a five-hour processing safeguard; it is not an unlimited job guarantee.
+
+Opening Venture again on the same browser automatically selects the last saved
+conversation, requests its current server status and resumes polling if it is
+still running. The selection and any unconfirmed submission ID persist across
+browser sessions, with only these account-scoped identifiers stored in browser
+local storage (not message text, attached files, drafts or credentials). For
+unconfirmed submissions, reopening checks the original request ID rather than
+automatically issuing a new paid/model request. Browser storage restrictions,
+private browsing or clearing site data can prevent automatic selection; signed-in
+users can still open their server-saved conversation from history.
+
+An outage or restart of the FUPCJ computer is different from closing a browser:
+it can interrupt local inference or prevent timely retention of upstream files.
+In-progress local inference interrupted by a processor restart retains partial
+output but stops with an error, requiring an explicit retry; it does not silently
+restart the model. A saved cloud response ID is resumed rather than submitting a
+duplicate request. An interrupted cloud submission without an upstream ID is
+surfaced for review, never blindly retried as another paid request.
 
 ## Using Venture
 
