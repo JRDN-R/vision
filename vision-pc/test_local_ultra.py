@@ -201,6 +201,66 @@ class UltraIntegrationTests(unittest.TestCase):
         self.assertEqual(self.selected[-1]['gpuLayers'],8)
         self.assertEqual(self.selected[-1]['ultraPerformance'],'boost')
 
+    def test_auto_mac_routing_is_decided_fresh_per_response(self):
+        self.local.settings['overdrive'] = dict(enabled=True, workerId='a'*32,
+            rpcPort=51052, healthPort=51053, macBudgetGiB=8,
+            runtimeManifestPath=str(self.root/'rpc-manifest.json'))
+        decisions = []
+        def choose(settings, profile):
+            decisions.append(dict(profile))
+            if len(decisions) == 1:
+                remote = dict(profile, gpuLayers=24, overdriveRPC=dict(
+                    workerConfig=dict(macBudgetGiB=8), rpcPort=51052,
+                    tensorSplit='5,5', runtimeManifestPath=str(self.root/'rpc-manifest.json')))
+                return remote, 'mac-rpc'
+            return profile, 'fupcj'
+        with patch('local_overdrive.route', side_effect=choose):
+            first = self.send(model=ultra.MODEL,request_id='mac-online-1')
+            self.assertEqual(first.status_code, 202, first.json)
+            self.s.work_once()
+            self.assertEqual(json.loads(self.s.row(first.json['runId'])['local_metrics_json'])['computeRoute'],
+                             'mac-rpc')
+            second = self.send(model=ultra.MODEL,request_id='mac-offline-2')
+            self.assertEqual(second.status_code, 202, second.json)
+            self.s.work_once()
+            self.assertEqual(json.loads(self.s.row(second.json['runId'])['local_metrics_json'])['computeRoute'],
+                             'fupcj')
+        self.assertEqual(len(decisions), 2)
+        self.assertEqual([p['ultraReceipt'] for p in decisions], ['fixture-tuning-1']*2)
+        self.assertEqual(self.selected[-1]['gpuLayers'], 4)
+        self.assertEqual(self.s.snapshot(second.json['runId'])['status'], 'completed')
+
+    def test_mac_disconnect_during_startup_retries_fupcj_before_generation(self):
+        self.local.settings['overdrive'] = dict(enabled=True, workerId='a'*32,
+            rpcPort=51052, healthPort=51053, macBudgetGiB=8,
+            runtimeManifestPath=str(self.root/'rpc-manifest.json'))
+        original_factory = self.local.runtime_factory
+        class FailsRemoteStartup(original_factory):
+            def __init__(self, settings, *args):
+                self.attempted_profile = dict(settings)
+                super().__init__(settings, *args)
+            def __enter__(self):
+                if self.attempted_profile.get('overdriveRPC'):
+                    raise local_runtime.LocalFailure('Remote worker went offline while loading.')
+                return super().__enter__()
+        self.local.runtime_factory = FailsRemoteStartup
+        def mac_route(settings, profile):
+            remote = dict(profile, gpuLayers=24, overdriveRPC=dict(
+                rpcPort=51052, tensorSplit='5,5',
+                workerConfig={'workerId': 'a'*32, 'macBudgetGiB': 8,
+                              'healthPort': 51053, 'rpcPort': 51052}))
+            return remote, 'mac-rpc'
+        with patch('local_overdrive.route', side_effect=mac_route), \
+             patch('local_overdrive.probe', return_value=False):
+            sent=self.send(model=ultra.MODEL,request_id='mac-disconnect-at-start')
+            self.assertEqual(sent.status_code,202,sent.json)
+            self.s.work_once()
+        row=self.s.row(sent.json['runId'])
+        self.assertEqual(row['status'],'completed')
+        self.assertEqual(json.loads(row['local_metrics_json'])['computeRoute'],'fupcj')
+        self.assertEqual([profile['gpuLayers'] for profile in self.selected[-2:]], [24,4])
+        self.assertEqual(self.selected[-1]['modelPath'], self.profile['modelPath'])
+
     def test_unavailable_or_changed_receipt_never_falls_back(self):
         sent=self.send(model=ultra.MODEL);self.assertEqual(sent.status_code,202,sent.json)
         self.receipt_path.unlink();self.s.work_once()
