@@ -513,15 +513,16 @@ venture-loading-symbol svg{display:block;width:100%;height:100%}
 
 #ventureDictation.failed #ventureDictationStatus{color:#ff8f91} .venture-coming-soon{opacity:.5;cursor:not-allowed}.venture-coming-soon small{display:block;font-size:11px;margin-top:4px}.venture-coming-soon input{cursor:not-allowed}
 
-/* A single viewport anchor for both workspaces, outside the sliding content. */
-.workspace-switch,.workspace-switch-slot{display:none}
+/* The shared Lottie switch flows with desktop headers and stays fixed on mobile. */
+.workspace-switch-slot{display:none}
 .workspace-switch[hidden],.workspace-chevron[hidden]{display:none!important}
+.workspace-switch{display:grid;place-items:center;flex:0 0 44px;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
+.workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
+.workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
+.workspace-chevron>svg{display:block;width:100%!important;height:100%!important}
 @media(max-width:760px){
- .workspace-switch{position:fixed;z-index:86;top:calc(10px + env(safe-area-inset-top,0px));right:calc(40px + max(12px,env(safe-area-inset-right,0px)));display:grid;place-items:center;width:44px;min-width:44px;height:44px;min-height:44px;padding:8px;border:0;border-radius:12px;background:transparent;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
- .workspace-switch:hover{background:#c4f48a0b}.workspace-switch:active{background:#c4f48a18}
- .workspace-switch:focus-visible{outline:2px solid #c4f48a;outline-offset:2px}
- .workspace-chevron{display:block;width:28px;height:28px;pointer-events:none}
- .workspace-chevron>svg{display:block;width:100%!important;height:100%!important}
+ .workspace-switch{position:fixed;z-index:86;top:calc(10px + env(safe-area-inset-top,0px));right:calc(40px + max(12px,env(safe-area-inset-right,0px)))}
  .workspace-switch-slot{display:block;flex:0 0 44px;width:44px;height:44px}
  .venture-root .venture-header{height:calc(65px + env(safe-area-inset-top,0px));min-height:calc(65px + env(safe-area-inset-top,0px));padding-top:calc(9px + env(safe-area-inset-top,0px));gap:8px}
  .venture-root .venture-avatar{margin-left:0}
@@ -9390,15 +9391,20 @@ function workspaceInstallSwitch() {
 function workspaceSyncSwitch() {
  const button=$('workspaceSwitchButton');if(!button)return;
  const direction=venture.open?'left':'right', label=venture.open?'Return to Vision':'Open Venture';
- const visible=accountSignedIn()&&matchMedia('(max-width:760px)').matches;
+ const mobile=matchMedia('(max-width:760px)').matches;
+ // Keep one Lottie instance; dock it in the active desktop header, or use
+ // the original fixed viewport position on mobile.
+ const target=mobile?document.body:(venture.open?$('visionVenture')?.querySelector('.venture-header'):$('appHeader'));
+ if(target&&button.parentElement!==target)target.append(button);
+ const visible=accountSignedIn();
  button.hidden=!visible;button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-controls',venture.open?'board':'visionVenture');
  document.body.classList.toggle('workspace-in-venture',venture.open);
  // The board is an isolated stacking context. Put its mobile Details control
  // beside the fixed top bar so the bar cannot cover it.
  const panel=$('sidebarToggle'),board=$('board');
- if(panel&&board){const parent=matchMedia('(max-width:760px)').matches?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
+ if(panel&&board){const parent=mobile?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
  const app=document.querySelector('main.app');if(app)app.inert=venture.open;
- const header=$('appHeader');if(header)header.inert=venture.open||(matchMedia('(max-width:760px)').matches&&!document.documentElement.classList.contains('header-open'));
+ const header=$('appHeader');if(header)header.inert=venture.open||(mobile&&!document.documentElement.classList.contains('header-open'));
  if($('headerReveal'))$('headerReveal').inert=venture.open;
  for(const host of button.children)host.hidden=host.dataset.direction!==direction;
  if(!visible||direction!==workspaceChevronView||!workspaceChevronVisible) {
@@ -9636,7 +9642,7 @@ document.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();navigationCloseMenu();return;}
  if(event.key!=='Tab')return;
  const menu=venture.open?$('ventureSidebar'):$('workspaceMenu');
- const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),$('workspaceSwitchButton')].filter(el=>el&&el.tabIndex>=0&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
+ const focusable=[$('workspaceMenuButton'),...menu.querySelectorAll('button,input,a[href],select,[tabindex="0"]'),...(matchMedia('(max-width:760px)').matches?[$('workspaceSwitchButton')]:[])].filter(el=>el&&el.tabIndex>=0&&!el.disabled&&!el.closest('[hidden]')&&el.getClientRects().length);
  const index=focusable.indexOf(document.activeElement),next=index<0?(event.shiftKey?focusable.length-1:0):(index+(event.shiftKey?-1:1)+focusable.length)%focusable.length;
  event.preventDefault();focusable[next]?.focus();
 },true);
