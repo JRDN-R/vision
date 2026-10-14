@@ -54,7 +54,8 @@ def tune(settings, context_tokens=8192):
             candidate = dict(base, contextTokens=context_tokens, threads=knobs["threads"],
                              gpuLayers=layers,
                              overdriveRPC=dict(rpcPort=config["rpcPort"], tensorSplit=split,
-                                               runtimeManifestPath=config["runtimeManifestPath"]))
+                                               runtimeManifestPath=config["runtimeManifestPath"],
+                                               workerConfig=config), overdriveTuning=True)
             print("Overdrive trial: %d GPU layers, tensor split %s" % (layers, split), flush=True)
             try:
                 result = benchmark(candidate)
@@ -78,7 +79,8 @@ def tune(settings, context_tokens=8192):
     tested = dict(base, contextTokens=context_tokens, threads=selected["profile"]["threads"],
                   gpuLayers=selected["profile"]["gpuLayers"],
                   overdriveRPC=dict(rpcPort=config["rpcPort"], tensorSplit=selected["profile"]["tensorSplit"],
-                                    runtimeManifestPath=config["runtimeManifestPath"]))
+                                    runtimeManifestPath=config["runtimeManifestPath"],
+                                    workerConfig=config), overdriveTuning=True)
     print("Validating real conversation and near-capacity context over both computers…", flush=True)
     smoke_test(tested)
     context_check(tested)
