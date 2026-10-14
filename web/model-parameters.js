@@ -15,7 +15,11 @@ function venturePaintParameterDetails(){
  showDial('ventureVerbosity',!!p?.verbosity);
  let note=$('ventureParameterDetails');if(!note){note=document.createElement('p');note.id='ventureParameterDetails';note.className='venture-fine-print';$('ventureMaxTokens').after(note);}
  if(venture.settings.model==='qwen-ultra-local'){
-  note.textContent='Ultra request: up to '+ventureModelTokenLimit().toLocaleString()+' output tokens within '+(venture.settings.qwenUltra?.contextTokens||8192).toLocaleString()+' context tokens. Thinking shares the output budget. The context selector shows the tested server limits.';
+  const selected=venture.settings.qwenUltra?.contextTokens;
+  const verified=Number(ventureUltraCapability()?.contextTokens)||8192;
+  const context=selected==='max-tested'?verified:(Number(selected)||8192);
+  const extended=ventureUltraCapability()?.capabilities?.longResponses===true&&venture.settings.qwenUltra?.longResponses!==false;
+  note.textContent='Ultra request: up to '+ventureModelTokenLimit().toLocaleString()+' output tokens within '+context.toLocaleString()+' context tokens. '+(extended?'Long responses reserve this answer space per pass; multistep thinking can use the remaining tested context.':'In single-pass mode, thinking and the answer share the output limit.')+' The context selector shows only verified server limits.';
   return;
  }
  note.textContent=p?.localProfile?'Installed local profile: '+p.maxOutput.toLocaleString()+' output tokens, '+p.context.toLocaleString()+' context tokens. Thinking shares the output budget. Text and extracted evidence only.':p?'Provider maximum: '+p.maxOutput.toLocaleString()+' output tokens. Context window: '+p.context.toLocaleString()+'. Vision uses a 512 minimum and 16,000 starting budget; these are app settings, not provider defaults. Reasoning shares the output budget.':

@@ -1,11 +1,10 @@
 {
-  "title": "Mobile swipe menus and portrait view",
+  "title": "Qwen Ultra context validation and clearer controls",
   "items": [
-    "On mobile, swipe right to open the current app menu and swipe left or tap outside to close it in Vision, Venture, and Vortex.",
-    "Vertical scrolling, text fields, pinching, and draggable board components retain their existing touch behavior.",
-    "Vision, Venture and Vortex now request portrait orientation on supported mobile devices.",
-    "Browsers that cannot lock orientation keep your work intact and show a rotate-device screen in landscape.",
-    "Desktop views and existing projects are unchanged.",
-    "When you reopen Venture after closing the browser, the last conversation and saved answer progress return automatically. Accepted jobs keep running on FUPCJ while the server is online."
+    "Venture now offers Maximum verified context for Qwen Ultra, dynamically matching the highest context that passed real FUPCJ tests.",
+    "Run Qwen-Ultra.ps1 -Action Tune -MaxContext on the Windows processor during a quiet period, with OBS and Streamlabs fully closed. The existing working context is retained if a larger test fails.",
+    "The output-token description now shows the actual verified context size rather than an internal setting name.",
+    "The response slider reserves visible answer space per pass when long responses are enabled; larger context alone does not guarantee greater accuracy.",
+    "Existing conversations, files, model weights and other Vision/Vortex features are preserved."
   ]
 }
