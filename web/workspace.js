@@ -150,11 +150,9 @@ function workspaceInstallSwitch() {
 function workspaceSyncSwitch() {
  const button=$('workspaceSwitchButton');if(!button)return;
  const direction=venture.open?'left':'right', label=venture.open?'Return to Vision':'Open Venture';
- const mobile=matchMedia('(max-width:760px)').matches;
- // Keep one Lottie instance; dock it in the active desktop header, or use
- // the original fixed viewport position on mobile.
- const target=mobile?document.body:(venture.open?$('visionVenture')?.querySelector('.venture-header'):$('appHeader'));
- if(target&&button.parentElement!==target)target.append(button);
+ // Keep the switch outside both workspace headers, which can be hidden or inert.
+ // Reuse one persistent animated button in both views on desktop and mobile.
+ if(button.parentElement!==document.body)document.body.append(button);
  const visible=accountSignedIn();
  button.hidden=!visible;button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-controls',venture.open?'board':'visionVenture');
  document.body.classList.toggle('workspace-in-venture',venture.open);
