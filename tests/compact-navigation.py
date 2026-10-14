@@ -66,7 +66,9 @@ def run():
                 page.dispatch_event('body','pointermove',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
                 assert not page.evaluate('navTest.header().open'), 'Upward swipe failed'
                 page.locator('#headerReveal').click()
-            else: assert chevron.is_hidden()
+            else:
+                assert chevron.is_visible() and start['width']==44 and start['height']==44
+                assert chevron.evaluate('el=>el.parentElement.id==="appHeader"')
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
             for ident in ('accountButton','newBtn','openBtn','saveBtn','runProjectBtn','exportBtn'):
@@ -88,13 +90,14 @@ def run():
             outside(page,'#projectsDialog');assert page.locator('#projectsDialog').is_hidden()
             if page.locator('#workspaceMenu').is_visible():page.keyboard.press('Escape')
             # Shared button and animation stay anchored in Venture, even with history open.
-            if width<=760:chevron.click()
-            else:toggle.click();page.locator('#runProjectBtn').click()
+            chevron.click()
             page.locator('#visionVenture').wait_for(state='visible');page.wait_for_timeout(350)
             assert toggle.bounding_box()==anchor
             toggle.click();page.wait_for_timeout(240)
             assert abs(page.locator('#ventureSidebar').bounding_box()['width']-menu_width)<1,(width,menu_width,page.locator('#ventureSidebar').bounding_box())
-            if width<=760:assert chevron.is_visible() and chevron.bounding_box()==start
+            assert chevron.is_visible() and chevron.get_attribute('aria-label')=='Return to Vision'
+            if width<=760:assert chevron.bounding_box()==start
+            else:assert chevron.evaluate('el=>!!el.closest(".venture-header")')
             if width==390:page.screenshot(path=str(SHOTS/'compact-venture-menu.png'))
             page.locator('#ventureMenuNews').click();outside(page,'#workspaceNews')
             assert page.locator('#visionVenture').evaluate('el=>el.classList.contains("history-open")')
@@ -111,8 +114,9 @@ def run():
             assert not page.locator('#visionVenture').evaluate('el=>el.classList.contains("history-open")')
             page.locator('#ventureSettingsToggle').click();assert page.locator('#ventureSettings').is_visible()
             page.mouse.click(width/2,760);assert page.locator('#ventureSettings').is_hidden()
-            if width<=760:chevron.click();assert chevron.bounding_box()==start
-            else:page.locator('#ventureBack').click()
+            chevron.click()
+            if width<=760:assert chevron.bounding_box()==start
+            else:assert chevron.evaluate('el=>el.parentElement.id==="appHeader"')
             assert not page.evaluate('document.querySelector("main.app").inert')
             # Shared dialog dismissal honors the existing export busy guard.
             page.evaluate('document.querySelector("#exportDialog").showModal();navTest.protectExport(true)')
