@@ -82,7 +82,7 @@ class OverdriveSafetyTests(unittest.TestCase):
             manifest = folder / "rpc-manifest.json"
             manifest.write_text(json.dumps(dict(schema=overdrive.RUNTIME_SCHEMA,
                 runtimeCommit=local_runtime.RUNTIME_COMMIT, entrypoint=exe.name, files=contents)))
-            self.assertEqual(overdrive.verified_runtime({"runtimeManifestPath": str(manifest)}), exe)
+            self.assertEqual(overdrive.verified_runtime({"runtimeManifestPath": str(manifest)}).resolve(), exe.resolve())
             (folder / "unreviewed.dll").write_bytes(b"unexpected")
             with self.assertRaisesRegex(local_runtime.LocalFailure, "Unexpected files"):
                 overdrive.verified_runtime({"runtimeManifestPath": str(manifest)})
