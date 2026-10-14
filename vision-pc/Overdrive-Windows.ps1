@@ -79,10 +79,17 @@ if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'The supplied 
 if ((Get-Item -LiteralPath $binary -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
     throw 'Executable symlinks are not allowed.'
 }
-# Confirm the binary advertises the required RPC CLI option before copying.
-$usage = & $binary --help 2>&1 | Out-String
-if ($usage -notmatch '\-\-rpc' -or $usage -notmatch '\-\-tensor-split') {
-    throw 'This Windows llama-server was not compiled with RPC support.'
+# Capture native process help without PowerShell 5.1 treating stderr as a terminating error.
+$Stdout = Join-Path $env:TEMP ('overdrive-help-' + [Guid]::NewGuid().ToString('N') + '.out')
+$Stderr = $Stdout + '.err'
+try {
+    $HelpProcess = Start-Process -FilePath $binary -ArgumentList '--help' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $Stdout -RedirectStandardError $Stderr
+    $usage = (Get-Content -LiteralPath $Stdout -Raw -ErrorAction SilentlyContinue) + (Get-Content -LiteralPath $Stderr -Raw -ErrorAction SilentlyContinue)
+    if ($usage -notmatch '\-\-rpc' -or $usage -notmatch '\-\-tensor-split') {
+        throw 'This Windows llama-server was not compiled with RPC support.'
+    }
+} finally {
+    Remove-Item -LiteralPath $Stdout,$Stderr -ErrorAction SilentlyContinue
 }
 $destination = Join-Path $Root 'rpc-b11559-overdrive'
 if (Test-Path -LiteralPath $destination) {
