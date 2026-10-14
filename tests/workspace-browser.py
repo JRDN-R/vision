@@ -59,7 +59,7 @@ def main():
     if width==390:
      assert p.locator('#workspaceSwitchButton').is_visible()
      assert p.locator('#ventureBack').is_hidden();assert p.locator('#runProjectBtn').is_hidden()
-    else:assert p.locator('#workspaceSwitchButton').is_hidden()
+    else:assert p.locator('#workspaceSwitchButton').is_visible()
     assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
     assert p.locator('#accountButton > svg.workspace-nav-svg > path').count()==1
     assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].length===5")
@@ -183,7 +183,14 @@ def main():
      assert control.bounding_box()==before
      p.locator('#ventureHistoryToggle').click();assert control.is_visible()
      p.locator('#ventureHistoryClose').click();assert control.is_visible()
-    else:assert p.locator('#workspaceSwitchButton').is_hidden()
+    else:
+     control=p.locator('#workspaceSwitchButton')
+     assert control.is_visible() and control.get_attribute('aria-label')=='Return to Vision'
+     assert control.evaluate('el=>!!el.closest(".venture-header")')
+     control.click();assert not p.evaluate('venture.open')
+     assert control.get_attribute('aria-label')=='Open Venture'
+     assert control.evaluate('el=>el.parentElement.id==="appHeader"')
+     control.click();assert p.evaluate('venture.open')
     # Logout clears retained content, Sources, and once-per-account state.
     p.evaluate('workspaceOpenSources()');p.wait_for_timeout(100)
     p.evaluate('testSignOut()');p.wait_for_function('!workspace.uid')
