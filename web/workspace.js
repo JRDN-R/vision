@@ -150,15 +150,20 @@ function workspaceInstallSwitch() {
 function workspaceSyncSwitch() {
  const button=$('workspaceSwitchButton');if(!button)return;
  const direction=venture.open?'left':'right', label=venture.open?'Return to Vision':'Open Venture';
- const visible=accountSignedIn()&&matchMedia('(max-width:760px)').matches;
+ const mobile=matchMedia('(max-width:760px)').matches;
+ // Keep one Lottie instance; dock it in the active desktop header, or use
+ // the original fixed viewport position on mobile.
+ const target=mobile?document.body:(venture.open?$('visionVenture')?.querySelector('.venture-header'):$('appHeader'));
+ if(target&&button.parentElement!==target)target.append(button);
+ const visible=accountSignedIn();
  button.hidden=!visible;button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-controls',venture.open?'board':'visionVenture');
  document.body.classList.toggle('workspace-in-venture',venture.open);
  // The board is an isolated stacking context. Put its mobile Details control
  // beside the fixed top bar so the bar cannot cover it.
  const panel=$('sidebarToggle'),board=$('board');
- if(panel&&board){const parent=matchMedia('(max-width:760px)').matches?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
+ if(panel&&board){const parent=mobile?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
  const app=document.querySelector('main.app');if(app)app.inert=venture.open;
- const header=$('appHeader');if(header)header.inert=venture.open||(matchMedia('(max-width:760px)').matches&&!document.documentElement.classList.contains('header-open'));
+ const header=$('appHeader');if(header)header.inert=venture.open||(mobile&&!document.documentElement.classList.contains('header-open'));
  if($('headerReveal'))$('headerReveal').inert=venture.open;
  for(const host of button.children)host.hidden=host.dataset.direction!==direction;
  if(!visible||direction!==workspaceChevronView||!workspaceChevronVisible) {
