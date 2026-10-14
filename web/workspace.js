@@ -159,9 +159,9 @@ function workspaceSyncSwitch() {
  // The board is an isolated stacking context. Put its mobile Details control
  // beside the fixed top bar so the bar cannot cover it.
  const panel=$('sidebarToggle'),board=$('board');
- if(panel&&board){const parent=mobile?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
+ if(panel&&board){const parent=mobileQuery.matches?document.body:board;if(panel.parentElement!==parent)parent.append(panel);panel.inert=venture.open;}
  const app=document.querySelector('main.app');if(app)app.inert=venture.open;
- const header=$('appHeader');if(header)header.inert=venture.open||(mobile&&!document.documentElement.classList.contains('header-open'));
+ const header=$('appHeader');if(header)header.inert=venture.open||(mobileQuery.matches&&!document.documentElement.classList.contains('header-open'));
  if($('headerReveal'))$('headerReveal').inert=venture.open;
  for(const host of button.children)host.hidden=host.dataset.direction!==direction;
  if(!visible||direction!==workspaceChevronView||!workspaceChevronVisible) {
