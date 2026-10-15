@@ -36,6 +36,8 @@ class DeepTests(unittest.TestCase):
         self.assertNotIn('PRIVATE_', json.dumps(events))
         self.assertNotIn('DRAFT_CLAIM', json.dumps(events))
         self.assertNotIn('REVIEW_CLAIM', json.dumps(events))
+        self.assertGreater(sum(e.get('localThinkingCharacters', 0) for e in events), 0)
+        self.assertTrue(any(e.get('localThinking') for e in events))
         self.assertEqual([call['reasoning'] for call in live.calls], [4096, 2048, 4096])
         self.assertEqual([e['localReasoning']['stage'] for e in events if 'localPhase' in e and 'localReasoning' in e], ['draft', 'review', 'final'])
         self.assertEqual(events[-1]['localReasoning']['completedStages'], 3)

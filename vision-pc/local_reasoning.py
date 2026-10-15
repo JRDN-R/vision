@@ -106,6 +106,13 @@ def deep_events(runtime, original, answer_reserve, context_tokens, profile):
                     raise InterruptedError()
                 if event.get('error'):
                     raise LocalFailure('Deep ' + name + ' failed. No unreviewed draft was substituted.')
+                # Share only explicitly public notes and non-content telemetry;
+                # the provisional answer and review remain ephemeral worker data.
+                activity = {key: event[key] for key in
+                            ('localThinking', 'localThinkingCharacters', 'localProgressSummaries')
+                            if key in event}
+                if activity:
+                    yield activity
                 if isinstance(event.get('usage'), dict):
                     usage = usage_values(event['usage'])
                 for choice in event.get('choices', []):

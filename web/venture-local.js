@@ -140,7 +140,7 @@ function ventureLocalResponseParts(value){
   text+=original.slice(offset,match.index);
   const note=match[1].trim().replace(/\s+/gu,' ');
   const count=note?note.split(/\s+/u).length:0;
-  if(count>=3&&count<=30&&note.length<=500&&!/[<>\x00-\x08]/u.test(note))notes.push(note);
+  if(count>=3&&count<=120&&note.length<=1600&&!/[<>\x00-\x08]/u.test(note))notes.push(note);
   offset=match.index+match[0].length;
   removed=true;
  }
@@ -158,13 +158,15 @@ function ventureLocalResponseParts(value){
  return {text,notes};
 }
 
-// Public summaries supplied by the model, or observed server stages. No raw
-// reasoning transcript, synthetic timer, or additional summarizer request.
+// Public model summaries and measured processor activity, never a raw thought transcript.
+// Keep account-scoped progress from the backend as text rather than HTML.
 function ventureUpdateProgressNotes(host,run){
  if(!host)return;
  const data=run.localQueue?.progress;
- const steps=data?.version===1&&Array.isArray(data.steps)?data.steps.filter(s=>Number.isInteger(s.id)&&typeof s.text==='string'&&s.text.trim().split(/\s+/u).length>=3&&s.text.trim().split(/\s+/u).length<=30&&s.text.length<=500).slice(-128):[];
+ const valid=s=>Number.isInteger(s.id)&&typeof s.text==='string'&&s.text.trim().split(/\s+/u).length>=3&&s.text.trim().split(/\s+/u).length<=120&&s.text.length<=1600;
+ const steps=data?.version===1&&Array.isArray(data.steps)?data.steps.filter(valid).slice(-128):[];
  if(ventureIsLocal(run.model)){
+  // Earlier server versions sometimes stored in-band notes in the answer.
   const recovered=ventureLocalResponseParts(run.text).notes;
   const seen=new Set(steps.map(s=>s.text.trim().toLocaleLowerCase()));
   for(let i=0;i<recovered.length;i++){
@@ -175,35 +177,66 @@ function ventureUpdateProgressNotes(host,run){
  }
  if(!steps.length){host.replaceChildren();delete host.progressState;return;}
  const active=ventureActive(run),latest=steps[steps.length-1];
- const signature=JSON.stringify([active,run.status,steps]);
+ const latestModel=steps.slice().reverse().find(s=>s.source==='model');
+ const featured=latestModel||latest;
+ const q=run.localQueue||{},metrics=q.metrics||{};
+ const native=metrics.nativeReasoning||{},deep=metrics.reasoning||{};
+ const details=[];
+ if(metrics.computeRoute==='mac-rpc')details.push('Mac Metal processor');
+ else if(metrics.computeRoute==='fupcj')details.push('FUPCJ processor');
+ if(Number.isFinite(metrics.inputTokens)&&Number.isFinite(metrics.contextTokens))
+  details.push(metrics.inputTokens.toLocaleString()+' / '+metrics.contextTokens.toLocaleString()+' context tokens');
+ if(Number.isInteger(deep.stageNumber)&&deep.stageNumber>=1&&deep.stageNumber<=3)
+  details.push('Deep stage '+deep.stageNumber+' of 3');
+ if(Number.isFinite(native.receivedCharacters)&&native.receivedCharacters>0)
+  details.push(native.receivedCharacters.toLocaleString()+' native reasoning characters observed'+(Number.isFinite(native.observedSeconds)?' over '+ventureLocalDuration(native.observedSeconds):''));
+ if(Number.isFinite(q.processingSeconds)&&q.processingSeconds>0)details.push(ventureLocalDuration(q.processingSeconds)+' processing');
+ const signature=JSON.stringify([active,run.status,run.phase,steps,details]);
  if(host.progressState?.signature===signature)return;
  let state=host.progressState;
  if(!state){
-  const panel=document.createElement('details');panel.className='venture-progress-notes';panel.open=active;
+  const panel=document.createElement('details');panel.className='venture-progress-notes';panel.open=true;
   const title=document.createElement('summary');
+  const phase=document.createElement('div');phase.className='venture-progress-phase';
+  const label=document.createElement('strong');label.className='venture-progress-label';
   const current=document.createElement('p');current.className='venture-progress-current';current.setAttribute('role','status');current.setAttribute('aria-live','polite');current.setAttribute('aria-atomic','true');
-  const history=document.createElement('details');history.className='venture-progress-history';
+  const telemetry=document.createElement('p');telemetry.className='venture-progress-telemetry';
+  const help=document.createElement('p');help.className='venture-progress-help';
+  const history=document.createElement('details');history.className='venture-progress-history';history.open=true;
   const historyTitle=document.createElement('summary'),list=document.createElement('div');list.className='venture-progress-steps';
-  history.append(historyTitle,list);panel.append(title,current,history);host.appendChild(panel);
-  state=host.progressState={panel,title,current,history,historyTitle,list,rows:new Map()};
+  history.append(historyTitle,list);panel.append(title,phase,label,current,telemetry,help,history);host.appendChild(panel);
+  state=host.progressState={panel,title,phase,label,current,telemetry,help,history,historyTitle,list,rows:new Map()};
  }
- const changed=state.latest!==latest.id;
- // Polling leaves manually opened notes alone. A genuine new step collapses
- // old sections once; a terminal transition collapses the entire panel once.
- if(changed){state.history.open=false;for(const row of state.rows.values())row.open=false;}
- if(state.active&&!active){state.panel.open=false;for(const row of state.rows.values())row.open=false;}
- if(!active&&state.active!==false)state.history.open=true;
- state.title.textContent=active?'Progress update':run.status==='completed'?'Progress summary':run.status==='cancelled'?'Stopped · progress summary':'Progress summary';
- const historySteps=active?steps.slice(0,-1):steps;
- state.current.hidden=!active;
- if(state.current.textContent!==latest.text)state.current.textContent=latest.text;
+ state.title.textContent=active?'Qwen · live activity':run.status==='cancelled'?'Stopped · Qwen activity':'Qwen activity history';
+ state.phase.textContent=active?'Current processor phase · '+(run.phase||'Working'):'Response status · '+(run.status||'finished');
+ state.label.textContent=latestModel?'Qwen’s latest public explanation':'Latest processor event';
+ if(state.current.textContent!==featured.text)state.current.textContent=featured.text;
+ state.telemetry.hidden=!details.length;
+ state.telemetry.textContent=details.join(' · ');
+ state.help.textContent=latestModel
+  ?'Model-written explanations describe high-level work, not private chain-of-thought. Processor events and measurements are reported separately.'
+  :'No model-written explanation has arrived. The history below contains observed processor events, not a reconstruction of Qwen’s thoughts.';
+ const historySteps=steps.filter(s=>!active||s.id!==featured.id);
  state.history.hidden=!historySteps.length;
- state.historyTitle.textContent=(active?'Earlier updates':'Saved updates')+' · '+historySteps.length;
- const keep=new Set(historySteps.map(s=>s.id));
+ state.historyTitle.textContent='Activity timeline · '+historySteps.length+' '+(historySteps.length===1?'entry':'entries');
+ const keep=new Set(historySteps.map(step=>step.id));
  for(const [id,row] of state.rows)if(!keep.has(id)){row.remove();state.rows.delete(id);}
- for(const [position,step] of historySteps.entries()){
+ for(const step of historySteps){
   let row=state.rows.get(step.id);
-  if(!row){row=document.createElement('details');const label=document.createElement('summary'),copy=document.createElement('p');label.textContent=step.legacy?'Summary '+(position+1):'Step '+step.id;copy.textContent=step.text;row.append(label,copy);state.list.appendChild(row);state.rows.set(step.id,row);}
+  if(!row){
+   row=document.createElement('div');row.className='venture-progress-entry'+(step.source==='model'?' is-model':'');
+   const heading=document.createElement('div');heading.className='venture-progress-entry-heading';
+   const type=document.createElement('strong');type.textContent=step.source==='model'?'Qwen public summary':'Processor event';
+   const index=document.createElement('span');index.textContent='Step '+step.id;
+   heading.append(type,index);
+   if(Number.isFinite(step.atSeconds)&&step.atSeconds>=0){
+    const clock=document.createElement('span');clock.textContent='+'+ventureLocalDuration(step.atSeconds);heading.append(clock);
+   }
+   const copy=document.createElement('p');copy.textContent=step.text;
+   row.append(heading,copy);state.rows.set(step.id,row);
+  }
+  // Move only when necessary: a normal status poll preserves scroll and selection.
+  if(row.parentNode!==state.list)state.list.appendChild(row);
  }
- state.latest=latest.id;state.active=active;state.signature=signature;
+ state.active=active;state.signature=signature;
 }

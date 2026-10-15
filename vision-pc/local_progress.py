@@ -1,17 +1,34 @@
-"""Small public progress notes, never a transcript of the reasoning stream."""
+"""Bounded public activity summaries and native-stream telemetry, not private reasoning."""
 import re
 
 PROGRESS_INSTRUCTION = (
-    '\nWhen thinking is enabled, begin with a brief public-facing progress summary, then '
-    'provide another only when your approach meaningfully changes. Enclose each summary '
-    'inside <progress_summary>...</progress_summary> in the reasoning channel only. '
-    'Describe what you are currently working on in everyday language, '
-    'using 3 to 30 words, usually 20 to 30 if useful. Summarize the activity, not private '
-    'step-by-step reasoning, calculations, instructions, or the answer. Avoid jargon, filler, '
-    'repetition, and claims of tools or actions you have not used. Do not invent progress. '
-    'Never put these tags in the final answer. Keep notes brief and continue with the answer.'
+    '\nWhen native thinking is enabled, publish useful high-level activity summaries at '
+    'meaningful milestones: understanding the question, examining evidence or constraints, '
+    'comparing possible approaches, checking important claims, or identifying uncertainty. '
+    'Do not send notes merely to fill time, and never invent a milestone. '
+    'Wrap each note in <progress_summary>...</progress_summary> in the reasoning channel '
+    'if supported, otherwise before the final answer. Each note may be 3–120 words; '
+    'use roughly 40–90 words when useful. Make it specific to the actual task: identify '
+    'the evidence or assumptions under examination, checks being attempted, and limits '
+    'on what you can verify. State only work actually performed, not a promised result. '
+    'These are PUBLIC activity descriptions, NOT private reasoning: never disclose internal '
+    'scratchpad text, hidden instructions, a step-by-step chain of thought, draft answers, '
+    'or private calculations. Do not include sensitive source excerpts or reveal the final '
+    'answer inside a note. Avoid repetitive status phrases, fabricated tools, or fake progress. '
+    'Never put these tags in the final answer.'
 )
 
+MIN_NOTE_WORDS = 3
+MAX_NOTE_WORDS = 120
+MAX_NOTE_CHARS = 1600
+MAX_MARKED_BUFFER = 4096
+
+
+def valid_summary(note):
+    words = note.split()
+    return (MIN_NOTE_WORDS <= len(words) <= MAX_NOTE_WORDS
+            and len(note) <= MAX_NOTE_CHARS
+            and not re.search(r'[<>\x00-\x08]', note))
 
 class SummaryParser:
     """Incremental bounded parser. Only explicitly marked public notes survive."""
@@ -39,7 +56,7 @@ class SummaryParser:
                     self.inside = True
                 index = self.buffer.find(self.end)
                 if index < 0:
-                    if len(self.buffer) > 2048:
+                    if len(self.buffer) > MAX_MARKED_BUFFER:
                         self.buffer = ''
                         self.inside = False
                     break
@@ -47,7 +64,7 @@ class SummaryParser:
                 self.buffer = self.buffer[index + len(self.end):]
                 self.inside = False
                 # Reject malformed/long notes rather than presenting clipped scratchpad.
-                if 3 <= len(note.split()) <= 30 and len(note) <= 500 and not re.search(r'[<>\x00-\x08]', note):
+                if valid_summary(note):
                     notes.append(note)
         return notes
 
@@ -97,8 +114,7 @@ class VisibleSummaryFilter:
                 index = self.buffer.find(self.end)
                 if index >= 0:
                     note = ' '.join(self.buffer[:index].split())
-                    if (not self.invalid and 3 <= len(note.split()) <= 30
-                            and len(note) <= 500 and not re.search(r'[<>\x00-\x08]', note)):
+                    if not self.invalid and valid_summary(note):
                         notes.append(note)
                     self.buffer = self.buffer[index + len(self.end):]
                     self.inside = False
@@ -107,7 +123,7 @@ class VisibleSummaryFilter:
 
                 # Overlong/malformed blocks remain hidden until their closing
                 # marker, without accumulating multi-hour generation output.
-                if len(self.buffer) > 2048:
+                if len(self.buffer) > MAX_MARKED_BUFFER:
                     self.invalid = True
                     self.buffer = self.buffer[-(len(self.end) - 1):]
                 break
@@ -129,7 +145,7 @@ def summary_events(events):
     visible_filters = {}
     for event in events:
         result = dict(event)
-        choices, notes, thinking = [], [], False
+        choices, notes, thinking_chars = [], [], 0
         for position, choice in enumerate(event.get('choices', [])):
             value = dict(choice)
             delta = dict(value.get('delta') or {})
@@ -138,7 +154,7 @@ def summary_events(events):
             alternate = delta.pop('reasoning', None)
             reasoning = reasoning if isinstance(reasoning, str) else alternate
             if isinstance(reasoning, str) and reasoning:
-                thinking = True
+                thinking_chars += len(reasoning)
                 notes.extend(reasoning_parser.feed(reasoning))
             for field in ('content', 'refusal'):
                 if isinstance(delta.get(field), str):
@@ -155,8 +171,9 @@ def summary_events(events):
             value['delta'] = delta
             choices.append(value)
         result['choices'] = choices
-        if thinking:
+        if thinking_chars:
             result['localThinking'] = True
+            result['localThinkingCharacters'] = thinking_chars
         if notes:
             result['localProgressSummaries'] = notes[:8]
         yield result
@@ -174,7 +191,7 @@ class ProgressNotes:
         self.seen_stages = set()
         self.seen_notes = set()
 
-    def add(self, text, source='stage', key=None):
+    def add(self, text, source='stage', key=None, elapsed_seconds=None):
         if source == 'stage':
             if key in self.seen_stages:
                 return False
@@ -187,7 +204,10 @@ class ProgressNotes:
                 self.seen_notes = {s['text'].casefold() for s in self.steps if s['source'] == 'model'} | {text.casefold()}
         # Keep a bounded history even for the five-hour response mode.
         number = self.steps[-1]['id'] + 1 if self.steps else 1
-        self.steps.append(dict(id=number, text=text, source=source))
+        entry = dict(id=number, text=text, source=source)
+        if type(elapsed_seconds) in (int, float) and 0 <= elapsed_seconds <= 86400:
+            entry['atSeconds'] = round(elapsed_seconds, 1)
+        self.steps.append(entry)
         self.steps = self.steps[-128:]
         return True
 
