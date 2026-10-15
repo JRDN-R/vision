@@ -15,9 +15,11 @@ Deep uses three fresh inference requests on the same loaded model:
 The original prepared source evidence remains available in every stage. Private
 reasoning is discarded. Draft and critique answer text exist only in bounded
 worker memory and are never saved as the conversation's answer or sent to the
-browser. Only final-answer text streams to the conversation. Progress shows
-Drafting, Reviewing, and Writing final answer, without inventing an ETA or
-treating these three stages as percentages of elapsed work.
+browser. Only final-answer text streams to the conversation. Progress records real Drafting, Reviewing, and Writing final answer stages,
+plus optional longer public Qwen explanations and measured native-stream activity.
+No raw thought text, provisional answer, or draft critique appears. These
+summaries are not an internal chain-of-thought transcript, and they do not invent
+an ETA or treat the three stages as percentages of elapsed work.
 
 This is same-model self-review, not independent factual verification. It cannot
 add missing knowledge, browse, execute code, or guarantee better answers. A
