@@ -18,16 +18,29 @@ class ParserTests(unittest.TestCase):
 
     def test_invalid_and_overlong_notes_are_not_clipped(self):
         parser = SummaryParser()
-        for text in ['One two', 'word '*31, '<script>bad bad bad</script>', 'word '*10000]:
+        for text in ['One two', 'word '*121, '<script>bad bad bad</script>', 'x'*1601+' extra words', 'word '*10000]:
             self.assertEqual(parser.feed('<progress_summary>'+text+'</progress_summary>'), [])
-            self.assertLessEqual(len(parser.buffer), 2048)
+            self.assertLessEqual(len(parser.buffer), 4096)
         self.assertEqual(parser.feed('<progress_summary>Checking this information.</progress_summary>'), ['Checking this information.'])
         self.assertEqual(parser.feed('<progress_summary>Unfinished notes are never shown'), [])
+
+    def test_detailed_model_note_survives_stream_splitting_without_leaking_surrounding_thoughts(self):
+        note = ' '.join(['Comparing supplied evidence and checking which assumptions are supported'] * 10)
+        self.assertGreater(len(note.split()), 30)
+        self.assertLessEqual(len(note.split()), 120)
+        parser = SummaryParser()
+        raw = 'PRIVATE_PREFIX<progress_summary>'+note+'</progress_summary>PRIVATE_SUFFIX'
+        output = []
+        for pos in range(0, len(raw), 7):
+            output.extend(parser.feed(raw[pos:pos+7]))
+        self.assertEqual(output, [note])
+        self.assertNotIn('PRIVATE', json.dumps(output))
 
     def test_stream_preserves_answers_and_strips_reasoning(self):
         events = [dict(choices=[dict(delta=dict(reasoning_content='PRIVATE <progress_summary>Comparing the available approaches.</progress_summary>', content='Answer'), finish_reason='stop')])]
         result = list(summary_events(events))
         self.assertEqual(result[0]['localProgressSummaries'], ['Comparing the available approaches.'])
+        self.assertEqual(result[0]['localThinkingCharacters'], len('PRIVATE <progress_summary>Comparing the available approaches.</progress_summary>'))
         self.assertEqual(result[0]['choices'][0]['delta'], {'content':'Answer'})
         self.assertEqual(result[0]['choices'][0]['finish_reason'], 'stop')
         self.assertNotIn('PRIVATE', json.dumps(result))
@@ -39,6 +52,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(answer, 'First part. Final part.')
         self.assertEqual([note for e in events for note in e.get('localProgressSummaries', [])], ['Comparing the available options.'])
         self.assertNotIn('PRIVATE', json.dumps(events))
+        self.assertGreater(sum(e.get('localThinkingCharacters', 0) for e in events), 0)
 
     def test_visible_summary_streams_to_progress_without_markdown_tags(self):
         # Reproduce a model writing its public note in the final/content channel.
@@ -84,7 +98,8 @@ class ParserTests(unittest.TestCase):
         notes = ProgressNotes()
         self.assertTrue(notes.add('Working through your request.', key='thinking'))
         self.assertFalse(notes.add('Working through your request.', key='thinking'))
-        self.assertTrue(notes.add('Checking supplied facts.', source='model'))
+        self.assertTrue(notes.add('Checking supplied facts.', source='model', elapsed_seconds=8.4))
+        self.assertEqual(notes.steps[-1]['atSeconds'], 8.4)
         self.assertFalse(notes.add('Checking supplied facts.', source='model'))
         for index in range(400):
             notes.add('Checking section '+str(index)+'.', source='model')
@@ -112,7 +127,9 @@ class ProgressIntegrationTests(LocalInferenceTests):
         self.assertIn('Checking the measurements in the attached reference.', [s['text'] for s in steps])
         self.assertNotIn('PRIVATE', json.dumps(saved))
         self.assertNotIn('PRIVATE', self.s.row(rid)['local_progress_json'])
-        self.assertTrue(all(3 <= len(s['text'].split()) <= 30 for s in steps))
+        self.assertTrue(all(3 <= len(s['text'].split()) <= 120 for s in steps))
+        self.assertTrue(all(isinstance(s.get('atSeconds'), (int, float)) for s in steps))
+        self.assertGreater(saved['localQueue']['metrics']['nativeReasoning']['receivedCharacters'], 0)
         path='/api/projects/'+self.cid+'/runs/'+rid
         self.assertEqual(self.client.get(path, headers=self.b).status_code, 404)
         self.assertEqual(self.client.get(path, headers=self.a).json['localQueue']['progress']['steps'], steps)
