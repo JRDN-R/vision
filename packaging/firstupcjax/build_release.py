@@ -34,8 +34,15 @@ def build(args):
         (stage/'private').mkdir();(stage/'private/pc-config.json').write_text(json.dumps(private,indent=2)+'\n')
         (stage/'vendor').mkdir();shutil.copy2(args.node_archive,stage/'vendor'/args.node_archive.name)
         source=stage/'source';source.mkdir()
+        for name in ('Vision.html','index.html','README.md','LICENSE','vortex_menu_icon.png','logo or node.PNG'):
+            item=ROOT/name
+            if item.is_file():
+                if private['pco']['secret'].encode() in item.read_bytes():raise RuntimeError('Private credential found in root source.')
+                shutil.copy2(item,source/name)
         # Git tracked and new source only; never include logs, credentials or dependencies.
-        listing=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=ROOT).decode().split('\0')
+        listing=(subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=ROOT).decode().split('\0')
+                 if (ROOT/'.git').exists() else json.loads((ROOT/'SOURCE-FILES.json').read_text(encoding='utf-8')))
+        (source/'SOURCE-FILES.json').write_text(json.dumps(listing,indent=2),encoding='utf-8')
         for rel in listing:
             if not rel or not any(rel.startswith(p+'/') for p in ('vision-pc','web','tests','admins','packaging/firstupcjax','.github/workflows')):continue
             p=ROOT/rel
@@ -62,6 +69,7 @@ def build(args):
         subprocess.run([args.python,'-m','pytest','tests/test_church_admin.py','tests/test_church_oauth.py','tests/test_church_package.py','-q'],cwd=unpacked/'source',check=True)
         subprocess.run(['node','--test','tests/church-scheduler.test.mjs'],cwd=unpacked/'source',check=True,stdout=subprocess.DEVNULL)
         subprocess.run(['node','--check','web/admins.js'],cwd=unpacked/'source',check=True)
+        subprocess.run([args.python,'web/build.py'],cwd=unpacked/'source',check=True)
         output=args.output/'SHA256SUMS.txt';output.write_text(''.join(sha(p)+'  '+p.name+'\n' for p in (target,plugin)))
         print('Release built, re-extracted, checksums/credentials validated, and extracted tests passed.')
         print(target);print('SHA-256:',sha(target))
