@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from statistics import median
 import time
+from local_ultra import deep_reasoning
 
 TARGET = 10
 
@@ -36,7 +37,7 @@ class UltraCalibration:
 
     def record(self, row):
         profile = json.loads(row.get('local_profile_json') or '{}')
-        if row['status'] != 'completed' or profile.get('modelVariant') != 'ultra':
+        if row['status'] != 'completed' or profile.get('modelVariant') != 'ultra' or deep_reasoning(profile):
             return
         key = identity(row, profile)
         with self.db() as db:
@@ -91,10 +92,10 @@ class UltraCalibration:
                       estimateStatus='waiting', estimateBasis='calibrated' if frozen else 'benchmark')
         if row['status'] in ('completed', 'incomplete', 'cancelled', 'error'):
             return dict(result, estimateStatus='complete')
-        if profile.get('longResponses') is True:
+        if profile.get('longResponses') is True or deep_reasoning(profile):
             # The number of continuations is unknown, so elapsed time is not a completion percentage.
             return dict(result, estimateStatus='working' if row.get('local_started_at') and not ahead else 'waiting',
-                        estimateBasis='long-response')
+                        estimateBasis='deep-reasoning' if deep_reasoning(profile) else 'long-response')
         if ahead or not row.get('local_started_at'):
             return result
         metrics = json.loads(row.get('local_metrics_json') or '{}')

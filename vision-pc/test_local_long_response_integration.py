@@ -15,7 +15,9 @@ class LongResponseIntegrationTests(unittest.TestCase):
     token = ultra_tests.UltraIntegrationTests.token
     headers = ultra_tests.UltraIntegrationTests.headers
     new = ultra_tests.UltraIntegrationTests.new
-    send = ultra_tests.UltraIntegrationTests.send
+    def send(self, **options):
+        options['qwenUltra'] = {'reasoningMode': 'standard', **options.get('qwenUltra', {})}
+        return ultra_tests.UltraIntegrationTests.send(self, **options)
     setUp = ultra_tests.UltraIntegrationTests.setUp
     tearDown = ultra_tests.UltraIntegrationTests.tearDown
 

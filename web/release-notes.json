@@ -1,10 +1,10 @@
 {
-  "title": "Qwen Ultra context validation and clearer controls",
+  "title": "Qwen Ultra Deep reasoning",
   "items": [
-    "Venture now offers Maximum verified context for Qwen Ultra, dynamically matching the highest context that passed real FUPCJ tests.",
-    "Run Qwen-Ultra.ps1 -Action Tune -MaxContext on the Windows processor during a quiet period, with OBS and Streamlabs fully closed. The existing working context is retained if a larger test fails.",
-    "The output-token description now shows the actual verified context size rather than an internal setting name.",
-    "The response slider reserves visible answer space per pass when long responses are enabled; larger context alone does not guarantee greater accuracy.",
-    "Existing conversations, files, model weights and other Vision/Vortex features are preserved."
+    "Deep is now the default for new Ultra requests: a draft, a separate critique, then the final answer. Standard remains available for faster replies.",
+    "Progress shows Drafting, Reviewing and Writing final answer. The draft and critique are kept out of the conversation; the final answer is saved as it streams.",
+    "Each stage has a bounded thinking budget and uses the original prepared evidence. A partial review is labelled, and failed reviews never silently become completed answers.",
+    "The same model reviews its own draft, so improved accuracy is possible but not guaranteed. Deep does not add web search or code execution.",
+    "Update FUPCJ Server with Update-Venture.ps1, then refresh Vision. Existing Ultra models and verified context settings are reused."
   ]
 }

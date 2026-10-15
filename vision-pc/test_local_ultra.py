@@ -200,7 +200,7 @@ class UltraIntegrationTests(unittest.TestCase):
         catalog=self.client.get('/api/venture/models',headers=self.a).json['models']
         self.assertEqual([m['id'] for m in catalog[:2]],['qwen3.8-local',ultra.MODEL])
         self.assertTrue(catalog[1]['enabled']);self.assertFalse(catalog[1]['capabilities']['codeExecution'])
-        options=dict(model=ultra.MODEL,qwenUltra=dict(thinking=False,performance='cpu',temperature=.3))
+        options=dict(model=ultra.MODEL,qwenUltra=dict(reasoningMode='standard',thinking=False,performance='cpu',temperature=.3))
         with patch.object(self.s,'call',side_effect=AssertionError('cloud')),patch.object(self.s.venture.funding,'bind',side_effect=AssertionError('billing')):
             sent=self.send(**options);self.assertEqual(sent.status_code,202,sent.json)
             rid=sent.json['runId'];self.local.settings['threads']=16

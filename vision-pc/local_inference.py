@@ -151,7 +151,8 @@ class LocalInference:
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
                     longResponse=local_ultra.long_response(profile),
-                    progressKind='indeterminate' if local_ultra.long_response(profile) else 'estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
+                    reasoningMode='deep' if local_ultra.deep_reasoning(profile) else 'standard',
+                    progressKind='indeterminate' if local_ultra.long_response(profile) or local_ultra.deep_reasoning(profile) else 'estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
                     metrics=json.loads(row.get('local_metrics_json') or '{}'),
                     progress=json.loads(row.get('local_progress_json') or 'null'))
 
@@ -242,7 +243,8 @@ class LocalInference:
         context_ceiling = max(local_ultra.CONTEXTS) if profile.get('modelVariant') == 'ultra' else 16384
         context_tokens=max(4096,min(context_ceiling,int(profile.get('contextTokens',4096))))
         extended = local_ultra.long_response(profile)
-        margin = local_ultra.CONTEXT_MARGIN if extended else 64
+        deep = local_ultra.deep_reasoning(profile)
+        margin = local_ultra.CONTEXT_MARGIN if extended or deep else 64
         text, last_flush, usage, finish, runtime = '', 0, {}, None, None
         begun = time.monotonic()
         deadline = time.monotonic() + local_run_seconds(profile)
@@ -322,6 +324,12 @@ class LocalInference:
                         raise LocalFailure('The local model reported a generation failure.')
                     if event.get('localThinking'):
                         note('Working through your request.', 'thinking')
+                    if deep and isinstance(event.get('localReasoning'), dict):
+                        metrics['reasoning'] = event['localReasoning']
+                        s.update(rid, local_metrics_json=json.dumps(metrics),
+                                 **({'phase': event['localPhase']} if event.get('localPhase') else {}))
+                        if event.get('localPhase'):
+                            note(event['localPhase'], 'deep-' + event['localReasoning']['stage'])
                     for summary in event.get('localProgressSummaries', []):
                         note(summary, source='model')
                     if isinstance(event.get('timings'), dict):
@@ -387,7 +395,7 @@ class LocalInference:
             s.update(rid, status='incomplete' if incomplete else 'completed',
                      phase='Saved partial answer' if incomplete and extended else 'Output token budget reached' if finish == 'length' else 'Incomplete response' if incomplete else 'Complete',
                      local_finished_at=time.time(), error=completion_error)
-            if not incomplete and metrics.get('generation', {}).get('completedPasses', 1) <= 1:
+            if not incomplete and not deep and metrics.get('generation', {}).get('completedPasses', 1) <= 1:
                 try:
                     self.calibration.record(s.row(rid))
                 except Exception:

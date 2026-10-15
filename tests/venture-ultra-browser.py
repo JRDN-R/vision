@@ -18,7 +18,7 @@ with sync_playwright() as pw:
         profiles={};revision=0;notice_due=True;notice_posts=0
         perf={k:dict(threads=t,gpuLayers=g,benchmark=dict(loadSeconds=10,promptTokensPerSecond=80,generationTokensPerSecond=4)) for k,t,g in [('auto',12,4),('cpu',8,0)]}
         ultra=dict(id='qwen-ultra-local',enabled=True,contextTokens=8192,maxOutputTokens=4096,
-                   contexts=[4096,8192],performance=perf,capabilities=dict(vision=False))
+                   contexts=[4096,8192],performance=perf,capabilities=dict(vision=False, longResponses=True, deepReasoning=True))
         local=dict(id='qwen3.8-local',enabled=True,contextTokens=4096,maxOutputTokens=2048,
                    capabilities=dict(vision=True),ultra=ultra)
         def api(url,method,raw):
@@ -60,6 +60,9 @@ with sync_playwright() as pw:
         assert page.locator('#ventureUncensoredRow').is_hidden()
         assert page.locator('#ventureUltraControls').is_visible()
         assert page.locator('#ventureUltraThinking').is_checked()
+        assert page.locator('#ventureUltraReasoning').input_value()=='deep'
+        assert 'same model' in page.locator('#ventureUltraReasoningHelp').inner_text()
+        page.locator('#ventureUltraReasoning').select_option('standard')
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='4096'
         assert page.locator('#ventureUltraContext option').all_text_contents()==['Maximum verified · 8,192 tokens','4,096 tokens','8,192 tokens']
         assert page.locator('#ventureUltraContext').input_value()=='max-tested'
@@ -83,13 +86,14 @@ with sync_playwright() as pw:
         page.locator('#ventureUltraContext').select_option('4096')
         page.locator('#ventureUltraPerformance').select_option('cpu')
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='3520'
-        assert '3,520 output tokens within 4,096 context tokens' in page.locator('#ventureParameterDetails').text_content()
+        assert '4,096 context tokens' in page.locator('#ventureParameterDetails').text_content()
         assert '8 CPU threads · 0 GPU layers' in page.locator('#ventureUltraHardware').inner_text()
         page.locator('#ventureUltraControls summary').click()
         page.locator('#ventureUltra_temperature').fill('0.25')
         page.locator('#ventureUltraSeed').fill('731')
         page.wait_for_function('venture.savedSettingsVersion===venture.settingsVersion')
         saved=page.evaluate('venture.settings.qwenUltra')
+        assert saved['reasoningMode']=='standard'
         assert saved['temperature']==.25 and saved['seed']==731 and saved['thinking'] is False
         page.locator('#ventureModel').click();page.locator('[data-model="qwen3.8-local"]').click()
         assert page.locator('#ventureUltraControls').is_hidden()
@@ -139,6 +143,12 @@ with sync_playwright() as pw:
         page.evaluate("ultraRun.status='completed';ultraRun.text='Gravity attracts objects.';venturePaint()")
         assert bar.get_attribute('aria-valuenow')=='100'
         assert page.locator('#ventureStop').is_hidden()
+        page.evaluate("ultraRun.status='in_progress';ultraRun.text='';ultraRun.localQueue.reasoningMode='deep';ultraRun.localQueue.metrics={reasoning:{stage:'review'}};venturePaint()")
+        assert 'Deep · 2 of 3 · Reviewing' in page.locator('.venture-ultra-loading').inner_text()
+        assert page.locator('.venture-progress-track.is-ultra').count()==0
+        assert page.locator('#ventureStop').is_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.screenshot(path=str(shots/f'qwen-ultra-deep-progress-{width}.png'))
         assert not errors,errors
         context.close()
     browser.close()

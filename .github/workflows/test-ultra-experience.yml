@@ -21,7 +21,7 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python -m unittest discover -s vision-pc -p 'test_local_*.py' -q
       - run: python -m unittest discover -s vision-pc -p test_venture.py -q
-      - run: node --test tests/venture-local.test.cjs tests/venture-pending.test.cjs
+      - run: node --test tests/venture-local.test.cjs tests/venture-pending.test.cjs tests/venture-long-response.test.cjs
       - run: python tests/venture-ultra-browser.py
       - run: python tests/venture-response-motion.py
       - run: python tests/venture-progress-browser.py

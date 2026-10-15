@@ -17,7 +17,7 @@ MAX_TESTED = 'max-tested'  # Resolve against verified hardware receipt at job ac
 CONTEXT_MARGIN = 256
 MAX_RESPONSE_PASSES = 64
 MAX_RESPONSE_CHARS = 1_000_000
-DEFAULTS = dict(contextTokens=MAX_TESTED, thinking=True, longResponses=True, performance='auto',
+DEFAULTS = dict(contextTokens=MAX_TESTED, thinking=True, reasoningMode='deep', longResponses=True, performance='auto',
     temperature=.6, topP=.95, topK=20, minP=0., repeatPenalty=1., presencePenalty=0., seed=-1)
 RANGES = dict(temperature=(0.,2.), topP=(.01,1.), topK=(0,100), minP=(0.,1.),
               repeatPenalty=(.8,1.5), presencePenalty=(-2.,2.), seed=(-1,2147483647))
@@ -33,8 +33,9 @@ def normalize(value=None):
     if ((result['contextTokens'] != MAX_TESTED and
             (type(result['contextTokens']) is not int or result['contextTokens'] not in CONTEXTS)) or
             type(result['thinking']) is not bool or type(result['longResponses']) is not bool or
+            result['reasoningMode'] not in ('standard', 'deep') or
             result['performance'] not in ('auto','cpu','boost')):
-        raise LocalFailure('Choose supported Ultra context, thinking, long-response and performance settings.')
+        raise LocalFailure('Choose supported Ultra context, thinking, reasoning, long-response and performance settings.')
     for key, (low, high) in RANGES.items():
         x = result[key]
         if (type(x) not in (int,float) or not math.isfinite(x) or not low <= x <= high or
@@ -91,6 +92,7 @@ def select_profile(settings, options=None):
     selected = receipt['profiles'][controls['performance']]
     profile.update(selected['profile'])
     profile.update(contextTokens=chosen_context, thinking=controls['thinking'],
+                   reasoningMode=controls['reasoningMode'],
                    longResponses=controls['longResponses'],
                    sampling={k:controls[k] for k in RANGES}, ultraPerformance=controls['performance'],
                    ultraBenchmark=selected['benchmark'], ultraReceipt=receipt['id'])
@@ -115,6 +117,7 @@ def status(settings):
         nativeContextTokens=262144, contexts=[4096,8192], defaults=DEFAULTS,
         modelBytes=SPEC['modelBytes'], quantization='Q4_K_M', noApiTokenCharge=True,
         capabilities=dict(text=True, projectRetrieval=True, localFiles=True, vision=False,
+                          deepReasoning=True,
                           longResponses=True, codeGeneration=True, codeExecution=False, webSearch=False))
     try:
         profile = base_profile(settings)
@@ -134,7 +137,7 @@ def status(settings):
 
 def benchmark_estimate(profile, prompt_tokens, output_tokens, elapsed=0):
     """Budget estimate for single-pass jobs, not an unknown-length continuation."""
-    if profile.get('longResponses'):
+    if profile.get('longResponses') or deep_reasoning(profile):
         return None
     b = profile.get('ultraBenchmark') or {}
     try:
@@ -157,7 +160,12 @@ def long_response(profile):
     return profile.get('modelVariant') == 'ultra' and profile.get('longResponses') is True
 
 
-def response_budget(context_tokens, prompt_tokens, answer_reserve, thinking):
+def deep_reasoning(profile):
+    # Accepted jobs are immutable. Old snapshots keep their original behavior.
+    return profile.get('modelVariant') == 'ultra' and profile.get('reasoningMode') == 'deep'
+
+
+def response_budget(context_tokens, prompt_tokens, answer_reserve, thinking, thinking_limit=None):
     """Use actual rendered prompt size; leave space for visible output and closing tags."""
     from local_runtime import LocalFailure
     if (type(context_tokens) is not int or context_tokens not in CONTEXTS or
@@ -169,8 +177,13 @@ def response_budget(context_tokens, prompt_tokens, answer_reserve, thinking):
         raise LocalFailure('The saved request leaves too little answer space in the tested context. '
                            'Tune/select a larger context or reduce the selected answer reserve. Partial output is retained.')
     reserve = answer_reserve
-    return dict(maxTokens=available, answerReserveTokens=reserve,
-                thinkingBudgetTokens=max(0, available-reserve-64) if thinking else 0)
+    thought = max(0, available-reserve-64) if thinking else 0
+    if thinking_limit is not None:
+        if type(thinking_limit) is not int or thinking_limit < 0:
+            raise LocalFailure('Invalid bounded thinking budget.')
+        thought = min(thought, thinking_limit)
+        available = min(available, reserve + thought + 64)
+    return dict(maxTokens=available, answerReserveTokens=reserve, thinkingBudgetTokens=thought)
 
 
 def continuation_messages(runtime, original, answer, context_tokens, reserve):
@@ -195,7 +208,7 @@ def continuation_messages(runtime, original, answer, context_tokens, reserve):
                        'The partial answer is saved; use a larger validated context.')
 
 
-def response_events(runtime, messages, answer_reserve, context_tokens, profile):
+def response_events(runtime, messages, answer_reserve, context_tokens, profile, thinking_limit=None):
     """One durable job; native reasoning reserve, then bounded visible continuations.
 
     The caller owns the same deadline/cancel callback for every pass. Never retry
@@ -203,8 +216,22 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile):
     exposed. No new model, external call, or instruction override is introduced.
     """
     from local_progress import summary_events
+    if deep_reasoning(profile):
+        from local_reasoning import deep_events
+        yield from deep_events(runtime, messages, answer_reserve, context_tokens, profile)
+        return
     if not long_response(profile):
-        yield from summary_events(runtime.generate(messages, answer_reserve))
+        original_budget = getattr(runtime, 'thinking_budget', None)
+        try:
+            budget = answer_reserve
+            if thinking_limit is not None:
+                bounded = response_budget(context_tokens, runtime.count(messages), answer_reserve,
+                                          runtime.thinking, thinking_limit)
+                runtime.thinking_budget = bounded['thinkingBudgetTokens']
+                budget = bounded['maxTokens']
+            yield from summary_events(runtime.generate(messages, budget))
+        finally:
+            runtime.thinking_budget = original_budget
         return
     from local_runtime import LocalFailure
     original_thinking = getattr(runtime, 'thinking', profile.get('thinking', True))
@@ -224,7 +251,7 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile):
                 clipped_any |= clipped
             else:
                 current, count = messages, runtime.count(messages)
-            budget = response_budget(context_tokens, count, answer_reserve, runtime.thinking)
+            budget = response_budget(context_tokens, count, answer_reserve, runtime.thinking, thinking_limit)
             runtime.thinking_budget = budget['thinkingBudgetTokens']
             progress = dict(passNumber=part, completedPasses=part-1, inputTokens=count,
                             continuationContextTruncated=clipped_any, directRecovery=direct_recovery, **budget)
