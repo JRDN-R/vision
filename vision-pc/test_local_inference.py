@@ -287,7 +287,9 @@ class LocalModelContractTests(unittest.TestCase):
         runtime = local_runtime.LlamaRuntime({}, lambda: False, lambda value: None)
         try:
             with patch.object(runtime, 'request', return_value=Response()) as request:
-                self.assertEqual(list(runtime.generate([{'role':'user','content':'Hello'}], 1024)), [])
+                events = list(runtime.generate([{'role':'user','content':'Hello'}], 1024))
+                self.assertTrue(all(not event.get('choices') for event in events))
+                self.assertIsNone(events[0]['localActivity']['lastOutputAt'])
             payload = request.call_args.args[1]
             self.assertEqual(payload['temperature'], manifest['sampling']['temperature'])
             self.assertEqual(payload['top_p'], manifest['sampling']['topP'])

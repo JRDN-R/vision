@@ -18,6 +18,8 @@ import time
 
 import requests
 
+from local_progress import StreamActivity
+
 MODEL_BYTES = 5780090176
 MODEL_SHA = 'df13d66021cef676f82be74053220fd75af6bf2a6a7fb77f5222ab9e50744a7a'
 MODEL_REVISION = '760121cd70bb4c36b2b5ec58eb765e0df5987efe'
@@ -80,6 +82,7 @@ class LlamaRuntime:
         self.thinking = settings.get('thinking', self.thinking)
         # Job-local, server-computed allowance. None preserves legacy behavior.
         self.thinking_budget = None
+        self.request_number = 0
         self.process = None
         self.guard = None
         self.done = threading.Event()
@@ -295,23 +298,32 @@ class LlamaRuntime:
                        top_k=sampling.get('topK',20), min_p=sampling.get('minP',0.),
                        presence_penalty=sampling.get('presencePenalty',0.), repeat_penalty=sampling.get('repeatPenalty',1.),
                        seed=sampling.get('seed',-1),
-                       chat_template_kwargs={'enable_thinking': self.thinking}, cache_prompt=False, sse_ping_interval=5)
+                       chat_template_kwargs={'enable_thinking': self.thinking}, cache_prompt=False,
+                       sse_ping_interval=5, timings_per_token=True)
         if self.thinking_budget is not None:
             if type(self.thinking_budget) is not int or not 0 <= self.thinking_budget < max_tokens:
                 raise LocalFailure('Invalid native thinking budget.')
             # Supported by the pinned server-common.cpp sampling bridge. This
             # ends the thinking section before it consumes the answer reserve.
             payload['thinking_budget_tokens'] = self.thinking_budget
-        if self.settings.get('benchmark'):
-            payload['timings_per_token'] = True
+        self.request_number += 1
+        activity = StreamActivity(self.request_number)
+        yield {'localActivity': activity.snapshot()}
         with self.request('/v1/chat/completions', payload, stream=True) as response:
-            for line in response.iter_lines(chunk_size=512):
+            # Do not wait for a byte buffer to fill before exposing a short
+            # heartbeat on an otherwise quiet connection.
+            for line in response.iter_lines(chunk_size=1):
                 if self.cancelled():
                     raise InterruptedError()
                 if len(line) > 1024 * 1024:
                     raise LocalFailure('The local token stream exceeded its bound.')
+                if line.startswith(b':'):
+                    yield {'localActivity': activity.observe()}
+                    continue
                 if not line.startswith(b'data: '):
                     continue
                 if line == b'data: [DONE]':
                     return
-                yield json.loads(line[6:])
+                event = json.loads(line[6:])
+                event['localActivity'] = activity.observe(event)
+                yield event

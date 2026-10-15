@@ -7,6 +7,7 @@ import local_ultra as ultra
 import test_local_inference as base
 import test_local_ultra as fixtures
 from test_local_long_response import result
+from local_progress import StreamActivity
 
 
 class DeepIntegrationTests(unittest.TestCase):
@@ -67,6 +68,39 @@ class DeepIntegrationTests(unittest.TestCase):
         self.assertEqual(self.s.snapshot(rid)['status'], 'cancelled')
         self.assertEqual(self.s.snapshot(rid)['text'], '')
         self.assertEqual(len(calls), 2)
+
+    def test_live_hidden_stage_counts_are_saved_and_reopen_without_artifacts(self):
+        owner, calls = self, []
+        class ActivityRuntime(base.FakeRuntime):
+            def generate(self, messages, budget):
+                calls.append(messages)
+                activity = StreamActivity(len(calls))
+                yield {'localActivity': activity.snapshot()}
+                event = result(['HIDDEN_DRAFT', 'HIDDEN_REVIEW', 'Final answer.'][len(calls)-1],
+                               finish=None, reasoning='PRIVATE')
+                event['timings'] = {'predicted_n': 17, 'predicted_per_second': 1.37}
+                event['localActivity'] = activity.observe(event)
+                yield event
+                snapshot = owner.client.get('/api/projects/' + owner.cid + '/runs/' + rid, headers=owner.a).json
+                measured = snapshot['localQueue']['metrics']['activity']
+                owner.assertEqual(measured['requestNumber'], len(calls))
+                owner.assertEqual(measured['generatedTokens'], 17)
+                owner.assertIsNotNone(measured['secondsSinceOutput'])
+                if len(calls) < 3:
+                    owner.assertEqual(snapshot['text'], '')
+                for hidden in ('HIDDEN_DRAFT', 'HIDDEN_REVIEW', 'PRIVATE'):
+                    owner.assertNotIn(hidden, json.dumps(snapshot))
+                final = result('')
+                final['localActivity'] = activity.observe(final)
+                yield final
+        self.local.runtime_factory = ActivityRuntime
+        sent = self.send(model=ultra.MODEL)
+        rid = sent.json['runId']
+        self.s.work_once()
+        saved = self.s.snapshot(rid)
+        self.assertEqual(saved['status'], 'completed', saved)
+        self.assertEqual(saved['text'], 'Final answer.')
+        self.assertTrue(saved['localQueue']['metrics']['activity']['finished'])
 
     def test_queued_deep_settings_are_immutable_and_standard_is_explicit(self):
         sent = self.send(model=ultra.MODEL, qwenUltra={'reasoningMode': 'standard'})

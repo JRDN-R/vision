@@ -160,6 +160,23 @@ function ventureLocalResponseParts(value){
 
 // Public model summaries and measured processor activity, never a raw thought transcript.
 // Keep account-scoped progress from the backend as text rather than HTML.
+function ventureStreamActivity(run){
+ const active=ventureActive(run),metrics=run.localQueue?.metrics||{},a=metrics.activity;
+ const details=[];
+ if(a?.version!==1)return {details,notice:active&&Number.isFinite(metrics.inputTokens)?'Live output measurements are unavailable for this run. Input tokens are a fixed request size, not progress. Update FUPCJ and start a new request to enable live measurements.':''};
+ if(Number.isInteger(a.generatedTokens)&&a.generatedTokens>=0)
+  details.push(a.generatedTokens.toLocaleString()+' generated tokens this pass (including thinking)');
+ else if(Number.isFinite(a.receivedCharacters)&&a.receivedCharacters>0)
+  details.push(a.receivedCharacters.toLocaleString()+' output characters received this pass');
+ if(Number.isFinite(a.tokensPerSecond)&&a.tokensPerSecond>0)
+  details.push(a.tokensPerSecond.toFixed(2)+' measured tokens/s');
+ if(!active)return {details,notice:''};
+ const age=Number.isFinite(a.secondsSinceOutput)?a.secondsSinceOutput:a.elapsedSeconds;
+ const received=Number.isFinite(a.secondsSinceOutput);
+ if(Number.isFinite(age))details.push(received?'Last model output '+ventureLocalDuration(age)+' ago':'Waiting for first model output · '+ventureLocalDuration(age));
+ if(Number.isFinite(a.secondsSinceEvent))details.push('Last runtime contact '+ventureLocalDuration(a.secondsSinceEvent)+' ago');
+ return {details,notice:Number.isFinite(age)&&age>=120?'No new model output for at least two minutes. Processing may be slow or stalled; a runtime heartbeat does not confirm generation. You can Stop this request and retry.':''};
+}
 function ventureUpdateProgressNotes(host,run){
  if(!host)return;
  const data=run.localQueue?.progress;
@@ -181,17 +198,19 @@ function ventureUpdateProgressNotes(host,run){
  const featured=latestModel||latest;
  const q=run.localQueue||{},metrics=q.metrics||{};
  const native=metrics.nativeReasoning||{},deep=metrics.reasoning||{};
+ const activity=ventureStreamActivity(run);
  const details=[];
  if(metrics.computeRoute==='mac-rpc')details.push('Mac Metal processor');
  else if(metrics.computeRoute==='fupcj')details.push('FUPCJ processor');
  if(Number.isFinite(metrics.inputTokens)&&Number.isFinite(metrics.contextTokens))
-  details.push(metrics.inputTokens.toLocaleString()+' / '+metrics.contextTokens.toLocaleString()+' context tokens');
+  details.push(metrics.inputTokens.toLocaleString()+' input tokens · '+metrics.contextTokens.toLocaleString()+' context capacity');
  if(Number.isInteger(deep.stageNumber)&&deep.stageNumber>=1&&deep.stageNumber<=3)
   details.push('Deep stage '+deep.stageNumber+' of 3');
- if(Number.isFinite(native.receivedCharacters)&&native.receivedCharacters>0)
+ details.push(...activity.details);
+ if(metrics.activity?.version!==1&&Number.isFinite(native.receivedCharacters)&&native.receivedCharacters>0)
   details.push(native.receivedCharacters.toLocaleString()+' native reasoning characters observed'+(Number.isFinite(native.observedSeconds)?' over '+ventureLocalDuration(native.observedSeconds):''));
  if(Number.isFinite(q.processingSeconds)&&q.processingSeconds>0)details.push(ventureLocalDuration(q.processingSeconds)+' processing');
- const signature=JSON.stringify([active,run.status,run.phase,steps,details]);
+ const signature=JSON.stringify([active,run.status,run.phase,steps,details,activity.notice]);
  if(host.progressState?.signature===signature)return;
  let state=host.progressState;
  if(!state){
@@ -201,11 +220,12 @@ function ventureUpdateProgressNotes(host,run){
   const label=document.createElement('strong');label.className='venture-progress-label';
   const current=document.createElement('p');current.className='venture-progress-current';current.setAttribute('role','status');current.setAttribute('aria-live','polite');current.setAttribute('aria-atomic','true');
   const telemetry=document.createElement('p');telemetry.className='venture-progress-telemetry';
+  const health=document.createElement('p');health.className='venture-progress-health';health.setAttribute('role','status');
   const help=document.createElement('p');help.className='venture-progress-help';
   const history=document.createElement('details');history.className='venture-progress-history';history.open=true;
   const historyTitle=document.createElement('summary'),list=document.createElement('div');list.className='venture-progress-steps';
-  history.append(historyTitle,list);panel.append(title,phase,label,current,telemetry,help,history);host.appendChild(panel);
-  state=host.progressState={panel,title,phase,label,current,telemetry,help,history,historyTitle,list,rows:new Map()};
+  history.append(historyTitle,list);panel.append(title,phase,label,current,telemetry,health,help,history);host.appendChild(panel);
+  state=host.progressState={panel,title,phase,label,current,telemetry,health,help,history,historyTitle,list,rows:new Map()};
  }
  state.title.textContent=active?'Qwen · live activity':run.status==='cancelled'?'Stopped · Qwen activity':'Qwen activity history';
  state.phase.textContent=active?'Current processor phase · '+(run.phase||'Working'):'Response status · '+(run.status||'finished');
@@ -213,6 +233,8 @@ function ventureUpdateProgressNotes(host,run){
  if(state.current.textContent!==featured.text)state.current.textContent=featured.text;
  state.telemetry.hidden=!details.length;
  state.telemetry.textContent=details.join(' · ');
+ state.health.hidden=!activity.notice;
+ if(state.health.textContent!==activity.notice)state.health.textContent=activity.notice;
  state.help.textContent=latestModel
   ?'Model-written explanations describe high-level work, not private chain-of-thought. Processor events and measurements are reported separately.'
   :'No model-written explanation has arrived. The history below contains observed processor events, not a reconstruction of Qwen’s thoughts.';

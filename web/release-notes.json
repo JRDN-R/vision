@@ -1,10 +1,10 @@
 {
-  "title": "Detailed Qwen activity",
+  "title": "Live Qwen generation measurements",
   "items": [
-    "Qwen Local and Ultra can now show longer, task-specific public activity summaries (up to 120 words), separate from observed processor events.",
-    "The activity timeline expands by default, keeps the latest Qwen summary visible, and shows each saved event's elapsed processing time.",
-    "Real context-token counts, compute route, Deep stage, and observed native reasoning stream length appear without exposing private reasoning text.",
-    "Deep still drafts, reviews, and produces the final answer; drafts and critiques remain private and are not displayed as conversation answers.",
-    "After GitHub Pages rebuilds, update the FUPCJ processor with Update-Venture.ps1 for detailed live backend events. Older runs remain readable."
+    "Qwen now reports real generated-token counts and generation speed during every Deep stage, including the hidden draft and review.",
+    "Input tokens are clearly labeled as request size, separate from the context capacity and live output measurements.",
+    "Last model output and last runtime contact are shown separately. A quiet-output warning does not treat heartbeats as generation or claim the model has frozen.",
+    "Older runs show when live measurements are unavailable. Update FUPCJ with Update-Venture.ps1 and start a new request to use the new measurements.",
+    "Deep's three stages, thinking budgets, selected model and context remain unchanged. Stop remains available, and only the final answer is saved to the conversation."
   ]
 }

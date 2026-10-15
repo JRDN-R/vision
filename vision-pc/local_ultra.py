@@ -267,7 +267,7 @@ def response_events(runtime, messages, answer_reserve, context_tokens, profile, 
                     pass_usage = {k:v for k,v in event['usage'].items()
                                   if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v >= 0}
                 forwarded = {'choices': []}
-                for field in ('localThinking', 'localThinkingCharacters', 'localProgressSummaries'):
+                for field in ('localThinking', 'localThinkingCharacters', 'localProgressSummaries', 'localActivity'):
                     if field in event:
                         forwarded[field] = event[field]
                 if isinstance(event.get('timings'), dict):

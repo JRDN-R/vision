@@ -31,6 +31,24 @@ test('completed local replies use an icon beside the model and a compact optiona
  assert.match(icon,/<svg/);assert.doesNotMatch(icon,/Show details|show details/);
  assert.match(c.ventureLocalProgress(run,true),/Processing 42s/);
 });
+test('stream activity separates static input, real output, heartbeats and quiet streams',()=>{
+ const c=fixture(),run={status:'in_progress',localQueue:{metrics:{inputTokens:457}}};
+ assert.match(c.ventureStreamActivity(run).notice,/fixed request size, not progress/);
+ const a=run.localQueue.metrics.activity={version:1,generatedTokens:1793,tokensPerSecond:1.37,elapsedSeconds:1335,secondsSinceOutput:1,secondsSinceEvent:1};
+ let info=c.ventureStreamActivity(run);
+ assert.match(info.details.join(' '),/1,793 generated tokens this pass/);
+ assert.match(info.details.join(' '),/Last model output 1s ago/);
+ assert.equal(info.notice,'');
+ a.secondsSinceOutput=180;a.secondsSinceEvent=0;
+ info=c.ventureStreamActivity(run);
+ assert.match(info.notice,/slow or stalled/);
+ assert.match(info.notice,/heartbeat does not confirm generation/);
+ assert.match(info.details.join(' '),/Last model output 3m ago/);
+ a.secondsSinceOutput=null;a.generatedTokens=null;
+ assert.match(c.ventureStreamActivity(run).details.join(' '),/Waiting for first model output/);
+ assert.doesNotMatch(c.ventureStreamActivity(run).details.join(' '),/generated tokens/);
+ run.status='cancelled';assert.equal(c.ventureStreamActivity(run).notice,'');
+});
 test('preferences retain account revision, epoch, acknowledgement and provider profiles',()=>{
  const c=fixture();c.ventureAcceptPreferences({preferenceRevision:4,defaultEpoch:'qwen3_8_local_v1',disclosureAcknowledged:true,profiles:{'gpt-6-astra':{maxOutputTokens:16000}}});
  assert.equal(c.venture.preferenceRevision,4);assert.equal(c.venture.localAcknowledged,true);

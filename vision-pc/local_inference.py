@@ -11,7 +11,7 @@ from flask import jsonify, request
 from local_preferences import LocalPreferences, MODEL, LOCAL_MODELS
 import local_ultra
 from local_calibration import UltraCalibration
-from local_progress import PROGRESS_INSTRUCTION, ProgressNotes
+from local_progress import PROGRESS_INSTRUCTION, ProgressNotes, activity_snapshot
 from local_runtime import LlamaRuntime, LocalFailure, local_run_seconds
 from local_variants import select_profile, variant_status, check_ready
 from owned_assets import exclusive_file
@@ -147,13 +147,16 @@ class LocalInference:
             timing = estimate(row, [dict(item) for item in history], elapsed, ahead)
         if variant == 'ultra':
             timing = self.calibration.predict(row, profile, elapsed, ahead)
+        metrics = json.loads(row.get('local_metrics_json') or '{}')
+        if isinstance(metrics.get('activity'), dict):
+            metrics['activity'] = activity_snapshot(metrics['activity'], finished or now)
         return dict(provider='local_llama_cpp', modelVariant=variant, requestsAhead=ahead,
                     waitingSeconds=round(max(0, (started or finished or now) - row['created_at']), 1),
                     processingSeconds=round(elapsed, 1), **timing,
                     longResponse=local_ultra.long_response(profile),
                     reasoningMode='deep' if local_ultra.deep_reasoning(profile) else 'standard',
                     progressKind='indeterminate' if local_ultra.long_response(profile) or local_ultra.deep_reasoning(profile) else 'estimated' if variant == 'ultra' else 'indeterminate', noApiTokenCharge=True,
-                    metrics=json.loads(row.get('local_metrics_json') or '{}'),
+                    metrics=metrics,
                     progress=json.loads(row.get('local_progress_json') or 'null'))
 
     def recover(self):
@@ -252,6 +255,7 @@ class LocalInference:
             return time.monotonic() > deadline or s.stop.is_set() or bool(s.row(rid)['cancel_requested'])
         progress = ProgressNotes()
         thinking_started, thinking_characters, thinking_saved_at = None, 0, 0
+        activity_saved_at = 0
         def note(text, key=None, source='stage'):
             if progress.add(text, source, key, elapsed_seconds=time.monotonic()-begun):
                 s.update(rid, local_progress_json=json.dumps(progress.snapshot()))
@@ -311,6 +315,9 @@ class LocalInference:
                 metrics = dict(inputTokens=count, tokenizer='deployed-llama.cpp',
                                contextTokens=context_tokens, maxOutputTokens=row['max_tokens'],
                                excludedHistoryMessages=dropped)
+                # Advertise measurement support while stage prompts are counted;
+                # no generation pass has started yet.
+                metrics['activity'] = dict(version=1, finished=True)
                 metrics['visual'] = visual_metrics
                 metrics['computeRoute'] = compute_route
                 if compute_route == 'mac-rpc':
@@ -362,6 +369,19 @@ class LocalInference:
                         usage = {key: value for key, value in event['usage'].items()
                                  if key in ('prompt_tokens', 'completion_tokens', 'total_tokens') and type(value) is int}
                         metrics['usage'] = usage
+                    activity = event.get('localActivity')
+                    if isinstance(activity, dict):
+                        previous = metrics.get('activity') or {}
+                        metrics['activity'] = activity
+                        now = time.monotonic()
+                        # Persist the first observation, pass boundaries, completion,
+                        # then at most once every two seconds during generation.
+                        if (activity.get('requestNumber') != previous.get('requestNumber') or
+                                activity.get('finished') != previous.get('finished') or
+                                bool(activity.get('lastOutputAt')) != bool(previous.get('lastOutputAt')) or
+                                now-activity_saved_at >= 2):
+                            s.update(rid, local_metrics_json=json.dumps(metrics))
+                            activity_saved_at = now
                     if extended and isinstance(event.get('localGeneration'), dict):
                         metrics['generation'] = event['localGeneration']
                         s.update(rid, text=text, local_metrics_json=json.dumps(metrics),
