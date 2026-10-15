@@ -142,7 +142,7 @@ test('legacy in-band Qwen summaries become disclosure notes, not answer Markdown
  const multiple=c.ventureLocalResponseParts('Begin <progress_summary>Checking source details now.</progress_summary> then <progress_summary>Organizing the final response next.</progress_summary> finish.');
  assert.equal(multiple.text,'Begin  then  finish.');
  assert.equal(multiple.notes.length,2);
- const longNote=Array(10).fill('Comparing source evidence with the key assumptions to identify the limits on what can be verified.').join(' ');
+ const longNote=Array(6).fill('Comparing source evidence with the key assumptions to identify the limits on what can be verified.').join(' ');
  assert.ok(longNote.split(' ').length>30&&longNote.split(' ').length<=120);
  const expanded=c.ventureLocalResponseParts('<progress_summary>'+longNote+'</progress_summary>Answer');
  assert.equal(expanded.notes[0],longNote);
