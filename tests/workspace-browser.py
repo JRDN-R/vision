@@ -56,10 +56,19 @@ def main():
     p.set_content(fixture.replace('<script>', '<script>window.fixtureQuery="?view=venture";',1));p.wait_for_function('venture.open && venture.ready')
     assert p.locator('#visionVenture').is_visible()
     assert p.locator('#workspaceSwipeNotice').count()==0
+    switch=p.locator('#workspaceSwitchButton')
+    assert switch.is_visible()
+    assert p.locator('#ventureBack').is_hidden(),'Legacy Board return control must not overlap the chevron'
     if width==390:
-     assert p.locator('#workspaceSwitchButton').is_visible()
-     assert p.locator('#ventureBack').is_hidden();assert p.locator('#runProjectBtn').is_hidden()
-    else:assert p.locator('#workspaceSwitchButton').is_visible()
+     assert p.locator('#runProjectBtn').is_hidden()
+    else:
+     # Reserve the Lottie slot so the other Venture header actions cannot move beneath it.
+     slot=p.locator('.venture-header .workspace-switch-slot').bounding_box()
+     icon=switch.bounding_box()
+     assert slot and icon and slot['width']==44 and icon['width']==44,(slot,icon)
+     for button_id in ('workspaceSourcesButton','ventureAvatar'):
+      rect=p.locator('#'+button_id).bounding_box()
+      assert rect and (rect['x']+rect['width']<=icon['x'] or rect['x']>=icon['x']+icon['width']),(button_id,rect,icon)
     assert p.locator('#accountButton').get_attribute('aria-label')=='Account'
     assert p.locator('#accountButton > svg.workspace-nav-svg > path').count()==1
     assert p.evaluate("[...document.querySelectorAll('#appHeader .workspace-nav-icon')].length===5")
