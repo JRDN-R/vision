@@ -251,8 +251,9 @@ class LocalInference:
         def cancelled():
             return time.monotonic() > deadline or s.stop.is_set() or bool(s.row(rid)['cancel_requested'])
         progress = ProgressNotes()
+        thinking_started, thinking_characters, thinking_saved_at = None, 0, 0
         def note(text, key=None, source='stage'):
-            if progress.add(text, source, key):
+            if progress.add(text, source, key, elapsed_seconds=time.monotonic()-begun):
                 s.update(rid, local_progress_json=json.dumps(progress.snapshot()))
         def stage(phase):
             s.update(rid, phase=phase)
@@ -262,7 +263,7 @@ class LocalInference:
                 raise InterruptedError()
             s.update(rid, status='preparing', phase='Preparing local source evidence',
                      local_started_at=row.get('local_started_at') or time.time())
-            note('Getting your request and any selected context ready.', 'preparing')
+            note('Preparing the request, conversation context and any attached evidence for the local model.', 'preparing')
             check_ready(profile)  # A removed/disabled variant must not run or silently fall back.
             messages, visual_metrics = self.messages(row, profile, cancelled, stage)
             prepared_at = time.monotonic()
@@ -296,6 +297,7 @@ class LocalInference:
                     note('Mac Metal worker active; distributing this Qwen Ultra run.' if
                          compute_route == 'mac-rpc' else
                          'Mac acceleration unavailable; using the FUPCJ processor.', 'overdrive')
+                note(f"Selected Qwen runtime loaded on {'Mac Metal' if compute_route == 'mac-rpc' else 'FUPCJ'} in {loaded_at-prepared_at:.1f}s.", 'model-loaded')
                 stage('Counting the rendered local prompt')
                 count = runtime.count(messages)
                 dropped = 0
@@ -316,20 +318,41 @@ class LocalInference:
                 metrics['preparationSeconds'] = prepared_at - begun
                 metrics['modelLoadSeconds'] = loaded_at - prepared_at
                 s.update(rid, status='in_progress', phase='Qwen processing the prompt', local_metrics_json=json.dumps(metrics))
-                note('Reading the prepared request before starting the response.', 'reading')
+                note(f"Prompt counted: {count:,} input tokens within the {context_tokens:,}-token context window; {row['max_tokens']:,} output tokens reserved. "
+                     + (f"{dropped} older conversation messages omitted to fit." if dropped else 'No older conversation messages excluded.'), 'prompt-counted')
                 for event in local_ultra.response_events(runtime, messages, row['max_tokens'], context_tokens, profile):
                     if cancelled():
                         raise InterruptedError()
                     if event.get('error'):
                         raise LocalFailure('The local model reported a generation failure.')
                     if event.get('localThinking'):
-                        note('Working through your request.', 'thinking')
+                        now = time.monotonic()
+                        if thinking_started is None:
+                            thinking_started = now
+                        delta_chars = event.get('localThinkingCharacters', 0)
+                        if type(delta_chars) is int and delta_chars > 0:
+                            thinking_characters += delta_chars
+                        metrics['nativeReasoning'] = dict(
+                            receivedCharacters=thinking_characters,
+                            observedSeconds=round(now-thinking_started, 1))
+                        # Only lengths and elapsed observation time are saved, never the raw stream.
+                        if now-thinking_saved_at >= 2:
+                            s.update(rid, local_metrics_json=json.dumps(metrics))
+                            thinking_saved_at = now
+                        note('Qwen has begun emitting native reasoning. Only public model summaries and measured activity are saved, not its private reasoning text.', 'thinking')
                     if deep and isinstance(event.get('localReasoning'), dict):
                         metrics['reasoning'] = event['localReasoning']
                         s.update(rid, local_metrics_json=json.dumps(metrics),
                                  **({'phase': event['localPhase']} if event.get('localPhase') else {}))
                         if event.get('localPhase'):
-                            note(event['localPhase'], 'deep-' + event['localReasoning']['stage'])
+                            stage_name = event['localReasoning'].get('stage')
+                            descriptions = {
+                                'draft': 'Deep 1/3: preparing a provisional response from the question and the supplied evidence.',
+                                'review': 'Deep 2/3: starting a separate check of the draft for unsupported claims, contradictions, omissions and uncertainty.',
+                                'final': 'Deep 3/3: composing the final response after the draft and review; only this answer is shown in the conversation.',
+                            }
+                            note(descriptions.get(stage_name, event['localPhase']),
+                                 'deep-' + str(stage_name))
                     for summary in event.get('localProgressSummaries', []):
                         note(summary, source='model')
                     if isinstance(event.get('timings'), dict):
@@ -355,7 +378,7 @@ class LocalInference:
                         if '<think>' in boundary or '</think>' in boundary:
                             raise LocalFailure('The installed template did not separate private reasoning. Check the runtime profile.')
                         if content:
-                            note('Writing the response as it becomes ready.', 'writing')
+                            note('Final-answer text has started streaming to the conversation and is saved as it arrives.', 'writing')
                         text += content
                         if len(text) > (local_ultra.MAX_RESPONSE_CHARS if extended else 128000):
                             raise LocalFailure('Local answer exceeded its output safety bound.')
@@ -374,7 +397,7 @@ class LocalInference:
                 metrics['cpuSeconds'] = getattr(runtime, 'cpu_seconds', None)
                 result = dict(provider='local_llama_cpp', model=row['model'], output=[], usage=usage,
                               status='completed' if finish == 'stop' and text.strip() else 'incomplete')
-                note('Saving the response to this conversation.', 'saving')
+                note(f"Generation ended with status {finish}. Saving {len(text):,} visible answer characters to this conversation.", 'saving')
                 s.update(rid, status='saving', phase='Saving local answer', text=text,
                          response_json=json.dumps(result), local_metrics_json=json.dumps(metrics))
             # The runtime has stopped before committing terminal state/advancing FIFO.
