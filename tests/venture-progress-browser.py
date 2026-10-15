@@ -67,6 +67,7 @@ with sync_playwright() as pw:
         history.locator(':scope > summary').click()
         assert timeline.locator('.venture-progress-entry').count() == 3
         assert 'Qwen public summary' in timeline.inner_text()
+        assert timeline.locator('.venture-progress-entry-heading span:first-of-type').all_text_contents() == ['Step 1', 'Step 2', 'Step 3']
 
         # A real generation counter advances independently of static input size.
         page.evaluate("""()=>{
@@ -78,12 +79,14 @@ with sync_playwright() as pw:
         assert '1,793 generated tokens this pass' in telemetry.inner_text()
         assert 'Last model output 1s ago' in telemetry.inner_text()
         assert health.is_hidden()
+        telemetry.scroll_into_view_if_needed()
         page.screenshot(path=str(shots/f'qwen-ultra-notes-{width}.png'))
         # Polling ages an unchanged stream; a fresh heartbeat does not hide silence.
         page.evaluate("run.localQueue.metrics.activity.secondsSinceOutput=180;venturePaintTurns()")
         assert 'slow or stalled' in health.inner_text()
         assert 'heartbeat does not confirm generation' in health.inner_text()
         assert 'Last model output 3m ago' in telemetry.inner_text()
+        health.scroll_into_view_if_needed()
         page.screenshot(path=str(shots/f'qwen-ultra-quiet-{width}.png'))
         page.evaluate("run.status='cancelled';run.sequence++;venturePaintTurns()")
         assert health.is_hidden()
