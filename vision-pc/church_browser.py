@@ -1,7 +1,6 @@
 """Strict, isolated Planning Center UI adapter. Stop when the UI is ambiguous."""
 from __future__ import annotations
 
-from pathlib import Path
 import os
 import re
 
@@ -9,6 +8,7 @@ from church_notifications import LoginRequired, BrowserReviewRequired
 
 
 def exactly_one(locator, label):
+    locator = locator.filter(visible=True)
     if locator.count() != 1 or not locator.is_visible():
         raise BrowserReviewRequired(label+' is missing or ambiguous. No send was attempted.')
     return locator
