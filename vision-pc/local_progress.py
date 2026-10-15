@@ -28,7 +28,7 @@ def valid_summary(note):
     words = note.split()
     return (MIN_NOTE_WORDS <= len(words) <= MAX_NOTE_WORDS
             and len(note) <= MAX_NOTE_CHARS
-            and not re.search(r'[<>\\x00-\\x08]', note))
+            and not re.search(r'[<>\x00-\x08]', note))
 
 class SummaryParser:
     """Incremental bounded parser. Only explicitly marked public notes survive."""
