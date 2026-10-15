@@ -204,18 +204,27 @@ venture-loading-symbol svg{display:block;width:100%;height:100%}
 
 @media(max-width:760px){.venture-compose-tools:has(#ventureStop:not([hidden])) .venture-tools-label{display:none}.venture-compose-tools:has(#ventureStop:not([hidden])) #ventureMic{margin-left:auto}}
 
-/* Compact public progress notes. Native disclosures remain keyboard accessible. */
-.venture-progress-notes{max-width:46rem;margin:12px 0 20px;padding:4px 13px 9px;border:1px solid #c8ad662b;border-radius:11px;background:#c8ad6609;color:var(--muted,#a4aaa2);font-size:13px;line-height:1.6}
-.venture-progress-notes>summary{font-size:12px;letter-spacing:.012em}
-.venture-progress-notes>summary:hover{color:var(--text,#e1e5dc)}
+/* Detailed public Qwen updates and measured processor activity. */
+.venture-progress-notes{max-width:48rem;margin:12px 0 20px;padding:7px 15px 12px;border:1px solid #c8ad6640;border-radius:11px;background:#c8ad6609;color:var(--muted,#a4aaa2);font-size:13px;line-height:1.6}
+.venture-progress-notes>summary{font-size:13px;letter-spacing:.012em;color:var(--text,#e1e5dc)}
+.venture-progress-notes>summary:hover{color:#dcc489}
 .venture-progress-notes summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:6px 0;min-height:32px;font-weight:500}
 .venture-progress-notes summary::-webkit-details-marker{display:none}
 .venture-progress-notes summary::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);flex:none;transition:transform .16s ease}
 .venture-progress-notes details[open]>summary::before,.venture-progress-notes[open]>summary::before{transform:rotate(45deg)}
 .venture-progress-notes summary:focus-visible{outline:2px solid #cfb777;outline-offset:3px;border-radius:4px}
-.venture-progress-current{margin:5px 0 9px;padding:0 0 0 15px;border-left:2px solid #bca56980;color:var(--text,#e1e5dc);overflow-wrap:anywhere;font-size:14px}
-.venture-progress-current[hidden],.venture-progress-history[hidden]{display:none}
-.venture-progress-history{margin-left:15px;font-size:12px}
-.venture-progress-steps{max-height:230px;overflow:auto;overscroll-behavior:contain;padding-left:13px;border-left:1px solid #ffffff18}
-.venture-progress-steps p{margin:2px 0 12px;padding-left:14px;font-size:13px;overflow-wrap:anywhere}
+.venture-progress-phase{font-size:12px;color:var(--muted,#a4aaa2);padding:3px 0 9px}
+.venture-progress-label{font-size:11px;color:#cfb777;font-weight:600;text-transform:uppercase;letter-spacing:.045em}
+.venture-progress-current{margin:4px 0 10px;padding:8px 12px;border-left:2px solid #c8ad66b5;background:#c8ad6610;color:var(--text,#e1e5dc);overflow-wrap:anywhere;white-space:pre-wrap;font-size:14px;line-height:1.65;border-radius:0 6px 6px 0}
+.venture-progress-telemetry{margin:4px 0 8px;color:var(--text,#e1e5dc);font-size:12px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.venture-progress-telemetry[hidden],.venture-progress-history[hidden]{display:none}
+.venture-progress-help{margin:5px 0 12px;font-size:11px;line-height:1.5;opacity:.88}
+.venture-progress-history{margin-top:4px;border-top:1px solid #ffffff18;font-size:12px}
+.venture-progress-steps{max-height:min(52vh,440px);overflow:auto;overscroll-behavior:contain;padding:2px 3px 0 10px;border-left:1px solid #ffffff18}
+.venture-progress-entry{padding:9px 11px;margin:5px 0 9px;border-left:2px solid #ffffff33;background:#ffffff08;border-radius:0 6px 6px 0;overflow-wrap:anywhere}
+.venture-progress-entry.is-model{border-color:#c8ad66}
+.venture-progress-entry-heading{display:flex;flex-wrap:wrap;gap:2px 9px;align-items:center;font-size:11px}
+.venture-progress-entry-heading strong{color:var(--text,#e1e5dc);font-weight:600}
+.venture-progress-entry-heading span{opacity:.8;font-variant-numeric:tabular-nums}
+.venture-progress-entry p{margin:4px 0 1px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text,#e1e5dc)}
 @media(prefers-reduced-motion:reduce){.venture-progress-notes summary::before{transition:none}}
