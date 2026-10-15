@@ -64,6 +64,19 @@ test('Deep reports real stages and partial reviews without a single-pass ETA', (
   assert.equal(sandbox.ventureUltraProgress(run), '');
 });
 
+test('Deep explains separate budgets even when final-answer continuation is off', () => {
+  const {sandbox, elements} = setup({contextTokens: 32768, capabilities: {deepReasoning: true, longResponses: true}});
+  sandbox.document = {querySelector: () => null};
+  sandbox.ventureModelTokenLimit = () => 4096;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/model-parameters.js'), 'utf8'), sandbox);
+  sandbox.venture.settings.qwenUltra = {reasoningMode: 'deep', contextTokens: 'max-tested', longResponses: false};
+  sandbox.venturePaintParameterDetails();
+  assert.match(elements.get('ventureParameterDetails').textContent, /32,768 context tokens/);
+  assert.match(elements.get('ventureParameterDetails').textContent, /separate bounded budgets/);
+  assert.match(elements.get('ventureParameterDetails').textContent, /final answer uses one pass/);
+  assert.doesNotMatch(elements.get('ventureParameterDetails').textContent, /thinking and the answer share/);
+});
+
 test('long response progress reports saved passes without a made-up completion percentage', () => {
   const {sandbox} = setup({capabilities: {longResponses: true}});
   const markup = sandbox.ventureUltraProgress({runId: 'fixture', status: 'in_progress', localQueue: {

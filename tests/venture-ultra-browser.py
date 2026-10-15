@@ -62,6 +62,7 @@ with sync_playwright() as pw:
         assert page.locator('#ventureUltraThinking').is_checked()
         assert page.locator('#ventureUltraReasoning').input_value()=='deep'
         assert 'same model' in page.locator('#ventureUltraReasoningHelp').inner_text()
+        assert 'separate bounded budgets' in page.locator('#ventureParameterDetails').inner_text()
         page.locator('#ventureUltraReasoning').select_option('standard')
         assert page.locator('#ventureMaxTokens').get_attribute('max')=='4096'
         assert page.locator('#ventureUltraContext option').all_text_contents()==['Maximum verified · 8,192 tokens','4,096 tokens','8,192 tokens']

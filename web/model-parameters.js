@@ -19,6 +19,11 @@ function venturePaintParameterDetails(){
   const verified=Number(ventureUltraCapability()?.contextTokens)||8192;
   const context=selected==='max-tested'?verified:(Number(selected)||8192);
   const extended=ventureUltraCapability()?.capabilities?.longResponses===true&&venture.settings.qwenUltra?.longResponses!==false;
+  const deep=ventureUltraCapability()?.capabilities?.deepReasoning===true&&ventureUltraOptions(venture.settings.qwenUltra).reasoningMode==='deep';
+  if(deep){
+   note.textContent='Deep request: reserves up to '+ventureModelTokenLimit().toLocaleString()+' final-answer tokens per pass within '+context.toLocaleString()+' context tokens. Drafting, review and native thinking have separate bounded budgets. '+(extended?'Unfinished final answers can continue across passes.':'The final answer uses one pass.')+' Every stage must fit the verified context.';
+   return;
+  }
   note.textContent='Ultra request: up to '+ventureModelTokenLimit().toLocaleString()+' output tokens within '+context.toLocaleString()+' context tokens. '+(extended?'Long responses reserve this answer space per pass; multistep thinking can use the remaining tested context.':'In single-pass mode, thinking and the answer share the output limit.')+' The context selector shows only verified server limits.';
   return;
  }
