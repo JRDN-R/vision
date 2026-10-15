@@ -1,4 +1,4 @@
-"""Real progress disclosure DOM with simulated model summaries, no model calls."""
+"""Mobile/desktop activity timeline: real events, public summaries and native metrics."""
 import os
 import runpy
 from pathlib import Path
@@ -12,76 +12,101 @@ shots.mkdir(exist_ok=True)
 with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
     for width in (390, 1280):
-        page = browser.new_page(viewport={'width':width, 'height':900})
-        errors=[]
-        page.on('pageerror', lambda e:errors.append(str(e)))
-        page.route('**/*', lambda route:route.abort())
+        page = browser.new_page(viewport={'width': width, 'height': 900})
+        errors = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+        page.route('**/*', lambda route: route.abort())
         page.set_content(fixture)
-        page.evaluate('''()=>{
-          venture.open=true;$('visionVenture').hidden=false;
-          window.run={runId:'notes',status:'in_progress',model:'qwen-ultra-local',phase:'Qwen thinking',text:'',message:'Help me plan a small vegetable garden.',localQueue:{processingSeconds:20,estimateStatus:'learning',progress:{version:1,steps:[{id:1,text:'Getting your request ready.',source:'stage'},{id:2,text:'Comparing the available space and sunlight so the planting suggestions fit your garden, rather than giving you a general list of vegetables.',source:'model'}]}}};
-          venture.runs=[run];venturePaintTurns();
-        }''')
-        panel=page.locator('.venture-progress-notes')
-        history=page.locator('.venture-progress-history')
-        assert panel.evaluate('(e)=>e.open')
-        assert 'Comparing the available space' in page.locator('.venture-progress-current').inner_text()
-        assert not history.evaluate('(e)=>e.open')
-        history.locator(':scope > summary').click()
-        page.locator('.venture-progress-steps details > summary').click()
-        page.evaluate("run.sequence=2;venturePaintTurns()")
-        assert history.evaluate('(e)=>e.open')
-        assert page.locator('.venture-progress-steps details').evaluate('(e)=>e.open')
-        page.evaluate("run.localQueue.progress.steps.push({id:3,text:'Checking which vegetables share similar watering needs, making it easier to group them together and keep the garden manageable throughout the growing season.',source:'model'});venturePaintTurns()")
-        assert not history.evaluate('(e)=>e.open')
-        assert page.locator('.venture-progress-steps details[open]').count()==0
-        assert panel.evaluate('(e)=>e.open')
-        assert len(page.locator('.venture-progress-current').inner_text().split())<=30
-        page.screenshot(path=str(shots/f'qwen-ultra-notes-{width}.png'))
-        panel.locator(':scope > summary').click()
-        page.evaluate("run.sequence++;venturePaintTurns()")
-        assert not panel.evaluate('(e)=>e.open')
-        page.evaluate("run.status='completed';run.text='Plant herbs near the kitchen and give tomatoes your sunniest spot.';venturePaintTurns()")
-        assert not panel.evaluate('(e)=>e.open')
-        panel.locator(':scope > summary').click()
-        assert history.evaluate('(e)=>e.open')
-        assert page.locator('.venture-progress-steps details').count()==3
-        page.evaluate("run.sequence++;venturePaintTurns()")
-        assert panel.evaluate('(e)=>e.open')
-        page.locator('.venture-progress-steps details > summary').nth(1).click()
-        assert 'Comparing the available space' in page.locator('.venture-progress-steps').text_content()
-        # Reopening history does not replay or auto-expand saved summaries.
-        page.evaluate("venture.rendered.clear();$('ventureTurns').replaceChildren();venturePaintTurns()")
-        assert not panel.evaluate('(e)=>e.open')
-        for status in ('cancelled','error','incomplete'):
-            page.evaluate("run.status='in_progress';venturePaintTurns();document.querySelector('.venture-progress-notes').open=true")
-            page.evaluate('(status)=>{run.status=status;venturePaintTurns()}',status)
-            assert not panel.evaluate('(e)=>e.open')
-        page.emulate_media(reduced_motion='reduce')
-        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-        # Pre-fix responses may have saved the marker in final answer content.
         page.evaluate("""()=>{
-          run.status='completed';
-          run.localQueue.progress.steps=[{id:1,text:'Getting your request ready.',source:'stage'}];
-          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\\n\\n## Answer\\n\\n**Ready.**';
-          venturePaintTurns();
+          venture.open=true;$('visionVenture').hidden=false;
+          const modelNote=Array(9).fill('Comparing sunlight exposure and the available soil information, while checking which vegetable choices can be supported by the garden constraints.').join(' ');
+          window.run={runId:'notes',sequence:1,status:'in_progress',model:'qwen-ultra-local',phase:'Deep 2/3 · Reviewing the draft',text:'',message:'Help me plan a small vegetable garden.',localQueue:{
+            processingSeconds:81,estimateStatus:'learning',metrics:{computeRoute:'fupcj',inputTokens:1893,contextTokens:32768,reasoning:{stageNumber:2},nativeReasoning:{receivedCharacters:12048,observedSeconds:65}},
+            progress:{version:1,steps:[
+             {id:1,text:'Preparing the user request and relevant background material.',source:'stage',atSeconds:0.4},
+             {id:2,text:modelNote,source:'model',atSeconds:41.2}
+            ]}
+          }};
+          venture.runs=[run];venturePaintTurns();
         }""")
-        assert page.locator('.venture-progress-notes').count()==1
-        assert 'Checking the supplied background' in page.locator('.venture-progress-steps').text_content()
-        assert page.locator('.venture-progress-steps details').count()==2
-        assert page.locator('[data-venture-text] strong').inner_text()=='Ready.'
+        panel = page.locator('.venture-progress-notes')
+        history = page.locator('.venture-progress-history')
+        current = page.locator('.venture-progress-current')
+        timeline = page.locator('.venture-progress-steps')
+        assert panel.evaluate('(e)=>e.open')
+        assert history.evaluate('(e)=>e.open')
+        assert 30 < len(current.inner_text().split()) <= 120
+        assert 'Qwen’s latest public explanation' in page.locator('.venture-progress-label').inner_text()
+        assert '12,048 native reasoning characters' in page.locator('.venture-progress-telemetry').inner_text()
+        assert '1,893 / 32,768 context tokens' in page.locator('.venture-progress-telemetry').inner_text()
+        assert timeline.locator('.venture-progress-entry').count() == 1
+        assert '+0s' in timeline.inner_text()
+        assert timeline.locator('details').count() == 0
+
+        # Observed stage changes do not hide the latest model-authored summary.
+        page.evaluate("""()=>{
+          run.localQueue.progress.steps.push({id:3,text:'Deep review request was started with the original evidence retained.',source:'stage',atSeconds:70});
+          run.sequence++;venturePaintTurns();
+        }""")
+        assert 'Comparing sunlight' in current.inner_text()
+        assert timeline.locator('.venture-progress-entry').count() == 2
+        assert 'Processor event' in timeline.inner_text()
+
+        # Expanded history survives polling and new events; a manual close is honored.
+        history.locator(':scope > summary').click()
+        page.evaluate('run.sequence++;venturePaintTurns()')
+        assert not history.evaluate('(e)=>e.open')
+        page.evaluate("""()=>{
+          run.localQueue.progress.steps.push({id:4,text:'Checking whether the growing-season assumptions are stated clearly and which recommendations would require additional local evidence.',source:'model',atSeconds:79});
+          run.sequence++;venturePaintTurns();
+        }""")
+        assert not history.evaluate('(e)=>e.open')
+        assert 'Checking whether the growing-season' in current.inner_text()
+        history.locator(':scope > summary').click()
+        assert timeline.locator('.venture-progress-entry').count() == 3
+        assert 'Qwen public summary' in timeline.inner_text()
+
+        page.screenshot(path=str(shots/f'qwen-ultra-notes-{width}.png'))
+        page.evaluate("run.status='cancelled';run.sequence++;venturePaintTurns()")
+        assert panel.evaluate('(e)=>e.open')
+        assert timeline.locator('.venture-progress-entry').count() == 4
+        assert 'Stopped' in panel.locator(':scope > summary').inner_text()
+
+        panel.locator(':scope > summary').click()
+        page.evaluate("run.status='completed';run.text='Plant herbs near the kitchen and give tomatoes your sunniest spot.';run.sequence++;venturePaintTurns()")
+        assert not panel.evaluate('(e)=>e.open')
+        panel.locator(':scope > summary').click()
+        assert 'Qwen public summary' in timeline.inner_text()
+
+        # Earlier processors left summary tags in answer-channel text.
+        page.evaluate("""()=>{
+          run.localQueue.progress.steps=[{id:1,text:'Preparing the question and its context.',source:'stage'}];
+          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\n\n## Answer\n\n**Ready.**';
+          run.sequence++;venturePaintTurns();
+        }""")
+        assert 'Checking the supplied background' in current.inner_text()
+        assert timeline.locator('.venture-progress-entry').count() == 2
+        assert page.locator('[data-venture-text] strong').inner_text() == 'Ready.'
         assert '<progress_summary>' not in page.locator('[data-venture-text]').inner_text()
-        assert '</progress_summary>' not in page.locator('[data-venture-text]').inner_html()
         page.evaluate("()=>{window.consoleCopyText=async value=>{window.copiedAnswer=value;}}")
         page.locator('[data-v-action="copy"]').click()
-        assert page.evaluate("window.copiedAnswer")=='## Answer\n\n**Ready.**'
+        assert page.evaluate("window.copiedAnswer") == '## Answer\n\n**Ready.**'
 
-        # Malformed notes are omitted. Model text is always rendered as text.
-        page.evaluate("run.text='';run.status='in_progress';run.localQueue.progress.steps=[{id:4,text:'Checking <img onerror=alert(1)> supplied material.',source:'model'},{id:5,text:'word '.repeat(31),source:'model'}];venturePaintTurns()")
-        assert page.locator('[data-venture-notes] img').count()==0
-        assert '<img' in page.locator('.venture-progress-current').text_content()
-        page.evaluate("delete run.localQueue.progress;venturePaintTurns()")
-        assert page.locator('.venture-progress-notes').count()==0
-        assert not errors,errors
+        # Untrusted model text is never inserted as HTML; overlong notes are rejected.
+        page.evaluate("""()=>{
+          run.text='';run.status='in_progress';
+          run.localQueue.progress.steps=[
+           {id:5,text:'Checking <img onerror=alert(1)> supplied material.',source:'model'},
+           {id:6,text:'word '.repeat(121),source:'model'}];
+          run.sequence++;venturePaintTurns();
+        }""")
+        assert page.locator('[data-venture-notes] img').count() == 0
+        assert '<img' in current.text_content()
+        assert timeline.locator('.venture-progress-entry').count() == 0
+        page.evaluate("delete run.localQueue.progress;run.sequence++;venturePaintTurns()")
+        assert page.locator('.venture-progress-notes').count() == 0
+        page.emulate_media(reduced_motion='reduce')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not errors, errors
         page.close()
     browser.close()
