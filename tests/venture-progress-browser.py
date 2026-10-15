@@ -19,7 +19,7 @@ with sync_playwright() as pw:
         page.set_content(fixture)
         page.evaluate("""()=>{
           venture.open=true;$('visionVenture').hidden=false;
-          const modelNote=Array(9).fill('Comparing sunlight exposure and the available soil information, while checking which vegetable choices can be supported by the garden constraints.').join(' ');
+          const modelNote=Array(5).fill('Comparing sunlight exposure and the available soil information, while checking which vegetable choices can be supported by the garden constraints.').join(' ');
           window.run={runId:'notes',sequence:1,status:'in_progress',model:'qwen-ultra-local',phase:'Deep 2/3 · Reviewing the draft',text:'',message:'Help me plan a small vegetable garden.',localQueue:{
             processingSeconds:81,estimateStatus:'learning',metrics:{computeRoute:'fupcj',inputTokens:1893,contextTokens:32768,reasoning:{stageNumber:2},nativeReasoning:{receivedCharacters:12048,observedSeconds:65}},
             progress:{version:1,steps:[
