@@ -1,10 +1,10 @@
 {
-  "title": "Qwen Ultra Deep reasoning",
+  "title": "Detailed Qwen activity",
   "items": [
-    "Deep is now the default for new Ultra requests: a draft, a separate critique, then the final answer. Standard remains available for faster replies.",
-    "Progress shows Drafting, Reviewing and Writing final answer. The draft and critique are kept out of the conversation; the final answer is saved as it streams.",
-    "Each stage has a bounded thinking budget and uses the original prepared evidence. A partial review is labelled, and failed reviews never silently become completed answers.",
-    "The same model reviews its own draft, so improved accuracy is possible but not guaranteed. Deep does not add web search or code execution.",
-    "Update FUPCJ Server with Update-Venture.ps1, then refresh Vision. Existing Ultra models and verified context settings are reused."
+    "Qwen Local and Ultra can now show longer, task-specific public activity summaries (up to 120 words), separate from observed processor events.",
+    "The activity timeline expands by default, keeps the latest Qwen summary visible, and shows each saved event's elapsed processing time.",
+    "Real context-token counts, compute route, Deep stage, and observed native reasoning stream length appear without exposing private reasoning text.",
+    "Deep still drafts, reviews, and produces the final answer; drafts and critiques remain private and are not displayed as conversation answers.",
+    "After GitHub Pages rebuilds, update the FUPCJ processor with Update-Venture.ps1 for detailed live backend events. Older runs remain readable."
   ]
 }
