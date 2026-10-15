@@ -36,7 +36,8 @@ with sync_playwright() as pw:
         assert panel.evaluate('(e)=>e.open')
         assert history.evaluate('(e)=>e.open')
         assert 30 < len(current.inner_text().split()) <= 120
-        assert 'Qwen’s latest public explanation' in page.locator('.venture-progress-label').inner_text()
+        # The label is visually uppercased by CSS; assert its authored text.
+        assert 'Qwen’s latest public explanation' in page.locator('.venture-progress-label').text_content()
         assert '12,048 native reasoning characters' in page.locator('.venture-progress-telemetry').inner_text()
         assert '1,893 input tokens · 32,768 context capacity' in page.locator('.venture-progress-telemetry').inner_text()
         assert 'Live output measurements are unavailable' in page.locator('.venture-progress-health').inner_text()
