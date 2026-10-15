@@ -40,7 +40,10 @@ function harness({ios=false, configured=false, storage=new Map()}={}) {
     localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},console};
   sandbox.window = {addEventListener() {},location:{assign:url=>launched.push(url)}};
   const context = vm.createContext(sandbox);
-  const source = fs.readFileSync(path.join(ROOT,'web/vortex/app.js'),'utf8').replace(/^import .*;\n/, '');
+  // Auth is supplied by this fixture; load the real side-effect dependency
+  // before executing the module body in Node's script-only VM.
+  vm.runInContext(fs.readFileSync(path.join(ROOT,'web/mobile-menu-swipe.js'),'utf8'), context);
+  const source = fs.readFileSync(path.join(ROOT,'web/vortex/app.js'),'utf8').replace(/^import .*;\r?\n/gm, '');
   vm.runInContext(source, context);
   vm.runInContext('triggerBrowserSave = (url, filename) => fixtureSaved.push({url, filename});', Object.assign(context,{fixtureSaved:saved}));
   const evaluate = source => vm.runInContext(source, context);

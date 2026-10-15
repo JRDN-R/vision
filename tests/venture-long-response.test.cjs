@@ -28,6 +28,55 @@ test('new setting is not sent to a server that does not support it', () => {
   assert.equal(sandbox.ventureUltraOptions({longResponses: false}).longResponses, false);
 });
 
+test('Deep defaults on supported servers and an explicit Standard choice persists', () => {
+  const {sandbox, elements} = setup({capabilities: {deepReasoning: true, longResponses: true}});
+  assert.equal(sandbox.ventureUltraOptions({}).reasoningMode, 'deep');
+  sandbox.venturePaintUltra();
+  assert.equal(elements.get('ventureUltraReasoning').value, 'deep');
+  assert.equal(sandbox.ventureReadUltra().reasoningMode, 'deep');
+  assert.match(elements.get('ventureUltraReasoningHelp').textContent, /same model/);
+  sandbox.venture.settings.qwenUltra = {reasoningMode: 'standard'};
+  sandbox.venturePaintUltra();
+  assert.equal(sandbox.ventureReadUltra().reasoningMode, 'standard');
+  sandbox.venture.localCapability.ultra = null;
+  sandbox.venturePaintUltra();
+  assert.equal(sandbox.ventureReadUltra().reasoningMode, 'standard');
+  sandbox.venture.localCapability.ultra = {capabilities: {}};
+  sandbox.venturePaintUltra();
+  assert.equal(elements.get('ventureUltraReasoning').disabled, true);
+  assert.match(elements.get('ventureUltraReasoningHelp').textContent, /Update FUPCJ/);
+  assert.equal(Object.hasOwn(sandbox.ventureUltraOptions({reasoningMode: 'deep'}), 'reasoningMode'), false);
+  assert.equal(Object.hasOwn(sandbox.ventureReadUltra(), 'reasoningMode'), false);
+});
+
+test('Deep reports real stages and partial reviews without a single-pass ETA', () => {
+  const {sandbox} = setup({capabilities: {deepReasoning: true}});
+  const run = {runId: 'deep', status: 'in_progress', localQueue: {reasoningMode: 'deep',
+    estimatedTotalSeconds: 1, estimatedCompletionAt: 1, metrics: {reasoning: {stage: 'review'}}}};
+  const markup = sandbox.ventureUltraProgress(run);
+  assert.match(markup, /Deep · 2 of 3 · Reviewing/);
+  assert.match(markup, /final answer appears after/);
+  assert.doesNotMatch(markup, /aria-valuenow|Estimated completion|width:/);
+  run.localQueue.metrics.reasoning = {stage: 'complete', limitedStages: ['review']};
+  run.status = 'completed';
+  assert.match(sandbox.ventureUltraProgress(run), /check may be incomplete/);
+  run.localQueue.metrics.reasoning.limitedStages = [];
+  assert.equal(sandbox.ventureUltraProgress(run), '');
+});
+
+test('Deep explains separate budgets even when final-answer continuation is off', () => {
+  const {sandbox, elements} = setup({contextTokens: 32768, capabilities: {deepReasoning: true, longResponses: true}});
+  sandbox.document = {querySelector: () => null};
+  sandbox.ventureModelTokenLimit = () => 4096;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/model-parameters.js'), 'utf8'), sandbox);
+  sandbox.venture.settings.qwenUltra = {reasoningMode: 'deep', contextTokens: 'max-tested', longResponses: false};
+  sandbox.venturePaintParameterDetails();
+  assert.match(elements.get('ventureParameterDetails').textContent, /32,768 context tokens/);
+  assert.match(elements.get('ventureParameterDetails').textContent, /separate bounded budgets/);
+  assert.match(elements.get('ventureParameterDetails').textContent, /final answer uses one pass/);
+  assert.doesNotMatch(elements.get('ventureParameterDetails').textContent, /thinking and the answer share/);
+});
+
 test('long response progress reports saved passes without a made-up completion percentage', () => {
   const {sandbox} = setup({capabilities: {longResponses: true}});
   const markup = sandbox.ventureUltraProgress({runId: 'fixture', status: 'in_progress', localQueue: {

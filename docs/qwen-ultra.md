@@ -242,3 +242,9 @@ public model summaries, not a faithful transcript of internal computations.
 
 Update the PC processor using `Setup-Vision-PC.ps1 -Action Update` to enable the
 backend stream. Older processors remain compatible but cannot supply notes.
+
+## Deep reasoning
+
+New Ultra requests now default to **Deep**: draft, critique, then final answer.
+Standard remains available in Reasoning mode. See [Deep reasoning](qwen-deep-reasoning.md)
+for the bounded budgets, update instructions and accuracy limitations.
