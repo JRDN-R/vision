@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "firstupcjax-admins-fupcj",
+  "version": "1.0.0",
+  "description": "Private FirstUPCJax scheduling and official notification tools hosted on FUPCJ Server, with invited Vision accounts.",
+  "author": {"name": "FirstUPCJax"},
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "FirstUPCJax Admins",
+        "shortDescription": "Church scheduling and email",
+        "longDescription": "Resolve volunteers, review service plans, schedule people, and request official Planning Center Scheduling Emails. Access is controlled by the church's Vision invite list. Requires the configured FUPCJ Server and a Planning Center browser session for email dispatch.",
+        "developerName": "FirstUPCJax",
+        "category": "Productivity",
+        "capabilities": [],
+        "logo": "./assets/church-logo.svg",
+        "composerIcon": "./assets/church-logo.svg",
+        "defaultPrompt": "Help me schedule volunteers and send their Planning Center Scheduling Emails."
+      }
+    }
+  }
+}

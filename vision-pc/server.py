@@ -21,7 +21,10 @@ import requests
 from werkzeug.exceptions import HTTPException
 
 from media import normalize_url, process_job, MEDIA_LOCK
-from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT, model_output_token_limit
+from sessions import Sessions, PROJECT_LIMIT, UPLOAD_LIMIT, model_output_token_limit, protect_secret, unprotect_secret
+from church_admin import ChurchAdmin
+from church_mcp import ChurchMCP
+from church_oauth import PUBLIC_PATHS as CHURCH_PUBLIC_PATHS, MCP_PATH as CHURCH_MCP_PATH
 from transcription import LocalTranscription
 from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
 from documents import DocumentJobs
@@ -120,6 +123,8 @@ def configure(config_path, migrate_gemini=False):
     trials.initialize()
     account_admin.initialize(config)
     owned_assets.initialize(config)
+    church_admin.initialize(config)
+    church_mcp.initialize()
     app.config['OWNED_ASSETS'] = owned_assets
     return config
 
@@ -213,12 +218,20 @@ def unexpected_error(error):
 @app.before_request
 def authorize():
     g.request_started = time.monotonic()
+    if request.path in CHURCH_PUBLIC_PATHS or request.path == '/firstupcjax/logo.svg':
+        return
+    if request.path == CHURCH_MCP_PATH:
+        if request.method == 'OPTIONS': return Response(status=204)
+        return church_mcp.oauth.authenticate()
     origin = request.headers.get('Origin')
     if origin and not app.config.get('PUBLIC_ACCESS', False) and origin not in ORIGINS:
         raise APIError('This page is not an allowed Vision origin.', 403)
     if request.method == 'OPTIONS':
         return Response(status=204)
     if request.method == 'GET' and request.path == '/api/status':
+        return
+    if request.method == 'POST' and request.path == '/api/church-admin/bridge':
+        church_admin.check_bridge()
         return
     # Download capabilities are Firebase-owner minted and scoped to one file.
     # They are never accepted for inventory, mutations, or another application.
@@ -353,6 +366,7 @@ def health():
                    ventureDictation=sessions.venture.dictation.capability(),
                    intelligentContext=sessions.context.capability(),
                    vortex=vortex.capability(),
+                   churchAdmins={'enabled': church_admin.settings.get('enabled') is True, 'version': '1.0.0', 'nativeMcpReady': bool(church_mcp.catalog), 'credentialsSaved': (church_admin.directory/'pco-credentials.dpapi').is_file()},
                    capabilities={'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
@@ -763,6 +777,8 @@ trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_me
 account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
 owned_assets = OwnedAssets(app, connect_db, APIError)
 owned_assets.register_routes()
+church_admin = ChurchAdmin(app, connect_db, protect_secret, unprotect_secret, account_admin.blocked)
+church_mcp = ChurchMCP(church_admin)
 
 def main():
     parser = argparse.ArgumentParser(description='Vision private FUPCJ Server')
@@ -806,6 +822,11 @@ def main():
         uploaded_media.start()
         documents.start()
         vortex.start()
+        church_admin.start()
+        try:
+            church_mcp.start()
+        except Exception:
+            app.logger.error('FirstUPCJax MCP setup is incomplete. Other Vision services remain available.')
         app.logger.info('Vision PC processor started on loopback port %s.', app.config['PORT'])
         try:
             serve(app, host='127.0.0.1', port=app.config['PORT'], threads=8,
@@ -814,6 +835,8 @@ def main():
                   trusted_proxy_count=1, trusted_proxy_headers={'x-forwarded-for', 'x-forwarded-proto'},
                   clear_untrusted_proxy_headers=True)
         finally:
+            church_admin.stop.set()
+            church_admin.wake.set()
             vortex.close()
             trials.stop.set()
             STOP.set()

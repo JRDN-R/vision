@@ -9,6 +9,7 @@ param(
     [string]$Action = 'Setup',
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
     [string]$SourceRef = 'main',
+    [string]$SourceDirectory = '',
     [string]$FirebaseProjectId = 'visionboard-api',
     [ValidateSet('Full','Standard')][string]$DocumentProfile = 'Standard',
     [string]$BackupDirectory = ''
@@ -26,7 +27,7 @@ $DownloadDir = Join-Path $InstallRoot 'downloads'
 $PythonExe = Join-Path $RuntimeDir 'python.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Keep every activation/rollback path in sync, including optional workers.
-$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','local_inference.py','local_timing.py','local_calibration.py','local_progress.py','local_runtime.py','local_variants.py','local_ultra.py','local_reasoning.py','local_overdrive.py','setup_qwen_ultra.py','setup_qwen_overdrive.py','Qwen-Ultra.ps1','Overdrive-Windows.ps1','setup_local_variant.py','local_visual.py','local_visual_runtime.py','local_visual_media.py','local_acceptance.py','local_preferences.py','Local-AI.ps1','Local-AI.txt','local-model-manifest.json','setup_local_ai.py','venture.py','venture_images.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','account_administration.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1','vortex.py','vortex_imports.py','owned_assets.py','inspect_owned_assets.py','Durable-Assets.ps1','Durable-Assets.txt','vortex_network.py','vortex_worker.py','vortex_urls.py','vortex_adapters.py','vortex_race.py','vortex_services.py','vortex_egress.py','Vortex-Services.ps1','vortex-services.compose.yml','vortex-egress.Dockerfile','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh','vortex-ingress.Dockerfile','requirements-vortex.txt')
+$ProcessorFiles = @('server.py','trials.py','media.py','uploaded_media.py','sessions.py','local_inference.py','local_timing.py','local_calibration.py','local_progress.py','local_runtime.py','local_variants.py','local_ultra.py','local_reasoning.py','local_overdrive.py','setup_qwen_ultra.py','setup_qwen_overdrive.py','Qwen-Ultra.ps1','Overdrive-Windows.ps1','setup_local_variant.py','local_visual.py','local_visual_runtime.py','local_visual_media.py','local_acceptance.py','local_preferences.py','Local-AI.ps1','Local-AI.txt','local-model-manifest.json','setup_local_ai.py','venture.py','venture_images.py', 'venture_dictation.py', 'venture_workspace.py', 'model_parameters.py', 'model-parameters.json', 'venture_profile.py', 'venture_memory.py','venture_files.py','venture_billing.py','venture-pricing.json','transcription.py','firebase_auth.py','audit_logs.py','setup_local.py','requirements.txt','sound_model.py','setup_sound_events.py','sound-model-manifest.json','requirements-sound.txt','documents.py','document_worker.py','setup_documents.py','requirements-documents.txt','requirements-documents-full.txt','Document-Tools.ps1','gemini_processing.py','gemini_access.py','gemini_credentials.py','gemini-pricing.json','activity_dashboard.py','account_administration.py','context_engine.py','context_sources.py','context_embeddings.py','context_integration.py','context_visual.py','setup_context.py','requirements-context.txt','Context-Tools.ps1','vortex.py','vortex_imports.py','owned_assets.py','inspect_owned_assets.py','Durable-Assets.ps1','Durable-Assets.txt','vortex_network.py','vortex_worker.py','vortex_urls.py','vortex_adapters.py','vortex_race.py','vortex_services.py','vortex_egress.py','Vortex-Services.ps1','vortex-services.compose.yml','vortex-egress.Dockerfile','vortex-egress-policy.Dockerfile','vortex_egress_policy.sh','vortex-ingress.Dockerfile','requirements-vortex.txt','church_admin.py','church_notifications.py','church_browser.py','church_login.py','requirements-church.txt','FirstUPCJax-Admins.ps1','church_oauth.py','church_mcp.py','church_runner.mjs','church_journal.mjs','church_scheduler.mjs','church_bridge.mjs','church-logo.svg')
 
 function Write-Stage([string]$Text) { Write-Host "`n$Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $Utf8) }
@@ -799,7 +800,13 @@ try {
         # Stage source and install only missing/incompatible base dependencies
         # before the brief activation restart. Whisper packages/model are separate.
         foreach ($FileName in $ProcessorFiles) {
-            Get-Download "$SourceBase/$FileName" (Join-Path $StageDirectory $FileName)
+            if ($SourceDirectory) {
+                $SourceFile = Join-Path $SourceDirectory $FileName
+                if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) { throw "Packaged server source is incomplete: $FileName" }
+                Copy-Item -LiteralPath $SourceFile -Destination (Join-Path $StageDirectory $FileName)
+            } else {
+                Get-Download "$SourceBase/$FileName" (Join-Path $StageDirectory $FileName)
+            }
         }
         $CompileArguments = @('-m','py_compile') + @($ProcessorFiles | Where-Object { $_.EndsWith('.py') } | ForEach-Object { Join-Path $StageDirectory $_ })
         Invoke-Checked $PythonExe $CompileArguments

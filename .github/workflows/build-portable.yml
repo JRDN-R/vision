@@ -2,7 +2,7 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, feature/qwen-local-rag-20261011]
+    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker]
     paths:
       - 'web/**'
       - '.github/workflows/build-portable.yml'

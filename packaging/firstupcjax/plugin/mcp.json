@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "firstupcjax-admins": {
+      "type": "streamable-http",
+      "url": "https://desktop-vjt2br2.tail385c9d.ts.net/firstupcjax/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {"mode": "dcr"},
+            "baseScopes": ["services.read"],
+            "defaultScopes": ["services.read", "services.write", "offline_access"]
+          }
+        }
+      }
+    }
+  }
+}
