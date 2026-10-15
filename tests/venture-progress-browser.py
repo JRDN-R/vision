@@ -81,7 +81,7 @@ with sync_playwright() as pw:
         # Earlier processors left summary tags in answer-channel text.
         page.evaluate("""()=>{
           run.localQueue.progress.steps=[{id:1,text:'Preparing the question and its context.',source:'stage'}];
-          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\n\n## Answer\n\n**Ready.**';
+          run.text='<progress_summary>Checking the supplied background before responding.</progress_summary>\\n\\n## Answer\\n\\n**Ready.**';
           run.sequence++;venturePaintTurns();
         }""")
         assert 'Checking the supplied background' in current.inner_text()
