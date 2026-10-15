@@ -101,6 +101,9 @@ function navigationVortexLink(id){
  const link=document.createElement('a');link.id=id;link.className='workspace-vortex-link';link.href=navigationVortexURL();
  link.innerHTML='<img class="workspace-vortex-logo" src="'+navigationVortexLogo+'" alt="" aria-hidden="true"><span>Vortex</span>';link.onclick=navigationOpenVortex;return link;
 }
+function navigationAdminsLink(id){
+ const link=document.createElement('a');link.id=id;link.className='workspace-vortex-link';link.href='https://jrdn-r.github.io/vision/admins/';link.target='_blank';link.rel='noopener';link.textContent='FirstUPCJax Admins';return link;
+}
 function navigationInstall(){
  document.documentElement.classList.add('compact-navigation');
  const button=document.createElement('button');button.id='workspaceMenuButton';button.type='button';button.className='workspace-menu-button';button.hidden=true;button.innerHTML='<span id="workspaceMenuGlyph" aria-hidden="true"></span>';button.onclick=navigationToggleMenu;
@@ -119,6 +122,7 @@ function navigationInstall(){
  }
  const extra=(label,icon,action)=>{const control=document.createElement('button');control.type='button';control.innerHTML=ventureIcon(icon)+'<span>'+label+'</span>';control.onclick=action;menu.querySelector('.top-actions').append(control);};
  extra('Board details','settings',()=>{navigationCloseMenu(false);setSidebar(true);});
+ menu.querySelector('.top-actions').append(navigationAdminsLink('workspaceAdminsLink'));
  extra('Processing activity','retry',openActivity);
  extra('Help','file',()=>$('helpDialog').showModal());
  menu.querySelector('.top-actions').append(navigationVortexLink('workspaceVortexLink'));

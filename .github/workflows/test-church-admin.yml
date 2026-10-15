@@ -1,0 +1,40 @@
+name: Test FirstUPCJax Admins
+on:
+  push:
+    branches: [codex/firstupcjax-admins-worker]
+  pull_request:
+    branches: [main]
+    paths: ['admins/**','web/admins*','vision-pc/church*','vision-pc/FirstUPCJax-Admins.ps1','vision-pc/server.py','vision-pc/Setup-Vision-PC.ps1','tests/test_church*.py','tests/church*','packaging/firstupcjax/**','.github/workflows/test-church-admin.yml']
+permissions:
+  contents: read
+jobs:
+  offline:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - run: python -m pip install -r vision-pc/requirements.txt pytest==8.4.2 playwright==1.64.0
+      - run: python -m pytest tests/test_church_admin.py tests/test_church_oauth.py tests/test_church_package.py -q
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest tests/test_church_browser.py vision-pc/test_server.py vision-pc/test_firebase_auth.py vision-pc/test_account_administration.py -q
+      - run: node --test tests/church-scheduler.test.mjs
+      - run: node --check web/admins.js
+      - run: node tests/account-auth.test.cjs
+      - name: Parse Windows setup scripts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          foreach ($File in @('vision-pc/Setup-Vision-PC.ps1','vision-pc/FirstUPCJax-Admins.ps1','packaging/firstupcjax/installer/Install-FirstUPCJax-Admins.ps1')) {
+            $ParseErrors=$null; $Tokens=$null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $File),[ref]$Tokens,[ref]$ParseErrors) | Out-Null
+            if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
+          }

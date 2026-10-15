@@ -10,6 +10,7 @@ base=read('web/base.js');download=base[base.index('function download('):].split(
 plain_dictation=base[base.index('function plainDictationText('):base.index('function finishQueuedTranscript(')]
 setup=r'''
 let fixtureUUIDCounter=0;if(!crypto.randomUUID)crypto.randomUUID=()=>('10000000-1000-4000-8000-'+String(++fixtureUUIDCounter).padStart(12,'0'));
+const mobileQuery=window.matchMedia('(max-width:760px), (hover:none) and (pointer:coarse)');
 const $=id=>document.getElementById(id), state={title:'Unchanged board',nodes:[],settings:{},consoleSession:null};let busy=false,ioBusy=false;
 const R={safeFilename:n=>n};function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function bytesFromDataURL(s){return Uint8Array.from(atob(s.split(',')[1]),c=>c.charCodeAt(0));}
