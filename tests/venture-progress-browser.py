@@ -38,7 +38,8 @@ with sync_playwright() as pw:
         assert 30 < len(current.inner_text().split()) <= 120
         assert 'Qwen’s latest public explanation' in page.locator('.venture-progress-label').inner_text()
         assert '12,048 native reasoning characters' in page.locator('.venture-progress-telemetry').inner_text()
-        assert '1,893 / 32,768 context tokens' in page.locator('.venture-progress-telemetry').inner_text()
+        assert '1,893 input tokens · 32,768 context capacity' in page.locator('.venture-progress-telemetry').inner_text()
+        assert 'Live output measurements are unavailable' in page.locator('.venture-progress-health').inner_text()
         assert timeline.locator('.venture-progress-entry').count() == 1
         assert '+0s' in timeline.inner_text()
         assert timeline.locator('details').count() == 0
@@ -66,8 +67,25 @@ with sync_playwright() as pw:
         assert timeline.locator('.venture-progress-entry').count() == 3
         assert 'Qwen public summary' in timeline.inner_text()
 
+        # A real generation counter advances independently of static input size.
+        page.evaluate("""()=>{
+          run.localQueue.metrics.activity={version:1,requestNumber:2,generatedTokens:1793,tokensPerSecond:1.37,secondsSinceOutput:1,secondsSinceEvent:0,elapsedSeconds:1335};
+          run.sequence++;venturePaintTurns();
+        }""")
+        telemetry = page.locator('.venture-progress-telemetry')
+        health = page.locator('.venture-progress-health')
+        assert '1,793 generated tokens this pass' in telemetry.inner_text()
+        assert 'Last model output 1s ago' in telemetry.inner_text()
+        assert health.is_hidden()
         page.screenshot(path=str(shots/f'qwen-ultra-notes-{width}.png'))
+        # Polling ages an unchanged stream; a fresh heartbeat does not hide silence.
+        page.evaluate("run.localQueue.metrics.activity.secondsSinceOutput=180;venturePaintTurns()")
+        assert 'slow or stalled' in health.inner_text()
+        assert 'heartbeat does not confirm generation' in health.inner_text()
+        assert 'Last model output 3m ago' in telemetry.inner_text()
+        page.screenshot(path=str(shots/f'qwen-ultra-quiet-{width}.png'))
         page.evaluate("run.status='cancelled';run.sequence++;venturePaintTurns()")
+        assert health.is_hidden()
         assert panel.evaluate('(e)=>e.open')
         assert timeline.locator('.venture-progress-entry').count() == 4
         assert 'Stopped' in panel.locator(':scope > summary').inner_text()

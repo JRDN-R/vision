@@ -109,7 +109,7 @@ def deep_events(runtime, original, answer_reserve, context_tokens, profile):
                 # Share only explicitly public notes and non-content telemetry;
                 # the provisional answer and review remain ephemeral worker data.
                 activity = {key: event[key] for key in
-                            ('localThinking', 'localThinkingCharacters', 'localProgressSummaries')
+                            ('localThinking', 'localThinkingCharacters', 'localProgressSummaries', 'localActivity')
                             if key in event}
                 if activity:
                     yield activity

@@ -1,5 +1,62 @@
 """Bounded public activity summaries and native-stream telemetry, not private reasoning."""
+import math
 import re
+import time
+
+
+class StreamActivity:
+    """Measured activity for one inference pass; never retain stream text.
+
+    SSE comments prove contact with the runtime, not token generation. Token
+    counts come from llama.cpp's cumulative timings, never from chunk counts.
+    """
+    def __init__(self, request_number):
+        self.value = dict(version=1, requestNumber=request_number, startedAt=time.time(),
+                          lastEventAt=None, lastOutputAt=None, generatedTokens=None,
+                          receivedCharacters=0, finished=False)
+
+    def snapshot(self):
+        return dict(self.value)
+
+    def observe(self, event=None):
+        value, now = self.value, time.time()
+        value['lastEventAt'] = now
+        if event is None:  # A real runtime heartbeat, not synthetic progress.
+            return self.snapshot()
+        timings = event.get('timings') or {}
+        count = timings.get('predicted_n')
+        previous = value['generatedTokens']
+        advanced = type(count) is int and count >= 0 and (previous is None or count > previous)
+        if advanced:
+            value['generatedTokens'] = count
+        rate = timings.get('predicted_per_second')
+        if type(rate) in (int, float) and math.isfinite(rate) and rate > 0:
+            value['tokensPerSecond'] = rate
+        characters = 0
+        for choice in event.get('choices', []):
+            delta = choice.get('delta') or {}
+            reasoning = delta.get('reasoning_content')
+            if not isinstance(reasoning, str):
+                reasoning = delta.get('reasoning')
+            characters += sum(len(text) for text in
+                              (reasoning, delta.get('content'), delta.get('refusal'))
+                              if isinstance(text, str))
+            value['finished'] |= bool(choice.get('finish_reason'))
+        value['receivedCharacters'] += characters
+        if characters or (advanced and count > 0):
+            value['lastOutputAt'] = now
+        return self.snapshot()
+
+
+def activity_snapshot(value, now):
+    """Age observations at read time, even when no new stream events arrive."""
+    result = dict(value)
+    for field, target in (('startedAt', 'elapsedSeconds'), ('lastEventAt', 'secondsSinceEvent'),
+                          ('lastOutputAt', 'secondsSinceOutput')):
+        timestamp = value.get(field)
+        result[target] = (round(max(0, now-timestamp), 1)
+                          if type(timestamp) in (int, float) and math.isfinite(timestamp) else None)
+    return result
 
 PROGRESS_INSTRUCTION = (
     '\nWhen native thinking is enabled, publish useful high-level activity summaries at '

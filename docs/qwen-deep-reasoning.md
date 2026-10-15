@@ -58,6 +58,36 @@ interrupts the job; it does not replay hidden stages automatically. Only any
 already-streamed final-answer text is retained. Deep timings are excluded from
 the existing single-pass ETA calibration.
 
+## Reading live activity
+
+The input-token number is the fixed size of the original prepared request. It
+is not generated tokens, a progress bar, or tokens remaining. For example,
+`457 input tokens` can remain unchanged throughout a healthy Deep run.
+
+Updated processors report llama.cpp's cumulative generated-token count and
+measured speed for each pass, including native thinking and hidden draft/review
+output. Counts reset at the start of each pass. No transcript or intermediate
+answer is exposed. `Last model output` advances only when content or an increased
+token count arrives. `Last runtime contact` also includes real SSE heartbeats;
+heartbeats alone do not establish that generation is progressing. These ages are
+recomputed on every status poll, even if the stream stops sending events.
+
+After two minutes without output, the UI reports that processing may be slow or
+stalled and offers the existing Stop action. This is an observation, not a
+diagnosis or an automatic timeout: lengthy prompt processing can be legitimate.
+No response is replayed or terminated merely because output is quiet. The
+existing Stop/resource/deadline monitor continues to control the managed process.
+
+CPU-only 27B generation can take a long time: at 1.37 tokens/second, using the
+full 4,096-token draft thinking allowance would take about 50 minutes before
+draft-answer generation. This is arithmetic from a measured rate and a cap,
+not an ETA for a particular request. Mac acceleration may be unavailable; the
+activity panel states the actual compute route.
+
+Runs started by older processor code cannot retroactively acquire measurements.
+Their UI explicitly says live output measurements are unavailable. Finish or
+Stop the active request, update FUPCJ, refresh Vision, and start a new request.
+
 ## Update the existing FUPCJ installation
 
 The normal `vision-pc/Update-Venture.ps1` updater installs `local_reasoning.py`
