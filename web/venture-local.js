@@ -243,6 +243,7 @@ function ventureUpdateProgressNotes(host,run){
  state.historyTitle.textContent='Activity timeline · '+historySteps.length+' '+(historySteps.length===1?'entry':'entries');
  const keep=new Set(historySteps.map(step=>step.id));
  for(const [id,row] of state.rows)if(!keep.has(id)){row.remove();state.rows.delete(id);}
+ let previousRow=null;
  for(const step of historySteps){
   let row=state.rows.get(step.id);
   if(!row){
@@ -258,7 +259,10 @@ function ventureUpdateProgressNotes(host,run){
    row.append(heading,copy);state.rows.set(step.id,row);
   }
   // Move only when necessary: a normal status poll preserves scroll and selection.
-  if(row.parentNode!==state.list)state.list.appendChild(row);
+  // A formerly featured summary can rejoin history before an existing event.
+  const before=previousRow?previousRow.nextSibling:state.list.firstChild;
+  if(row!==before)state.list.insertBefore(row,before);
+  previousRow=row;
  }
  state.active=active;state.signature=signature;
 }
