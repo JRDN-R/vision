@@ -223,25 +223,45 @@ before relying on it for a lengthy job. Neither successful fixtures nor a longer
 budget certify answer accuracy, complete source coverage, or guaranteed completion.
 
 
-### Compact progress summaries
+### Detailed Qwen activity and public explanations
 
-Venture asks thinking-enabled local Qwen models to emit optional public progress
-notes at meaningful changes of approach. Only complete `progress_summary` notes
-of 3–30 words are accepted; raw reasoning is discarded. This uses the existing
-stream, with no additional model load or cloud summarization call. Notes consume
-some of the existing generation budget. Model compliance is not guaranteed:
-when no valid note arrives, the UI shows observed preparation/thinking/writing
-stages, never invented activity or a timer-driven sequence.
+The activity panel now separates three real sources of information:
 
-The current note stays visible. Earlier notes collapse when a new note arrives;
-completion, cancellation, and errors collapse the whole panel. Users can reopen
-saved notes, and normal polling preserves their expansion choices. Notes are
-stored with the account-owned run and survive page reloads. Retention is bounded
-to the latest 128 notes per run, including in extended-response mode. They are
-public model summaries, not a faithful transcript of internal computations.
+- **Processor events:** the file preparation, selected FUPCJ/Mac runtime, prompt
+  count, Deep-stage transitions, answer streaming, and saving milestones as each
+  actually occurs. Each saved event includes seconds since processing began.
+- **Model-written explanations:** optional `<progress_summary>` notes from Qwen.
+  When the thinking channel is enabled, Qwen is asked to describe evidence under
+  inspection, assumption checks, alternative approaches and unresolved limitations
+  at meaningful milestones. Each note may contain **3–120 words**, up to 1,600
+  characters. The latest model-authored explanation is kept visible instead of
+  being displaced by a generic server event. Compliant notes are not guaranteed.
+- **Non-content telemetry:** genuine prompt/context token counts, selected
+  compute route, Deep stage, processing duration, and number of native reasoning
+  stream **characters** observed over the observed stream duration. These are
+  not tokenizer counts of hidden reasoning and do not indicate correctness.
 
-Update the PC processor using `Setup-Vision-PC.ps1 -Action Update` to enable the
-backend stream. Older processors remain compatible but cannot supply notes.
+Raw private reasoning text remains discarded. Deep draft and critique answers
+also remain ephemeral, and are not written into the visible conversation. Only
+explicit public notes, stage events and the numbers above are saved. Qwen notes
+describe high-level activity; they are not a verbatim or guaranteed accurate
+record of internal reasoning and cannot certify that a claimed check succeeded.
+
+The activity timeline shows model notes and processor events as distinct labeled
+entries rather than a nested series of collapsed steps. It opens expanded by
+default on mobile and desktop, can be collapsed manually, and remains readable
+after stopping, completion or a page reload. Accepted-run polling preserves an
+existing user's expansion choices. History remains bounded to the latest 128
+entries per run. If Qwen produces no valid public note, Venture says so rather
+than manufacturing one. The existing stream is used; no extra inference or cloud
+summarization request is started. The model may spend some generation tokens on
+its public updates.
+
+The GitHub Pages build publishes updated UI after the code is merged to
+`main`. The actual Windows processor must be updated separately using
+`Update-Venture.ps1` (or the installed setup updater) when no inference is
+running. Refresh the browser after deployment. Runs started on older processors
+continue to display their old, shorter saved notes.
 
 ## Deep reasoning
 
