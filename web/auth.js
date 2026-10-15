@@ -4,6 +4,7 @@ const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='visio
 // Only an explicit, allowlisted destination on this visit can leave Vision.
 // Keep it in the URL so a refresh/reset attempt survives without sessionStorage.
 const accountContinueURL=(()=>{try{const url=new URL(location.href),dest=url.searchParams.get('continue');if(!/^https?:$/.test(url.protocol)||!['vortex','admins'].includes(dest))return '';const target=new URL('./'+dest+'/',url),connect=url.searchParams.get('connect');if(dest==='admins'&&/^[A-Za-z0-9_-]{43}$/.test(connect||''))target.searchParams.set('connect',connect);return target.href;}catch{return '';}})();
+const accountContinueName=accountContinueURL?(new URL(accountContinueURL).pathname.endsWith('/admins/')?'FirstUPCJax Admins':'Vortex'):'';
 let accountForwarding=false;
 let accountRestoring=true,accountRestoreFailed=false,accountObserver=null;
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
@@ -28,13 +29,13 @@ function accountUpdateGate(){
   else if(el.hasAttribute('data-account-inert')){el.inert=el.getAttribute('data-account-inert')==='true';el.removeAttribute('data-account-inert');}
  }
  if(locked)for(const dialog of document.querySelectorAll('dialog[open]:not(#whyVisionDialog)'))dialog.close();
- $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening your app…':accountRestoring?'Opening your workspace…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in to continue to your app.':'Sign in to save your work, or explore without an account.');
+ $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening '+accountContinueName+'…':accountRestoring?'Opening your workspace…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to '+accountContinueName+'.':'Sign in to save your work, or explore without an account.');
  $('accountGateRetry').hidden=!accountRestoreFailed;
  for(const id of ['accountGateSignIn','accountGateEmailSignIn','accountGateEmailCreate','accountGatePasswordReset']){const el=$(id);if(el)el.disabled=accountBusy||trialStarting||accountRestoring||accountRestoreFailed;}
  trialPaint();$('accountGateSignIn').hidden=false;$('accountGateEmailArea').hidden=false;
  $('accountGateOnline').hidden=true;
  $('accountGateDetail').textContent=location.protocol==='file:'?'The interface is stored in this HTML file. Connect online to sign in and use your FUPCJ Server projects. Google opens a secure sign-in window; the workspace stays here.':'Your projects, files, and saved settings are stored on FUPCJ Server. Sign in with Google or email/password.';
- if(accountContinueURL){$('accountGateTitle').textContent='Continue to Vision';$('accountGateDetail').textContent='Use your Vision account. After sign-in, you’ll return to your app.';}
+ if(accountContinueURL){$('accountGateTitle').textContent='Continue to '+accountContinueName;$('accountGateDetail').textContent=accountContinueName==='Vortex'?'One Vision account for Vision, Venture, and Vortex. After sign-in, you’ll return to Vortex.':'Use your invited Vision account. After sign-in, you’ll return to FirstUPCJax Admins.';}
  if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountRestoring||accountBusy?gate:accountRestoreFailed?$('accountGateRetry'):$('accountGateSignIn');target.focus({preventScroll:true});}
 }
 function accountUsesGoogle(){try{return localStorage.getItem(ACCOUNT_MODE)==='google';}catch{return cloudAuth?.kind==='firebase-google';}}
