@@ -1,10 +1,13 @@
 # FirstUPCJax Admins on FUPCJ Server
 
-Server installer package 1.0.1 fixes the "Invalid source revision" error in 1.0.0.
-If that error stopped your first attempt, extract this complete corrected package
-into a new folder and run `INSTALL-FIRSTUPCJAX-ADMINS.cmd` again. No uninstall or
-credential reset is needed. The plugin and server feature version remains 1.0.0;
-this is an installer correction.
+Server installer package 1.0.2 fixes the Windows PowerShell quoting failure that
+caused `NameError: name 'playwright' is not defined` and stopped Chromium setup.
+It also retains the 1.0.1 fix for "Invalid source revision". If either error stopped
+your attempt, extract this complete corrected package into a new folder and run
+`INSTALL-FIRSTUPCJAX-ADMINS.cmd` again. No uninstall, rollback or credential reset
+is needed. The plugin and server feature version remains 1.0.0; this is an installer
+correction. Existing Vision configuration, saved projects and connection tokens
+are preserved by the normal updater.
 
 This extension runs inside the existing always-on Vision PC service. It reuses the
 working Planning Center Services scheduling engine and adds an official Scheduling
@@ -97,7 +100,9 @@ config and restart the **Vision Private PC** task; no deletion is required.
 Run `python -m pytest tests/test_church_admin.py tests/test_church_oauth.py
  tests/test_church_package.py -q`, `node --test tests/church-scheduler.test.mjs`,
 `node tests/account-auth.test.cjs`, and `python web/build.py` from the repository.
-The GitHub workflow also parses Windows PowerShell scripts. Full server regression
+The Windows workflow executes the actual installer commands, installs Chromium
+into isolated dependencies, and launches the installed browser as well as parsing
+PowerShell scripts. Full server regression
 checks use `python -m pytest vision-pc/test_server.py vision-pc/test_firebase_auth.py
  vision-pc/test_account_administration.py -q` with base server dependencies installed.
 

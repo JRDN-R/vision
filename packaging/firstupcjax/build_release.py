@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 HERE=Path(__file__).resolve().parent
 NODE_SHA='158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541'
-NAME='FirstUPCJax-Admins-FUPCJ-1.0.1'
+NAME='FirstUPCJax-Admins-FUPCJ-1.0.2'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def archive(source,target,prefix):
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
