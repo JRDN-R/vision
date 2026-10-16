@@ -30,6 +30,8 @@ New-Item -ItemType Directory -Path $Root -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Source 'church_browser_install.py') -Destination $Root
 $PreviousCapture = $env:BOOTSTRAP_CAPTURE
 $PreviousExit = $env:BOOTSTRAP_EXIT
+$PreviousPackages = $env:BOOTSTRAP_EXPECTED_PACKAGES
+$PreviousBrowsers = $env:BOOTSTRAP_EXPECTED_BROWSERS
 try {
     if ($RealBrowser) {
         # Run the production pip command and production bootstrap command, not a
@@ -67,16 +69,24 @@ import json, os, sys
 from pathlib import Path
 Path(os.environ['BOOTSTRAP_CAPTURE']).write_text(json.dumps({
     'args': sys.argv, 'browsers': os.environ['PLAYWRIGHT_BROWSERS_PATH'],
-    'module': __file__}), encoding='utf-8')
+    'module': __file__,
+    'module_matches': Path(__file__).samefile(Path(os.environ['BOOTSTRAP_EXPECTED_PACKAGES']) / 'playwright/__main__.py'),
+    'browsers_match': Path(os.environ['PLAYWRIGHT_BROWSERS_PATH']).resolve() == Path(os.environ['BOOTSTRAP_EXPECTED_BROWSERS']).resolve()
+    }), encoding='utf-8')
 raise SystemExit(int(os.environ.get('BOOTSTRAP_EXIT', '0')))
 '@
         [IO.File]::WriteAllText((Join-Path $Module '__main__.py'),$FixtureCode,$Utf8)
         $env:BOOTSTRAP_CAPTURE = $Capture
         $env:BOOTSTRAP_EXIT = '0'
+        $env:BOOTSTRAP_EXPECTED_PACKAGES = $Packages
+        $env:BOOTSTRAP_EXPECTED_BROWSERS = $Browsers
         . $InstallCommand
         if ($LASTEXITCODE -ne 0) { throw 'The production browser installer invocation failed.' }
         $Recorded = Get-Content -LiteralPath $Capture -Raw -Encoding UTF8 | ConvertFrom-Json
-        if (($Recorded.args -join '|') -ne 'playwright|install|chromium' -or $Recorded.browsers -ne $Browsers -or $Recorded.module -ne (Join-Path $Module '__main__.py')) {
+        # The runner's TEMP can contain an 8.3 alias. Compare canonical paths
+        # inside Python, not a raw alias against Path.resolve()'s long form.
+        if (($Recorded.args -join '|') -ne 'playwright|install|chromium' -or -not $Recorded.browsers_match -or -not $Recorded.module_matches) {
+            Write-Host ($Recorded | ConvertTo-Json -Compress)
             throw 'The production invocation changed arguments, paths, or the selected dependency package.'
         }
         $env:BOOTSTRAP_EXIT = '23'
@@ -87,6 +97,8 @@ raise SystemExit(int(os.environ.get('BOOTSTRAP_EXIT', '0')))
 } finally {
     $env:BOOTSTRAP_CAPTURE = $PreviousCapture
     $env:BOOTSTRAP_EXIT = $PreviousExit
+    $env:BOOTSTRAP_EXPECTED_PACKAGES = $PreviousPackages
+    $env:BOOTSTRAP_EXPECTED_BROWSERS = $PreviousBrowsers
     if (-not $KeepForFollowingTests) { Remove-Item -LiteralPath $Fixture -Recurse -Force }
 }
 exit 0
