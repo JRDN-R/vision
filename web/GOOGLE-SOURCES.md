@@ -40,7 +40,9 @@ YouTube links. Enabling Google sign-in alone does not enable these additional AP
 - The Google access token is kept only in memory, reused for at most 50 minutes,
   and cleared on account changes/sign-out. It is not placed in a project, sent to
   FUPCJ Server, or saved in browser storage by Vision's Drive integration.
-- Up to 20 selected files, 100 MiB combined, enter the normal board import flow.
+- Up to 20 selected files, 10 GiB combined (10,737,418,240 bytes, displayed as
+  10 GB), enter the normal board import flow. Metadata, response headers, and
+  streamed bytes are checked against the remaining total download allowance.
   Docs export to Word, Sheets to Excel, Slides to PowerPoint, and Drawings to PDF.
   Google limits native document exports to 10 MB. Folder/shortcut selection and
   files whose owners prohibit downloads are rejected with a readable message.

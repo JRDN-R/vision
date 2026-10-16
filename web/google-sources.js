@@ -1,7 +1,9 @@
 // Selected Drive files and public YouTube search. OAuth tokens stay in memory.
 const GOOGLE_SOURCE_CONFIG={apiKey:VISION_FIREBASE.apiKey,appId:VISION_FIREBASE.appId.split(':')[1]};
 const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
-const DRIVE_MAX_BYTES=100*1024*1024,DRIVE_MAX_FILES=20;
+const DRIVE_MAX_BYTES=10*1024*1024*1024,DRIVE_MAX_FILES=20; // 10 GiB, displayed as GB.
+const DRIVE_MAX_SIZE_LABEL='10 GB';
+const DRIVE_SIZE_ERROR='The selected files exceed the '+DRIVE_MAX_SIZE_LABEL+' import limit. Choose fewer or smaller files.';
 const DRIVE_EXPORTS={
  'application/vnd.google-apps.document':{mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',ext:'.docx'},
  'application/vnd.google-apps.spreadsheet':{mime:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',ext:'.xlsx'},
@@ -32,10 +34,10 @@ async function googleSourceResponse(url,{signal,headers={},limit=1024*1024,timeo
  try{
   const response=await fetch(url,{headers,signal:controller.signal,credentials:'omit',cache:'no-store'});
   const maximum=response.ok?limit:64*1024,declared=Number(response.headers.get('content-length'));
-  if(declared>maximum){await response.body?.cancel();throw new Error(json?service+' returned too much data. Try a narrower search.':'The selected files exceed the 100 MB import limit. Choose fewer or smaller files.');}
+  if(declared>maximum){await response.body?.cancel();throw new Error(json?service+' returned too much data. Try a narrower search.':DRIVE_SIZE_ERROR);}
   const reader=response.body?.getReader();if(!reader)throw new Error(service+' returned an unreadable response.');
   const chunks=[];let size=0;
-  try{while(true){const{value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>maximum){await reader.cancel();throw new Error('This download exceeds the import size limit. Choose fewer or smaller files.');}chunks.push(value);}}
+  try{while(true){const{value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>maximum){await reader.cancel();throw new Error(json?service+' returned too much data. Try a narrower search.':DRIVE_SIZE_ERROR);}chunks.push(value);}}
   finally{reader.releaseLock();}
   if(controller.signal.aborted)throw new DOMException('Canceled','AbortError');
   const blob=new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'});
@@ -122,7 +124,7 @@ async function downloadDriveFile(doc,token,run,remaining){
  const meta=await googleSourceResponse(base+'?supportsAllDrives=true&fields='+encodeURIComponent(fields),{headers,signal:run.controller.signal,service:'Drive'});
  assertDriveCurrent(run);
  if(meta.capabilities?.canDownload===false)throw new Error('The owner has disabled downloads for '+(meta.name||'this file')+'.');
- if(Number(meta.size)>remaining)throw new Error('The selected files exceed the 100 MB import limit. Choose fewer or smaller files.');
+ if(Number(meta.size)>remaining)throw new Error(DRIVE_SIZE_ERROR);
  const format=DRIVE_EXPORTS[meta.mimeType];
  if(meta.mimeType?.startsWith('application/vnd.google-apps.')&&!format)throw new Error('Choose the original file instead of a folder or shortcut. This Google file type cannot be imported.');
  const url=format?base+'/export?mimeType='+encodeURIComponent(format.mime):base+'?alt=media&supportsAllDrives=true';
@@ -252,7 +254,7 @@ async function searchYouTubeVideos(more=false){
 }
 
 const driveDialog=document.createElement('dialog');driveDialog.id='driveDialog';driveDialog.setAttribute('aria-labelledby','driveTitle');
-driveDialog.innerHTML='<div class="row spread"><h2 id="driveTitle">Add from Google Drive</h2><button type="button" id="closeDrive" class="dialog-close" aria-label="Close Google Drive import">×</button></div><p id="driveIdentity" class="drive-identity"></p><p id="driveStatus" class="intro" role="status"></p><progress id="driveProgress" max="1" value="0" hidden></progress><p class="mini-note">Choose up to 20 files, 100 MB total. Google Docs, Sheets, and Slides import as Word, Excel, and PowerPoint files. Google may ask you to approve access to selected files.</p><div class="dialog-actions"><button id="driveCancel" type="button">Cancel</button><button id="driveChoose" type="button" class="primary">Choose files from Drive</button></div>';
+driveDialog.innerHTML='<div class="row spread"><h2 id="driveTitle">Add from Google Drive</h2><button type="button" id="closeDrive" class="dialog-close" aria-label="Close Google Drive import">×</button></div><p id="driveIdentity" class="drive-identity"></p><p id="driveStatus" class="intro" role="status"></p><progress id="driveProgress" max="1" value="0" hidden></progress><p class="mini-note">Choose up to '+DRIVE_MAX_FILES+' files, '+DRIVE_MAX_SIZE_LABEL+' total. Google Docs, Sheets, and Slides import as Word, Excel, and PowerPoint files. Google may ask you to approve access to selected files.</p><div class="dialog-actions"><button id="driveCancel" type="button">Cancel</button><button id="driveChoose" type="button" class="primary">Choose files from Drive</button></div>';
 document.body.appendChild(driveDialog);
 const driveButton=document.createElement('button');driveButton.id='boardAddDrive';driveButton.type='button';driveButton.innerHTML='<strong>Google Drive</strong><span>Files from your Google account</span>';$('boardAddFiles').after(driveButton);
 driveButton.onclick=()=>openDriveDialog();$('addAttachmentsDrive').onclick=()=>{if(selected)openDriveDialog(selected);};$('driveChoose').onclick=()=>void importDriveFiles();
