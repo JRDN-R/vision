@@ -4,7 +4,7 @@ on:
     branches: [codex/firstupcjax-admins-worker]
   pull_request:
     branches: [main]
-    paths: ['admins/**','web/admins*','vision-pc/church*','vision-pc/FirstUPCJax-Admins.ps1','vision-pc/server.py','vision-pc/Setup-Vision-PC.ps1','tests/test_church*.py','tests/church*','packaging/firstupcjax/**','.github/workflows/test-church-admin.yml']
+    paths: ['admins/**','web/admins*','vision-pc/church*','vision-pc/FirstUPCJax-Admins.ps1','vision-pc/server.py','vision-pc/Setup-Vision-PC.ps1','tests/test_church*.py','tests/church*','tests/firstupcjax*','packaging/firstupcjax/**','.github/workflows/test-church-admin.yml']
 permissions:
   contents: read
 jobs:
@@ -22,6 +22,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.21.0'
+      - name: Execute Windows installer revision handoff regression
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/firstupcjax-installer-windows.ps1
       - run: python -m pip install -r vision-pc/requirements.txt pytest==8.4.2 playwright==1.64.0
       - run: python -m pytest tests/test_church_admin.py tests/test_church_oauth.py tests/test_church_package.py -q
       - run: python -m playwright install --with-deps chromium

@@ -1,5 +1,11 @@
 # FirstUPCJax Admins on FUPCJ Server
 
+Server installer package 1.0.1 fixes the "Invalid source revision" error in 1.0.0.
+If that error stopped your first attempt, extract this complete corrected package
+into a new folder and run `INSTALL-FIRSTUPCJAX-ADMINS.cmd` again. No uninstall or
+credential reset is needed. The plugin and server feature version remains 1.0.0;
+this is an installer correction.
+
 This extension runs inside the existing always-on Vision PC service. It reuses the
 working Planning Center Services scheduling engine and adds an official Scheduling
 Email browser worker. It needs no new Docker container and no user laptop running.
