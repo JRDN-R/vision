@@ -1,10 +1,7 @@
 {
-  "title": "Live Qwen generation measurements",
+  "title": "Larger Google Drive imports",
   "items": [
-    "Qwen now reports real generated-token counts and generation speed during every Deep stage, including the hidden draft and review.",
-    "Input tokens are clearly labeled as request size, separate from the context capacity and live output measurements.",
-    "Last model output and last runtime contact are shown separately. A quiet-output warning does not treat heartbeats as generation or claim the model has frozen.",
-    "Older runs show when live measurements are unavailable. Update FUPCJ with Update-Venture.ps1 and start a new request to use the new measurements.",
-    "Deep's three stages, thinking budgets, selected model and context remain unchanged. Stop remains available, and only the final answer is saved to the conversation."
+    "Import up to 10 GB total from Google Drive in one selection, with up to 20 files.",
+    "The Drive dialog and size-limit messages now show the larger allowance. Google Docs, Sheets, and Slides still import as Word, Excel, and PowerPoint files."
   ]
 }

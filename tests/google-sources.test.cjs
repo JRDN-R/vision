@@ -5,7 +5,24 @@ const source=fs.readFileSync('web/google-sources.js','utf8'),cloud=fs.readFileSy
 const normalize=cloud.slice(cloud.indexOf('function normalizeYouTubeURL('),cloud.indexOf('function normalizeYouTubeImports('));
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture(){
+// Model large downloads without allocating gigabytes. Ordinary metadata/JSON
+// still uses real Blob contents; synthetic chunks carry only their byte counts.
+class SizeOnlyBlob extends Blob{
+ constructor(parts,options){const virtual=parts.some(part=>part.virtualSize!==undefined);super(virtual?[]:parts,options);if(virtual)this.virtualSize=parts.reduce((sum,part)=>sum+(part.virtualSize??part.size??part.byteLength),0);}
+ get size(){return this.virtualSize??super.size;}
+}
+class SizeOnlyFile extends SizeOnlyBlob{constructor(parts,name,options){super(parts,options);this.name=name;}}
+function sizedResponse(sizes,declared){
+ let index=0;
+ const response={ok:true,headers:new Headers(declared===undefined?{}:{'content-length':String(declared)}),canceled:false,released:false};
+ const cancel=async()=>{response.canceled=true;};
+ response.body={cancel,getReader:()=>({
+  read:async()=>index<sizes.length?{done:false,value:{byteLength:sizes[index],virtualSize:sizes[index++]}}:{done:true},
+  cancel,releaseLock(){response.released=true;}
+ })};
+ return response;
+}
+function fixture({sizeOnly=false}={}){
  const elements=new Map(),requests=[],imports=[],attachments=[],consents=[],pickers=[];
  class Element{
   constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.dataset={};this.attrs={};this.listeners={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.open=false;}
@@ -29,7 +46,7 @@ function fixture(){
   setCallback(callback){this.callback=callback;return this;}build(){const picker={...this.settings,dispose(){this.disposed=true;},setVisible:()=>queueMicrotask(()=>this.callback({action:'picked',docs:control.docs}))};pickers.push(picker);return picker;}
  }
  const google={picker:{DocsView,PickerBuilder,ViewId:{DOCS:'docs'},Feature:{MULTISELECT_ENABLED:'multiselect'},Action:{PICKED:'picked',CANCEL:'cancel'}}};
- const c={console,URL,URLSearchParams,Headers,Response,Blob,File,Uint8Array,ReadableStream,TextEncoder,AbortController,DOMException,setTimeout,clearTimeout,Date,Map,Set,Intl,
+ const c={console,URL,URLSearchParams,Headers,Response,Blob:sizeOnly?SizeOnlyBlob:Blob,File:sizeOnly?SizeOnlyFile:File,Uint8Array,ReadableStream,TextEncoder,AbortController,DOMException,setTimeout,clearTimeout,Date,Map,Set,Intl,
   window:{google},google,location:{origin:'https://vision.test'},document:{createElement:tag=>new Element(tag),body:new Element(),head:new Element()},$:el,
   VISION_FIREBASE:{apiKey:'public-test-key',appId:'1:123:web:abc'},accountFirebase:{currentUser:{uid:'user-a',email:'a@example.com',providerData:[{providerId:'google.com'}]}},accountAuthEpoch:1,accountSignedIn:()=>control.signedIn,
   accountSDK:{GoogleAuthProvider:Provider,browserPopupRedirectResolver:{},reauthenticateWithPopup:async(user,provider,resolver)=>{assert.equal(resolver,c.accountSDK.browserPopupRedirectResolver,'Drive consent needs the explicit popup resolver');consents.push({user,provider});return control.reauth(user);}},
@@ -109,9 +126,60 @@ const videoId='jNQXAC9IVRw';
   const f=fixture();f.control.docs=[{id:'locked-file'}];f.control.response=({url})=>url.pathname.endsWith('/about')?json({}):json({name:'Locked',capabilities:{canDownload:false}});
   await f.run('importDriveFiles()');assert.equal(f.requests.length,2);assert.equal(f.imports.length,0);assert.match(f.el('driveStatus').textContent,/disabled downloads/);
   f.control.response=()=>new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(6));controller.enqueue(new Uint8Array(6));controller.close();}}));
-  await assert.rejects(f.run("googleSourceResponse('https://www.googleapis.com/test',{limit:10,json:false})"),/size limit/);
+  await assert.rejects(f.run("googleSourceResponse('https://www.googleapis.com/test',{limit:10,json:false})"),/10 GB import limit/);
   f.control.response=()=>json({error:{errors:[{reason:'exportSizeLimitExceeded'}]}},403);
   await assert.rejects(f.run("googleSourceResponse('https://www.googleapis.com/test',{service:'Drive'})"),/10 MB/);
+ }
+ // The real import path accepts files above the old cap and totals up to and
+ // including 10 GiB, for both new board modules and existing-module attachments.
+ const GiB=1024**3,limit=10*GiB;
+ for(const sizes of [[100*1024**2+1],[limit-1],[limit],[6*GiB,4*GiB]]){
+  for(const attach of [false,true]){
+   const f=fixture({sizeOnly:true});
+   assert.equal(f.run('DRIVE_MAX_BYTES'),limit);assert.match(f.el('driveDialog').innerHTML,/Choose up to 20 files, 10 GB total/);
+   if(attach){f.c.state.nodes=[{id:'module',title:'Files'}];f.run("openDriveDialog('module')");}
+   f.control.docs=sizes.map((size,i)=>({id:'file-'+i}));
+   f.control.response=({url})=>{
+    if(url.pathname.endsWith('/about'))return json({});
+    const size=sizes[Number(url.pathname.split('file-')[1])];
+    return url.searchParams.get('alt')==='media'?sizedResponse([size],size):json({name:'File.bin',mimeType:'application/octet-stream',size:String(size)});
+   };
+   await f.run('importDriveFiles()');
+   const received=attach?f.attachments:f.imports;assert.equal(received.length,1);
+   assert.deepEqual(Array.from(received[0].files,file=>file.size),sizes);assert.equal(f.el('driveDialog').open,false);
+  }
+ }
+ // Reject one byte over the total at every enforcement layer, including
+ // exports with no size metadata and downloads with missing/incorrect headers.
+ for(const layer of ['metadata','header','stream','stream-underreported']){
+  for(const prefix of [0,6*GiB]){
+   const f=fixture({sizeOnly:true}),remaining=limit-prefix,responses=[];
+   f.control.docs=[...(prefix?[{id:'first'}]:[]),{id:'overflow'}];
+   f.control.response=({url})=>{
+    if(url.pathname.endsWith('/about'))return json({});
+    const first=url.pathname.endsWith('/first');
+    if(url.searchParams.get('alt')==='media'||url.pathname.endsWith('/export')){
+     const response=first?sizedResponse([prefix],prefix):sizedResponse([remaining,1],layer==='header'?remaining+1:layer==='stream-underreported'?1:undefined);
+     responses.push(response);return response;
+    }
+    return json({name:'File',mimeType:layer==='stream'&&!first?'application/vnd.google-apps.document':'application/octet-stream',
+     ...(first?{size:String(prefix)}:layer==='metadata'?{size:String(remaining+1)}:layer==='stream-underreported'?{size:'1'}:{})});
+   };
+   await f.run('importDriveFiles()');
+   assert.equal(f.imports.length,0);assert.equal(f.attachments.length,0);
+   assert.equal(f.el('driveStatus').textContent,'The selected files exceed the 10 GB import limit. Choose fewer or smaller files.');
+   assert.equal(responses.length,(prefix?1:0)+(layer==='metadata'?0:1),'metadata rejects before downloading');
+   if(layer!=='metadata')assert.equal(responses.at(-1).canceled,true);
+   if(layer.startsWith('stream'))assert.equal(responses.at(-1).released,true);
+  }
+ }
+ // Raising the byte allowance must preserve both Picker and import count caps.
+ for(const count of [20,21]){
+  const f=fixture();f.control.docs=Array.from({length:count},(_,i)=>({id:'file-'+i}));
+  f.control.response=({url})=>url.pathname.endsWith('/about')?json({}):url.searchParams.get('alt')==='media'?new Response('x'):json({name:'File.txt',mimeType:'text/plain',size:'1'});
+  await f.run('importDriveFiles()');assert.equal(f.pickers[0].max,20);
+  if(count===20){assert.equal(f.imports.length,1);assert.equal(f.imports[0].files.length,20);}
+  else{assert.equal(f.imports.length,0);assert.equal(f.requests.length,1);assert.equal(f.el('driveStatus').textContent,'Choose up to 20 files at a time.');}
  }
  // Search happens on request, renders safe cards, and fills a canonical URL.
  {
