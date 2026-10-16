@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 HERE=Path(__file__).resolve().parent
 NODE_SHA='158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541'
-NAME='FirstUPCJax-Admins-FUPCJ-1.0.1'
+NAME='FirstUPCJax-Admins-FUPCJ-1.0.2'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def archive(source,target,prefix):
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
@@ -66,7 +66,7 @@ def build(args):
         saved=json.loads((unpacked/'private/pc-config.json').read_text());assert saved==private
         validate_plugin(unpacked/plugin.name)
         # Real source tests from this exact archive, including native runtime/catalog.
-        subprocess.run([args.python,'-m','pytest','tests/test_church_admin.py','tests/test_church_oauth.py','tests/test_church_package.py','-q'],cwd=unpacked/'source',check=True)
+        subprocess.run([args.python,'-m','pytest','tests/test_church_admin.py','tests/test_church_oauth.py','tests/test_church_package.py','tests/test_church_browser_install.py','-q'],cwd=unpacked/'source',check=True)
         subprocess.run(['node','--test','tests/church-scheduler.test.mjs'],cwd=unpacked/'source',check=True,stdout=subprocess.DEVNULL)
         subprocess.run(['node','--check','web/admins.js'],cwd=unpacked/'source',check=True)
         subprocess.run([args.python,'web/build.py'],cwd=unpacked/'source',check=True)

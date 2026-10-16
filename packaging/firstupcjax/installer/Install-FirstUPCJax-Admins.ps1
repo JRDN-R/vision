@@ -22,7 +22,7 @@ try {
     $Source=Join-Path $Package 'source\vision-pc'
     # Pin the bundled processor revision. The updater accepts revision names
     # without path separators; a development branch name is not a valid input.
-    & (Join-Path $Source 'Setup-Vision-PC.ps1') -Action Update -SourceDirectory $Source -SourceRef '065c7d3541137fc9e724cf60b8c10761a6ac2ecc'
+    & (Join-Path $Source 'Setup-Vision-PC.ps1') -Action Update -SourceDirectory $Source -SourceRef 'a4b2600e46834dc327d826c48be5d591f9bc69f1'
     if ($LASTEXITCODE -ne 0) { throw 'Vision source update failed. Check the retained processor backup.' }
     & (Join-Path $Root 'FirstUPCJax-Admins.ps1') -Action Setup -PrivateConfiguration (Join-Path $Package 'private\pc-config.json') -NodeArchive (Join-Path $Package 'vendor\node-v24.21.0-win-x64.zip')
     if (-not $?) { throw 'FirstUPCJax Admins setup did not finish.' }

@@ -49,8 +49,7 @@ if ($Action -eq 'Setup') {
     if ($LASTEXITCODE -ne 0) { throw 'The Windows scheduling runtime did not start.' }
     & $Python -m pip --isolated install --index-url https://pypi.org/simple --disable-pip-version-check --no-input --only-binary=:all: --target $Packages -r (Join-Path $Root 'requirements-church.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Notification browser dependency installation failed.' }
-    $env:PLAYWRIGHT_BROWSERS_PATH = $Browsers
-    & $Python -c 'import sys,runpy; sys.path.insert(0,sys.argv.pop(1)); sys.argv=["playwright","install","chromium"]; runpy.run_module("playwright",run_name="__main__")' $Packages
+    & $Python (Join-Path $Root 'church_browser_install.py') --packages-path $Packages --browsers-path $Browsers
     if ($LASTEXITCODE -ne 0) { throw 'Chromium installation failed.' }
     # Reload after downloads. Preserve other features and existing owner identity.
     $Config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
