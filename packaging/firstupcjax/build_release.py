@@ -66,7 +66,7 @@ def build(args):
         saved=json.loads((unpacked/'private/pc-config.json').read_text());assert saved==private
         validate_plugin(unpacked/plugin.name)
         # Real source tests from this exact archive, including native runtime/catalog.
-        subprocess.run([args.python,'-m','pytest','tests/test_church_admin.py','tests/test_church_oauth.py','tests/test_church_package.py','-q'],cwd=unpacked/'source',check=True)
+        subprocess.run([args.python,'-m','pytest','tests/test_church_admin.py','tests/test_church_oauth.py','tests/test_church_package.py','tests/test_church_browser_install.py','-q'],cwd=unpacked/'source',check=True)
         subprocess.run(['node','--test','tests/church-scheduler.test.mjs'],cwd=unpacked/'source',check=True,stdout=subprocess.DEVNULL)
         subprocess.run(['node','--check','web/admins.js'],cwd=unpacked/'source',check=True)
         subprocess.run([args.python,'web/build.py'],cwd=unpacked/'source',check=True)

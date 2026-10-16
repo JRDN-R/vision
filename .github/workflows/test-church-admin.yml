@@ -26,9 +26,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/firstupcjax-installer-windows.ps1
+      - name: Execute Windows browser installation command regression
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/firstupcjax-browser-install-windows.ps1
       - run: python -m pip install -r vision-pc/requirements.txt pytest==8.4.2 playwright==1.64.0
-      - run: python -m pytest tests/test_church_admin.py tests/test_church_oauth.py tests/test_church_package.py -q
+      - run: python -m pytest tests/test_church_admin.py tests/test_church_oauth.py tests/test_church_package.py tests/test_church_browser_install.py -q
       - run: python -m playwright install --with-deps chromium
+        if: runner.os != 'Windows'
+      - name: Install and launch Chromium using production Windows setup commands
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/firstupcjax-browser-install-windows.ps1 -RealBrowser
       - run: python -m pytest tests/test_church_browser.py vision-pc/test_server.py vision-pc/test_firebase_auth.py vision-pc/test_account_administration.py -q
       - run: node --test tests/church-scheduler.test.mjs
       - run: node --check web/admins.js
