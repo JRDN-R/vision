@@ -25,6 +25,15 @@ def test_zip_launcher_checks_nested_script_before_elevation():
     assert text.index('if not exist')<text.index('-Verb RunAs')
     assert '%~dp0installer\\Install-FirstUPCJax-Admins.ps1' in text and 'Extract All' in text
 
+def test_packaged_revision_is_accepted_by_actual_updater_guard():
+    installer=(PACKAGE/'installer/Install-FirstUPCJax-Admins.ps1').read_text()
+    updater=(ROOT/'vision-pc/Setup-Vision-PC.ps1').read_text()
+    ref=re.search(r"-SourceRef '([^']+)'",installer).group(1)
+    guard=re.search(r"\$SourceRef -notmatch '([^']+)'",updater).group(1)
+    assert re.fullmatch(r'[a-f0-9]{40}',ref), 'Packaged installs must pin an immutable revision.'
+    assert re.fullmatch(guard,ref), 'The package and updater must agree on the source revision format.'
+    assert '-SourceDirectory $Source' in installer
+
 def test_activation_health_checks_and_preserves_prior_config():
     text=(ROOT/'vision-pc/FirstUPCJax-Admins.ps1').read_text()
     assert 'nativeMcpReady' in text and 'credentialsSaved' in text
