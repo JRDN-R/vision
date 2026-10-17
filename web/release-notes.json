@@ -1,7 +1,8 @@
 {
-  "title": "Larger Google Drive imports",
+  "title": "Venture prompt controls",
   "items": [
-    "Import up to 10 GB total from Google Drive in one selection, with up to 20 files.",
-    "The Drive dialog and size-limit messages now show the larger allowance. Google Docs, Sheets, and Slides still import as Word, Excel, and PowerPoint files."
+    "Copy your prompts and responses. Copy buttons show a check mark for two seconds after copying.",
+    "Use the pencil beside a prompt to return it to the composer and remove that turn and everything after it. Edit the text, choose a model, and send again.",
+    "Prompt editing requires the updated FUPCJ Server. Original attachments and earlier conversation context are retained."
   ]
 }

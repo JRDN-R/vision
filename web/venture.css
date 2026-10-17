@@ -229,3 +229,5 @@ venture-loading-symbol svg{display:block;width:100%;height:100%}
 .venture-progress-entry-heading span{opacity:.8;font-variant-numeric:tabular-nums}
 .venture-progress-entry p{margin:4px 0 1px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text,#e1e5dc)}
 @media(prefers-reduced-motion:reduce){.venture-progress-notes summary::before{transition:none}}
+
+.venture-prompt-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:6px;white-space:normal}.venture-root .venture-prompt-actions .v-icon{width:36px;height:36px;min-width:36px;padding:9px}.venture-root [data-copy-feedback="true"]{color:var(--accent)}

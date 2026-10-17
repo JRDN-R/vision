@@ -502,6 +502,9 @@ class Sessions:
                         import shutil
                         shutil.rmtree(directory, ignore_errors=True)
                         return jsonify(self.snapshot(dict(old))), 202
+                    for referenced in (previous,retry_of):
+                        if referenced and not db.execute('SELECT 1 FROM project_runs WHERE id=? AND project_id=?',(referenced,project_id)).fetchone():
+                            raise self.Error('The conversation was edited. Reload before sending.',409)
                     busy = db.execute("SELECT id FROM project_runs WHERE project_id=? AND status IN ('queued','preparing','submitting','in_progress','saving')", (project_id,)).fetchone()
                     if busy:
                         raise self.Error('A response is already running in this project.', 409)

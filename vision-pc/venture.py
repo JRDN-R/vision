@@ -406,6 +406,41 @@ class Venture:
                 warning='Conversation removed from history and memory. Some files are locked; FUPCJ Server will retry disk cleanup after restart.'
             return dict(deleted=True,conversationId=cid,storageWarning=warning)
 
+    def truncate(self,cid,uid,rid):
+        """Remove the edited turn and later turns, retaining accounted usage."""
+        from sessions import TERMINAL
+        with self.mirror_lock:
+            self.lookup(cid,uid)
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                self.lookup(cid,uid,db)
+                rows=db.execute('SELECT * FROM project_runs WHERE project_id=? ORDER BY created_at,id',(cid,)).fetchall()
+                index=next((i for i,r in enumerate(rows) if r['id']==rid),None)
+                if index is None:raise self.Error('This prompt is no longer available. Reload the conversation.',404)
+                if any(r['status'] not in TERMINAL for r in rows):
+                    raise self.Error('Stop the active response before editing a prompt.',409)
+                removed=[dict(r) for r in rows[index:]]
+            for run in removed:
+                try:self.funding.account_for(run)
+                except Exception:raise self.Error('Usage is still being saved. Try editing again shortly.',503) from None
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                current=db.execute('SELECT id,status FROM project_runs WHERE project_id=? ORDER BY created_at,id',(cid,)).fetchall()
+                if [r['id'] for r in current]!=[r['id'] for r in rows] or any(r['status'] not in TERMINAL for r in current):
+                    raise self.Error('The conversation changed. Reload before editing.',409)
+                for run in removed:
+                    for table,column in [('venture_memory','run_id'),('venture_memory_indexed','run_id'),('run_events','run_id'),('run_artifacts','run_id'),('context_responses','run_id'),('context_uploads','run_id')]:
+                        db.execute('DELETE FROM '+table+' WHERE '+column+'=?',(run['id'],))
+                    db.execute('DELETE FROM project_runs WHERE id=?',(run['id'],))
+                db.execute('UPDATE venture_conversations SET revision=revision+1,updated_at=? WHERE id=?',(time.time(),cid))
+            # Input files may be shared by retained retries. Keep them; remove
+            # message mirrors so a recovery cannot resurrect the deleted text.
+            for run in removed:
+                (self.root(cid)/'messages'/(run['id']+'.json')).unlink(missing_ok=True)
+            self.mirror_metadata(cid)
+            return dict(conversation=self.metadata(self.lookup(cid,uid)),retainedRunIds=[r['id'] for r in rows[:index]],
+                        previousRun=self.sessions.snapshot(dict(rows[index-1])) if index else None)
+
     def register_routes(self):
         app=self.app
         @app.route('/api/venture/conversations',methods=['GET','POST'])
@@ -455,6 +490,13 @@ class Venture:
                            localModel=self.sessions.local.catalog(),
                            nextCursor=json.dumps([rows[-1]['updated_at'],rows[-1]['id']]) if more else None)
 
+        @app.post('/api/venture/conversations/<cid>/truncate')
+        def venture_truncate(cid):
+            request.max_content_length=8192
+            uid=self.account()
+            body=request.get_json(silent=True) or {}
+            return jsonify(self.truncate(cid,uid,body.get('runId')))
+
         @app.route('/api/venture/conversations/<cid>',methods=['GET','PATCH','DELETE'])
         def venture_conversation(cid):
             uid=self.account()
@@ -493,6 +535,7 @@ class Venture:
                 where+=' AND (created_at<? OR (created_at=? AND id<?))';params.extend([when,when,rid])
             with self.db() as db:
                 rows=db.execute('SELECT * FROM project_runs WHERE '+where+' ORDER BY created_at DESC,id DESC LIMIT 101',params).fetchall()
+                retained=[r[0] for r in db.execute('SELECT id FROM project_runs WHERE project_id=?',(cid,))]
             more=len(rows)>100;rows=rows[:100]
             # Historical records are mirrored on demand without deleting their originals.
             if not since:
@@ -502,7 +545,7 @@ class Venture:
                         except OSError:pass
             runs=[{**self.sessions.snapshot(dict(r)),'retryOf':r['venture_retry_of']} for r in reversed(rows)]
             watermark=max([since]+[r['updated_at'] for r in rows])
-            return jsonify(conversation=self.metadata(self.lookup(cid,uid)),runs=runs,cursor=watermark,
+            return jsonify(conversation=self.metadata(self.lookup(cid,uid)),runs=runs,cursor=watermark,retainedRunIds=retained,
                            localModel=self.sessions.local.catalog(),
                            nextCursor=json.dumps([rows[-1]['created_at'],rows[-1]['id']]) if more else None)
 

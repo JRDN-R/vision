@@ -159,6 +159,36 @@ class VentureTests(unittest.TestCase):
         self.venture.funding.exhausted(self.service.row(rid),'credit_balance_exhausted')
         self.assertEqual(self.venture.funding.status('firebase:alice',key_id('sk-test-venture'))['status'],'exhausted')
 
+    def test_edit_truncates_saved_history_memory_and_preserves_billing(self):
+        first=self.submit().json['runId'];self.complete(first)
+        second=self.submit('request-edit-second',previous=first).json['runId'];self.complete(second,'resp_edit_2')
+        third=self.submit('request-edit-third',previous=second).json['runId'];self.complete(third,'resp_edit_3')
+        before=self.venture.funding.status('firebase:alice',key_id('sk-test-venture'))
+        result=self.client.post(self.path+'/truncate',headers=self.a,json={'runId':second})
+        self.assertEqual(result.status_code,200,result.json)
+        self.assertEqual(result.json['retainedRunIds'],[first])
+        for query in ('','?since=9999999999'):
+            saved=self.client.get(self.path+query,headers=self.a).json
+            self.assertEqual(saved['retainedRunIds'],[first])
+            self.assertNotIn(second,[r['runId'] for r in saved['runs']])
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM venture_memory WHERE run_id IN (?,?)',(second,third)).fetchone()[0],0)
+        self.assertFalse((self.venture.root(self.cid)/'messages'/(second+'.json')).exists())
+        self.assertEqual(self.venture.funding.status('firebase:alice',key_id('sk-test-venture')),before)
+        resent=self.submit('request-edit-replacement',previous=first)
+        self.assertEqual(resent.status_code,202,resent.json)
+        self.assertEqual(resent.json['previousRunId'],first)
+
+    def test_edit_rejects_other_owner_and_active_response(self):
+        first=self.submit().json['runId']
+        self.assertEqual(self.client.post(self.path+'/truncate',headers=self.b,json={'runId':first}).status_code,404)
+        self.assertEqual(self.client.post(self.path+'/truncate',headers=self.a,json={'runId':first}).status_code,409)
+        self.complete(first)
+        result=self.client.post(self.path+'/truncate',headers=self.a,json={'runId':first})
+        self.assertEqual(result.status_code,200,result.json)
+        self.assertEqual(result.json['retainedRunIds'],[])
+        self.assertEqual(self.client.get(self.path,headers=self.a).json['runs'],[])
+
     def test_retry_preserves_branch_and_request_identity(self):
         first=self.submit().json['runId'];self.complete(first)
         second=self.submit('request-venture-0002',previous=first).json['runId'];self.complete(second,'resp_venture_2')
