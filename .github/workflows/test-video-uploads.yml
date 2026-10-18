@@ -47,4 +47,6 @@ jobs:
           python -m pip install playwright
           python -m playwright install --with-deps chromium
       - name: Verify phone and desktop settings and activity
-        run: python tests/processing-browser.py
+        run: |
+          python tests/processing-browser.py
+          python tests/workspace-route-browser.py
