@@ -968,8 +968,9 @@ function activityQueueState(){
  const documents=state.nodes.flatMap(n=>(n.attachments||[]).filter(source=>source.documentJob&&source.documentJob.status!=='complete').map(source=>({n,source,job:source.documentJob})));
  const visual=state.nodes.flatMap(n=>(n.attachments||[]).filter(source=>source.frameCollection&&source.visualAnalysis&&!['complete','disabled'].includes(source.visualAnalysis.status)).map(source=>({n,source})));
  const runs=(state.consoleSession?.runs||[]).filter(run=>['preparing','queued','in_progress','disconnected'].includes(run.status)).concat(typeof ventureQueueActivity==='function'?ventureQueueActivity():[]);
- const count=entries.filter(({job})=>job.status!=='error').length+active.length+videos.filter(n=>n.pcVideo.status!=='error').length+documents.filter(({job})=>!['error','paused'].includes(job.status)).length+runs.length+visual.filter(({source})=>source.visualAnalysis.status!=='paused').length;
- return{entries,active,videos,documents,runs,visual,count};
+ const naming=state.settings?.autoNameProject&&state.settings?.autoNaming&&!['complete','cancelled'].includes(state.settings.autoNaming.status)?state.settings.autoNaming:null;
+ const count=(naming&&naming.status!=='paused'?1:0)+entries.filter(({job})=>job.status!=='error').length+active.length+videos.filter(n=>n.pcVideo.status!=='error').length+documents.filter(({job})=>!['error','paused'].includes(job.status)).length+runs.length+visual.filter(({source})=>source.visualAnalysis.status!=='paused').length;
+ return{entries,active,videos,documents,runs,visual,naming,count};
 }
 function notifyActivityQueue({entries,active,videos,documents,runs}){
  const account=typeof accountAuthEpoch==='undefined'?0:accountAuthEpoch,keys=new Set();
@@ -997,10 +998,10 @@ function notifyActivityQueue({entries,active,videos,documents,runs}){
 }
 function renderActivity(){
  const host=$('activityList'),summary=$('activitySummary'),indicator=$('queueIndicator');if(!host||!summary)return;
- const activity=activityQueueState(),{entries,active,videos,documents,runs,visual,count}=activity;notifyActivityQueue(activity);
- const needsAttention=entries.some(({job})=>job.status==='error')||videos.some(n=>n.pcVideo.status==='error')||documents.some(({job})=>['error','paused'].includes(job.status))||visual.some(({source})=>source.visualAnalysis.status==='paused');
+ const activity=activityQueueState(),{entries,active,videos,documents,runs,visual,naming,count}=activity;notifyActivityQueue(activity);
+ const needsAttention=naming?.status==='paused'||entries.some(({job})=>job.status==='error')||videos.some(n=>n.pcVideo.status==='error')||documents.some(({job})=>['error','paused'].includes(job.status))||visual.some(({source})=>source.visualAnalysis.status==='paused');
  if(indicator){if(indicator._project===state&&indicator._count>0&&!count&&!needsAttention)indicator._completeUntil=Date.now()+2000;indicator._project=state;indicator._count=count;const justCompleted=!count&&!needsAttention&&indicator._completeUntil>Date.now();if(justCompleted)setTimeout(()=>renderActivity(),2100);indicator.hidden=!count&&!needsAttention&&!justCompleted;indicator.setAttribute('data-state',needsAttention?'error':justCompleted?'complete':'working');indicator.querySelector('span').textContent=needsAttention&&!count?'!':justCompleted?'✓':String(count);indicator.setAttribute('aria-label',needsAttention?'Processing needs attention. Open activity':justCompleted?'Processing complete. Open activity':`${count} processing job${count===1?'':'s'} queued or active. Open activity`);indicator.title=needsAttention?'Processing needs attention':`${count} job${count===1?'':'s'} queued or active`;}
- const stopped=entries.filter(({job})=>job.status==='error').length+videos.filter(n=>n.pcVideo.status==='error').length+documents.filter(({job})=>['error','paused'].includes(job.status)).length+visual.filter(({source})=>source.visualAnalysis.status==='paused').length;
+ const stopped=(naming?.status==='paused'?1:0)+entries.filter(({job})=>job.status==='error').length+videos.filter(n=>n.pcVideo.status==='error').length+documents.filter(({job})=>['error','paused'].includes(job.status)).length+visual.filter(({source})=>source.visualAnalysis.status==='paused').length;
  summary.textContent=count?`${count} task${count===1?'':'s'} remaining${navigator.onLine===false?' · offline':''}`:stopped?'Processing needs attention':'All caught up';host.replaceChildren();
  const add=(title,detail,percent,retry)=>{
   const row=document.createElement('div');row.className='activity-row';const heading=document.createElement('strong');heading.textContent=title;row.appendChild(heading);
@@ -1016,7 +1017,7 @@ function renderActivity(){
  for(const run of runs){const row=add(run.ventureActivity?'Venture':'Vision session',run.phase||'Processing project',null),button=document.createElement('button');button.className='ghost';button.textContent='View session';button.onclick=()=>{$('activityDialog').close();if(run.ventureActivity)void ventureOpen();else openVisionConsole();};row.appendChild(button);}
  for(const {job} of entries){const total=job.sections.length,done=job.sections.filter(s=>s.done).length,percent=job.remoteId?(100*done+(Number(job.progress)||0)*(total-done))/total:100*done/total,waiting=job.status==='approval_waiting';const row=add(job.sourceName,waiting?queueStatusText(job):`${Math.round(percent)}% · ${total-done} section${total-done===1?'':'s'} left · ${queueStatusText(job)}`,waiting?null:percent,canRetryTranscription(job)?()=>retryTranscriptionQueue(job.id):null);addQueueProviderControl(row,job);}
  for(const entry of recentActivity)add(entry.title,entry.detail+' · '+new Date(entry.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),null);
- const naming=state.settings?.autoNaming;if(state.settings?.autoNameProject&&naming&&!['complete','cancelled'].includes(naming.status)){add('Naming project',naming.error||naming.status,null,naming.status==='paused'?()=>retryProjectNaming():null);}
+ if(naming){add('Naming project',naming.error||naming.status,null,naming.status==='paused'?()=>retryProjectNaming():null);}
  renderNodeActivities(activity);
  if(!count&&!stopped&&!recentActivity.length&&!naming)add('No queued work','Video imports, document preparation, transcriptions, and project runs appear here.',null);
 }

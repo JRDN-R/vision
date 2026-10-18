@@ -9,7 +9,7 @@ function projectNamingSource(project=state){return project.nodes.find(n=>['image
 function projectNamingReady(project=state){
  // Wait for accepted source preparation, so a video or document can contribute
  // real content instead of receiving a name based only on its extension.
- return !project.youtubeImports?.length&&!project.nodes.some(n=>n.pcVideo&&!['complete','error'].includes(n.pcVideo.status)||(n.transcriptionJobs||[]).some(j=>!['error','paused'].includes(j.status))||(n.attachments||[]).some(a=>a.documentJob&&!['complete','error','paused'].includes(a.documentJob.status)));
+ return !project.youtubeImports?.some(job=>!['failed','error','cancelled'].includes(job.status))&&!project.nodes.some(n=>n.pcVideo&&!['complete','error'].includes(n.pcVideo.status)||(n.transcriptionJobs||[]).some(j=>!['error','paused'].includes(j.status))||(n.attachments||[]).some(a=>a.documentJob&&!['complete','error','paused'].includes(a.documentJob.status)));
 }
 let projectNamingBusy=false;
 async function cancelProjectNaming(){
@@ -19,7 +19,7 @@ async function cancelProjectNaming(){
 }
 function retryProjectNaming(){if(!projectNamingEligible())return;delete state.settings.autoNaming;markDirty();void refreshProjectNaming();}
 async function refreshProjectNaming(){
- if(projectNamingBusy||!projectNamingEligible()||projectIsTemporary()||projectLoading||projectAccountSwitching)return;
+ if(projectNamingBusy||busy||ioBusy||!projectNamingEligible()||projectIsTemporary()||projectLoading||projectAccountSwitching)return;
  const source=projectNamingSource();if(!source)return;
  const settings=state.settings;
  if(settings.autoNaming&&['complete','cancelled','paused'].includes(settings.autoNaming.status))return;
