@@ -227,6 +227,7 @@ class AccountAdministration:
         with self.db() as db:
             for table, where, args in (
                 ('vortex_jobs', "uid=? AND status IN ('queued','processing')", (uid,)),
+                ('title_eyes_jobs', "uid=? AND status IN ('queued','processing')", (uid,)),
                 ('jobs', "uid=? AND status IN ('queued','processing')", (uid,)),
                 ('venture_dictation_requests', "uid=? AND status='processing'", (uid,))):
                 if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', args).fetchone():
@@ -341,7 +342,7 @@ class AccountAdministration:
                                ('venture_ledger','uid'),('venture_container_costs','uid'),
                                ('venture_dictation_requests','uid'),('account_credentials','uid'),
                                ('gemini_access','uid'),('gemini_access_decisions','uid'),
-                               ('gemini_usage','uid'),('vortex_jobs','uid'),('responses','uid'),
+                               ('gemini_usage','uid'),('vortex_jobs','uid'),('title_eyes_jobs','uid'),('responses','uid'),
                                ('jobs','uid'),('owned_source_leases','uid'),('owned_import_receipts','uid'),('owned_assets','uid'),
                                ('audit_events','uid'),('audit_signins','uid'),
                                ('audit_account_metadata','uid'),('audit_user_apps','uid'),
