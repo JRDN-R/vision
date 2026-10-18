@@ -582,7 +582,6 @@ class ContextEngine:
                     self.stop.wait(.01)
             self._progress(job,'Saving searchable index')
             manifest = dict(schema=SCHEMA,projectId=project,revision=revision,projectHash=job['digest'],pipelineIdentity=self._pipeline_identity(),
-                            title=redact(str(snapshot.get('title') or 'Untitled project'))[:200],
                             nodeCount=len(nodes),sourceCount=len(records),unitCount=len(chunks),nodes=nodes,edges=edges,
                             sourceInventory=[dict(id=r['source'],nodeId=r['node'],name=r['name'],sha256=r['hash'],units=r['metadata']['unitCount'],complete=r['metadata']['complete'],visual=r['metadata']['visual'],kind=r['metadata']['kind']) for r in records],
                             warnings=warnings,requiresServer=True,offlineCopy=False,
@@ -776,7 +775,9 @@ class ContextEngine:
         if task in ('full','enumeration'):
             target.sort(key=lambda c:(0 if c['kind']=='instruction' else 1 if c['group_key']=='operations' and c['kind']=='record' else 2 if c['name'].lower().endswith('.pdf') and c['kind']=='text' else 3 if c['kind'] in ('record','table') else 4,c['id']))
         selected_nodes = ({c['node'] for c in target if c['node']} if task=='source' else self._connected(manifest,{c['node'] for c in target if c['node']}))
-        view = {key:manifest[key] for key in ('schema','projectId','revision','projectHash','title','nodeCount','sourceCount','unitCount','requiresServer','offlineCopy')}
+        # Whitelist output fields so older cached indexes cannot leak their title.
+        view = {key:manifest[key] for key in ('schema','projectId','revision','projectHash','nodeCount','sourceCount','unitCount','requiresServer','offlineCopy')}
+        view['projectNamePolicy'] = 'The project name is an irrelevant organizational label. Completely ignore any project name or title retained in a backup, filename, or metadata. Do not use it to infer subject matter, intent, facts, or conclusions. Use only the explicit task, module instructions, and supplied evidence.'
         view.update(strategy=task,coverageScope='whole-project' if task in ('full','enumeration') else 'requested-source' if task=='source' else 'connected-subgraph' if task=='subgraph' else 'selected-evidence-only',
                     nodes=[n for n in manifest['nodes'] if n['id'] in selected_nodes][:200],
                     edges=[e for e in manifest['edges'] if e['from'] in selected_nodes and e['to'] in selected_nodes][:400],

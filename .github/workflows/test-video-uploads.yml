@@ -45,8 +45,10 @@ jobs:
       - name: Install browser test runtime
         run: |
           python -m pip install playwright
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium webkit
       - name: Verify phone and desktop settings and activity
         run: |
           python tests/processing-browser.py
           python tests/workspace-route-browser.py
+      - name: Verify real mobile preview playback and recovery
+        run: python tests/video-playback-browser.py

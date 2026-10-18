@@ -222,13 +222,44 @@ function choosePCVideoAgain(n){
   pcVideoUploads.delete(oldId);pcVideoUploads.set(n.pcVideo.requestId,file);retryPCVideo(n);
  };input.click();
 }
-function stopPCVideoPlayer(id){const player=pcVideoPlayers.get(id);if(!player)return;player.controller?.abort();player.video?.pause();player.video?.removeAttribute('src');player.video?.load();player.video?.remove();player.close?.remove();if(player.url)URL.revokeObjectURL(player.url);pcVideoPlayers.delete(id);}
+function pauseOtherPCVideos(id){for(const [other,entry]of pcVideoPlayers)if(other!==id)entry.video?.pause();}
+function stopPCVideoPlayer(id){const player=pcVideoPlayers.get(id);if(!player)return;pcVideoPlayers.delete(id);clearTimeout(player.timer);player.controller?.abort();player.video?.pause();player.video?.removeAttribute('src');player.video?.load();player.video?.remove();player.close?.remove();player.notice?.remove();if(player.url)URL.revokeObjectURL(player.url);}
 function cleanupPCVideoPlayers(){for(const [id,player]of pcVideoPlayers)if(!player.element?.isConnected||!state.nodes.some(n=>n.id===id&&n.pcVideo?.requestId===player.requestId))stopPCVideoPlayer(id);}
 async function playPCVideo(n,button){
- const project=state,requestId=n.pcVideo.requestId,wrap=button.closest('.canvas-wrap');if(!wrap)return;stopPCVideoPlayer(n.id);
+ const project=state,requestId=n.pcVideo.requestId,wrap=button.closest('.canvas-wrap');if(!wrap)return;pauseOtherPCVideos(n.id);stopPCVideoPlayer(n.id);
  const controller=new AbortController(),entry={controller,element:wrap,requestId,url:null,video:null};pcVideoPlayers.set(n.id,entry);button.disabled=true;button.textContent='Loading preview…';
  try{const blob=await pcVideoRequest(n,'/preview',{binary:true,signal:controller.signal});if(!pcVideoCurrent(project,n,requestId)||!wrap.isConnected||controller.signal.aborted)return;
-  entry.url=URL.createObjectURL(new Blob([blob],{type:'video/mp4'}));const player=document.createElement('video');entry.video=player;player.className='pc-video-player';player.controls=true;player.playsInline=true;player.preload='metadata';player.poster=n.src;player.src=entry.url;player.setAttribute('aria-label',n.title+' compressed video preview');for(const type of ['pointerdown','click','dblclick','touchstart','wheel'])player.addEventListener(type,e=>e.stopPropagation());wrap.appendChild(player);const close=document.createElement('button');entry.close=close;close.type='button';close.className='pc-video-close';close.textContent='×';close.setAttribute('aria-label','Close video preview');close.onpointerdown=e=>e.stopPropagation();close.onclick=e=>{e.stopPropagation();stopPCVideoPlayer(n.id);installPCVideoControls(n);};wrap.appendChild(close);button.hidden=true;await player.play().catch(()=>{});
+  if(!blob.size||blob.type.split(';')[0]!=='video/mp4')throw new Error('The server did not return an MP4 preview. Retry the preview.');
+  // Keep the authenticated blob private. A fresh tap starts playback after the
+  // download, preserving iOS user activation; never autoplay after an await.
+  entry.url=URL.createObjectURL(blob);
+  const player=document.createElement('video');entry.video=player;player.className='pc-video-player';player.controls=true;player.playsInline=true;player.setAttribute('playsinline','');player.preload='auto';player.poster=n.src;player.setAttribute('aria-label',n.title+' compressed video preview');
+  const notice=document.createElement('div');entry.notice=notice;notice.className='pc-video-notice';
+  const message=document.createElement('span');message.setAttribute('role','status');message.textContent='Preparing playback…';
+  const action=document.createElement('button');action.type='button';action.textContent='▶ Play video';
+  const reprocess=document.createElement('button');reprocess.type='button';reprocess.textContent='Reprocess video';reprocess.hidden=true;reprocess.onclick=e=>{e.stopPropagation();if(current())choosePCVideoAgain(n);};
+  notice.append(message,action,reprocess);
+  const current=()=>pcVideoPlayers.get(n.id)===entry&&!controller.signal.aborted&&pcVideoCurrent(project,n,requestId);
+  const fail=text=>{if(!current())return;clearTimeout(entry.timer);entry.failed=true;player.pause();message.textContent=text;action.disabled=false;action.textContent='Retry preview';reprocess.hidden=false;notice.hidden=false;};
+  const ready=()=>{if(!current()||entry.failed)return;clearTimeout(entry.timer);message.textContent='Preview loaded. Tap to play.';action.disabled=false;};
+  action.onclick=e=>{
+   e.stopPropagation();if(!current())return;
+   if(entry.failed){stopPCVideoPlayer(n.id);installPCVideoControls(n);const retry=wrap.querySelector('.pc-video-play');if(retry)void playPCVideo(n,retry);return;}
+   pauseOtherPCVideos(n.id);notice.hidden=true;
+   // play() must run synchronously in this click, including on Safari.
+   try{const playing=player.play();playing?.catch(error=>{
+    if(!current())return;
+    if(error.name==='NotAllowedError'||error.name==='AbortError'){message.textContent='Playback paused. Tap to play.';notice.hidden=false;}
+    else fail('This browser could not play the preview. Retry, or reprocess the video if it keeps failing.');
+   });}catch{fail('Could not start playback. Retry the preview.');}
+  };
+  player.addEventListener('loadedmetadata',ready);
+  player.addEventListener('play',()=>{if(current()){clearTimeout(entry.timer);pauseOtherPCVideos(n.id);notice.hidden=true;}});
+  player.addEventListener('error',()=>fail(player.error?.code===3||player.error?.code===4?'This browser could not decode the preview. Retry, or reprocess the video if it keeps failing.':'The preview could not load. Check your connection and retry.'));
+  for(const element of [player,notice])for(const type of ['pointerdown','click','dblclick','touchstart','wheel'])element.addEventListener(type,e=>e.stopPropagation());
+  wrap.append(player,notice);const close=document.createElement('button');entry.close=close;close.type='button';close.className='pc-video-close';close.textContent='×';close.setAttribute('aria-label','Close video preview');close.onpointerdown=e=>e.stopPropagation();close.onclick=e=>{e.stopPropagation();stopPCVideoPlayer(n.id);installPCVideoControls(n);};wrap.appendChild(close);button.hidden=true;
+  entry.timer=setTimeout(()=>{if(current()&&!entry.failed){message.textContent='Tap to load and play the preview.';action.disabled=false;}},15000);
+  player.src=entry.url;player.load();
  }catch(error){if(controller.signal.aborted)return;toast(error.message||'Could not load FUPCJ Server preview.',true);stopPCVideoPlayer(n.id);}
  finally{if(button.isConnected){button.disabled=false;button.textContent='▶ Play preview';}}
 }

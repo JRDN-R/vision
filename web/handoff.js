@@ -29,7 +29,7 @@ function handoffSetBusy(value){
 }
 async function prepareChatGPTHandoff(){
  if(busy||ioBusy||visionHandoffPreparing||visionHandoffSharing||!state.nodes.length)return;
- const title=state.title,mainPrompt=state.mainPrompt,nodes=orderedNodes(),routes=exportGraph(nodes);
+ const title='Vision context',mainPrompt=state.mainPrompt,nodes=orderedNodes(),routes=exportGraph(nodes);
  // Only the explicit AI export is packaged; connection keys and editable project state are never added.
  const promptNodes=nodes.map(node=>({id:node.id,title:node.title,prompt:node.prompt,caption:node.caption,kind:node.kind}));
  visionHandoffPackage=null;visionHandoffPreparing=true;busy=true;handoffSetBusy(true);
@@ -41,7 +41,7 @@ async function prepareChatGPTHandoff(){
   const files=await buildExportFiles(nodes,false,(index,name)=>{$('handoffStatus').textContent='Preparing '+(index+1)+' of '+nodes.length+': '+name;$('exportProgress').value=index;});
   const instructions=handoffMainPrompt(files,promptNodes,mainPrompt,routes);
   $('handoffStatus').textContent='Creating the ZIP…';
-  const blob=await R.zip(files),name=(R.safeFilename(title)||'Vision-project')+'.zip';
+  const blob=await R.zip(files),name='Vision-context.zip';
   let file=null;try{if(typeof File==='function')file=new File([blob],name,{type:'application/zip'});}catch{}
   visionHandoffPackage={blob,file,name,instructions,title};
   $('handoffFilename').textContent=name+' · '+(blob.size>=1024*1024?(blob.size/1024/1024).toFixed(1)+' MB':Math.max(1,Math.ceil(blob.size/1024))+' KB');

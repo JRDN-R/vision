@@ -39,6 +39,24 @@ class ContextEngineTests(unittest.TestCase):
     def index(self, project=None, revision=1, owner='alice', pid='board'):
         return self.engine.index_project(owner,pid,revision,project or board([attachment('ops.txt',operations())]))
 
+    def test_project_title_is_not_model_context_even_with_an_old_cached_manifest(self):
+        project = board([attachment('evidence.txt', 'Actual evidence retains its wording.')])
+        project['title'] = 'PRIVATE_PROJECT_LABEL_9261'
+        self.index(project)
+        # Simulate an index created by the previous release.
+        with self.engine.db() as db:
+            row = db.execute('SELECT manifest FROM context_generations').fetchone()
+            manifest = json.loads(row['manifest'])
+            self.assertNotIn('title', manifest)
+            manifest['title'] = project['title']
+            db.execute('UPDATE context_generations SET manifest=?', (json.dumps(manifest),))
+        result = self.engine.prepare('alice', 'board', 1, 'List all evidence')
+        self.assertNotIn(project['title'], json.dumps(result))
+        self.assertIn('Completely ignore any project name', result['text'])
+        self.assertIn('Actual evidence retains its wording.', result['text'])
+        self.assertIn('Wing', result['text'])
+        self.assertEqual(project['title'], 'PRIVATE_PROJECT_LABEL_9261')
+
     def test_complete_thirteen_operation_enumeration(self):
         state = self.index()
         self.assertTrue(state['ready'])
