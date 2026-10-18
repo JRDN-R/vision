@@ -49,7 +49,7 @@ $DocumentPython=Join-Path $DocumentRuntime 'python.exe'
 & python -m pip --isolated --python $DocumentPython install --no-input --disable-pip-version-check --only-binary=:all: --index-url https://pypi.org/simple -r (Join-Path $PSScriptRoot '..\vision-pc\requirements-documents.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Document packages did not install.' }
 $Tika=Join-Path $InstallRoot 'tika-app-3.3.2.jar'
-Get-DocumentDownload 'https://downloads.apache.org/tika/3.3.2/tika-app-3.3.2.jar' $Tika '88c2032cba0d45feea361e6eebd2918bd04707614cdda5d89a1b167da5503c98e7b4cd368336f0402d559abcaf5006fcc7c825c32c749ae0417ea2f3b8423aba' 'SHA512'
+Get-DocumentDownload 'https://archive.apache.org/dist/tika/3.3.2/tika-app-3.3.2.jar' $Tika '88c2032cba0d45feea361e6eebd2918bd04707614cdda5d89a1b167da5503c98e7b4cd368336f0402d559abcaf5006fcc7c825c32c749ae0417ea2f3b8423aba' 'SHA512'
 $Java=Join-Path $env:JAVA_HOME_17_X64 'bin\java.exe'
 $Options=Join-Path $InstallRoot 'options.json'
 Write-Utf8 $Options (@{profile='Standard';tesseractPath=$Ocr;javaPath=$Java;tikaPath=$Tika;artifactsPath=$InstallRoot}|ConvertTo-Json)
