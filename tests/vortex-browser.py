@@ -510,7 +510,9 @@ def verify_login_gateway(browser):
                 page.locator('#visionVenture').wait_for(state='visible')
             else:
                 assert page.locator('#visionVenture').is_hidden()
-            assert page.url == target
+            expected = URL.replace('vortex/', 'venture/') if view == 'venture' else target
+            page.wait_for_url(expected)
+            assert page.url == expected
         assert not errors, errors
         context.close()
 
