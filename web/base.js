@@ -1005,11 +1005,20 @@ function notifyActivityQueue({entries,active,videos,documents,runs}){
   if(count&&!$('toast').classList.contains('error'))toast(`${count} job${count===1?'':'s'} queued`);
  },180);
 }
+function renderActivityIndicator(activity){
+ const indicator=$('queueIndicator');
+ // Venture's global control counts only its own submissions and runs. Vision
+ // imports continue in the background without implying that Venture is busy.
+ const inVenture=document.documentElement.dataset.workspacePage==='venture';
+ const {entries,videos,documents,visual,naming}=activity;
+ const count=inVenture?activity.runs.filter(run=>run.ventureActivity).length:activity.count;
+ const needsAttention=!inVenture&&(naming?.status==='paused'||entries.some(({job})=>job.status==='error')||videos.some(n=>n.pcVideo.status==='error')||documents.some(({job})=>['error','paused'].includes(job.status))||visual.some(({source})=>source.visualAnalysis.status==='paused'));
+ if(indicator){const workspace=document.documentElement.dataset.workspacePage==='venture'?'venture':'vision';if(indicator._workspace!==workspace||indicator._project!==state){indicator._count=0;indicator._completeUntil=0;}indicator._workspace=workspace;if(indicator._project===state&&indicator._count>0&&!count&&!needsAttention)indicator._completeUntil=Date.now()+2000;indicator._project=state;indicator._count=count;const justCompleted=!count&&!needsAttention&&indicator._completeUntil>Date.now();if(justCompleted)setTimeout(()=>renderActivity(),2100);indicator.hidden=!count&&!needsAttention&&!justCompleted;indicator.setAttribute('data-state',needsAttention?'error':justCompleted?'complete':'working');indicator.querySelector('span').textContent=needsAttention&&!count?'!':justCompleted?'✓':String(count);indicator.setAttribute('aria-label',needsAttention?'Processing needs attention. Open activity':justCompleted?'Processing complete. Open activity':`${count} processing job${count===1?'':'s'} queued or active. Open activity`);indicator.title=needsAttention?'Processing needs attention':`${count} job${count===1?'':'s'} queued or active`;}
+}
 function renderActivity(){
- const host=$('activityList'),summary=$('activitySummary'),indicator=$('queueIndicator');if(!host||!summary)return;
+ const host=$('activityList'),summary=$('activitySummary');if(!host||!summary)return;
  const activity=activityQueueState(),{entries,active,videos,documents,runs,visual,naming,count}=activity;notifyActivityQueue(activity);
- const needsAttention=naming?.status==='paused'||entries.some(({job})=>job.status==='error')||videos.some(n=>n.pcVideo.status==='error')||documents.some(({job})=>['error','paused'].includes(job.status))||visual.some(({source})=>source.visualAnalysis.status==='paused');
- if(indicator){if(indicator._project===state&&indicator._count>0&&!count&&!needsAttention)indicator._completeUntil=Date.now()+2000;indicator._project=state;indicator._count=count;const justCompleted=!count&&!needsAttention&&indicator._completeUntil>Date.now();if(justCompleted)setTimeout(()=>renderActivity(),2100);indicator.hidden=!count&&!needsAttention&&!justCompleted;indicator.setAttribute('data-state',needsAttention?'error':justCompleted?'complete':'working');indicator.querySelector('span').textContent=needsAttention&&!count?'!':justCompleted?'✓':String(count);indicator.setAttribute('aria-label',needsAttention?'Processing needs attention. Open activity':justCompleted?'Processing complete. Open activity':`${count} processing job${count===1?'':'s'} queued or active. Open activity`);indicator.title=needsAttention?'Processing needs attention':`${count} job${count===1?'':'s'} queued or active`;}
+ renderActivityIndicator(activity);
  const stopped=(naming?.status==='paused'?1:0)+entries.filter(({job})=>job.status==='error').length+videos.filter(n=>n.pcVideo.status==='error').length+documents.filter(({job})=>['error','paused'].includes(job.status)).length+visual.filter(({source})=>source.visualAnalysis.status==='paused').length;
  summary.textContent=count?`${count} task${count===1?'':'s'} remaining${navigator.onLine===false?' · offline':''}`:stopped?'Processing needs attention':'All caught up';host.replaceChildren();
  const add=(title,detail,percent,retry)=>{

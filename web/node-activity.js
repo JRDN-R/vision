@@ -31,8 +31,8 @@ function renderNodeActivities(activity){
   badge.title=tasks.map(item=>item.title+': '+(item.detail||item.status)).join('\n');
   badge.setAttribute('aria-label',n.title+': '+label+'. Open activity details');
  }
- // Board tasks have their own indicators. Unowned work and Venture retain a
- // compact global entry point, positioned away from all bottom board controls.
+ // Board tasks have their own indicators. Unowned board work retains the
+ // global entry point; Venture has already rendered only its own work.
  const indicator=$('queueIndicator');
  if(indicator&&document.documentElement.dataset.workspacePage!=='venture'){
   const unowned=items.filter(item=>!item.nodeId||!state.nodes.some(n=>n.id===item.nodeId));
