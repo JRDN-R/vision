@@ -9,7 +9,7 @@ import mimetypes
 import os
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlencode, parse_qs, urlparse
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -559,7 +559,10 @@ def verify_login_gateway(browser):
         assert page.locator('#accountGateTrial').is_visible()
         page.locator('#accountGateSignIn').click()
         page.locator('#accountGate').wait_for(state='hidden')
-        assert page.url == target
+        # Ignored redirect parameters cannot override the saved Venture preference.
+        page.locator('#visionVenture').wait_for(state='visible')
+        normalized_query = '?' + urlencode({'continue': query.removeprefix('?continue=')}) if query else ''
+        page.wait_for_url(URL.replace('vortex/', 'venture/') + normalized_query)
         assert not any(call['path'].startswith('/api/vortex/') for call in api.calls)
         context.close()
     print('Vision gateway: Google, email, signup, reset, failure/retry, reload, restored sessions, app destinations, trial isolation and redirect allowlist passed', flush=True)

@@ -132,7 +132,7 @@ function Install-DocumentTools([string]$InstallerPath) {
     }
     Assert-PrivateSoundPath $JavaRoot
     $Tika=Join-Path $ToolsDir 'tika-app-3.3.2.jar'
-    Get-DocumentDownload 'https://downloads.apache.org/tika/3.3.2/tika-app-3.3.2.jar' $Tika '88c2032cba0d45feea361e6eebd2918bd04707614cdda5d89a1b167da5503c98e7b4cd368336f0402d559abcaf5006fcc7c825c32c749ae0417ea2f3b8423aba' 'SHA512'
+    Get-DocumentDownload 'https://archive.apache.org/dist/tika/3.3.2/tika-app-3.3.2.jar' $Tika '88c2032cba0d45feea361e6eebd2918bd04707614cdda5d89a1b167da5503c98e7b4cd368336f0402d559abcaf5006fcc7c825c32c749ae0417ea2f3b8423aba' 'SHA512'
     $Assets=Join-Path $InstallRoot 'models\document-layout-2.133.0'
     New-Item -ItemType Directory -Path $Assets -Force | Out-Null
     Assert-PrivateSoundPath $Assets
