@@ -5,7 +5,7 @@ const base=fs.readFileSync('web/base.js','utf8'),html=fs.readFileSync('web/docum
 const helpers=base.slice(base.indexOf('function activityQueueState(){'),base.indexOf('function openActivity('));
 const makeElement=()=>({children:[],attributes:{},hidden:false,textContent:'',appendChild(child){this.children.push(child);return child;},replaceChildren(){this.children=[];},setAttribute(key,value){this.attributes[key]=value;},querySelector(){return this.children[0];}});
 const elements={activityList:makeElement(),activitySummary:makeElement(),queueIndicator:makeElement()};elements.queueIndicator.appendChild(makeElement());
-const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,setTimeout(){},document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){},notifyActivityQueue(){},renderNodeActivities(){}};
+const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,setTimeout(){},document:{createElement:makeElement,documentElement:{dataset:{workspacePage:'vision'}}},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){},notifyActivityQueue(){},renderNodeActivities(){}};
 vm.createContext(context);vm.runInContext(helpers,context);context.notifyActivityQueue=()=>{};
 const render=()=>vm.runInContext('renderActivity()',context),count=()=>Number(elements.queueIndicator.children[0].textContent);
 render();assert.equal(elements.queueIndicator.hidden,true);
@@ -28,6 +28,17 @@ context.state.nodes.at(-1).attachments[0].documentJob.status='complete';context.
 context.entries[0].job.status='error';context.entries[1].job.status='error';context.mediaActivity.forEach(task=>task.finished=true);context.state.nodes.forEach(n=>{if(n.pcVideo)n.pcVideo.status='error';});
 render();assert.equal(elements.queueIndicator.children[0].textContent,'!');assert.equal(elements.queueIndicator.hidden,false);assert.equal(elements.activitySummary.textContent,'Processing needs attention');
 context.entries=[];context.state.nodes=[];context.state.consoleSession={};context.state.settings={autoNameProject:true,autoNaming:{status:'queued'}};render();assert.equal(elements.activitySummary.textContent,'1 task remaining');context.state.settings.autoNaming.status='paused';render();assert.equal(elements.activitySummary.textContent,'Processing needs attention');
+// Background Vision work and errors must never make idle Venture look busy.
+context.document.documentElement.dataset.workspacePage='venture';render();
+assert.equal(elements.queueIndicator.hidden,true);
+context.state.settings.autoNaming.status='queued';render();assert.equal(elements.queueIndicator.hidden,true);
+context.ventureQueueActivity=()=>[{ventureActivity:true,status:'in_progress',phase:'Answering'}];
+render();assert.equal(count(),1);assert.equal(elements.queueIndicator.hidden,false);
+context.state.settings.autoNaming.status='paused';render();assert.equal(count(),1);assert.equal(elements.queueIndicator.attributes['data-state'],'working');
+context.ventureQueueActivity=()=>[];render();assert.equal(elements.queueIndicator.attributes['data-state'],'complete');
+context.document.documentElement.dataset.workspacePage='vision';render();assert.equal(elements.queueIndicator.attributes['data-state'],'error');
+context.document.documentElement.dataset.workspacePage='venture';render();assert.equal(elements.queueIndicator.hidden,true,'switching workspaces cannot carry completion or attention indicators across');
+context.state.settings.autoNaming.status='complete';render();assert.equal(elements.queueIndicator.hidden,true,'Vision completion does not create a Venture completion badge');
 assert.equal((html.match(/id="queueIndicator"/g)||[]).length,1);assert.ok(html.indexOf('id="queueIndicator"')>html.indexOf('id="appHeader"')&&html.indexOf('id="queueIndicator"')<html.indexOf('</header>'),'queue button has one initial markup location');assert.match(base,/document.body.appendChild\(\$\('queueIndicator'\)\)/);assert.match(css,/body > #queueIndicator\{position:fixed/);assert.doesNotMatch(html,/id="activityBadge"/);assert.match(base,/\$\('queueIndicator'\)\.onclick=openActivity/);assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.queue-indicator::before\{animation:none/);
 assert.doesNotMatch(base,/requestAudio\(|JEWCredential|JEWTranscription|geminiApiKey/,'normal processing must not expose a direct Gemini API path');
 console.log('PASS: one accessible queue indicator; approval waits, four-job count, media handoff deduplication, completion/errors, reduced motion and backend-only Gemini.');

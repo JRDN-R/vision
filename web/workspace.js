@@ -170,6 +170,7 @@ function workspaceSyncSwitch() {
   if(visible)workspaceChevrons[direction].start();
  }
  workspaceChevronView=direction;workspaceChevronVisible=visible;
+ renderActivity();
 }
 function workspaceAnimateView(view) {
  if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;

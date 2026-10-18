@@ -13,6 +13,8 @@ window.processingFixture={
  open:()=>openProcessingSettings(),
  settings:()=>({...state.settings}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
+ switchView:view=>{accountSignedIn=()=>true;venture.uid=ventureScope();venture.ready=true;ventureSchedule=()=>{};workspaceSwitch(view);},
+ ventureWork:active=>{venture.sending=active;renderActivity();},
  activity:()=>{mediaActivity.push({title:'Screenshots',detail:'Creating frames',progress:50});renderActivity();},
  done:()=>{mediaActivity.forEach(task=>task.finished=true);renderActivity();},
  nodes:async()=>{
@@ -53,10 +55,17 @@ with sync_playwright() as pw:
   page.evaluate('processingFixture.activity()')
   indicator=page.locator('#queueIndicator');expect(indicator).to_be_visible()
   assert indicator.evaluate('(el)=>el.parentElement===document.body')
-  for mode in ('vision','venture'):
-   page.evaluate('(mode)=>{document.documentElement.dataset.workspacePage=mode;document.getElementById("appHeader").style.display="none"}',mode)
-   box=indicator.bounding_box();assert box and box['x']>=0 and box['x']+box['width']<=width and box['y']+box['height']<844
-   indicator.click();expect(page.locator('#activityDialog')).to_be_visible();page.locator('#closeActivity').click()
+  box=indicator.bounding_box();assert box and box['x']>=0 and box['x']+box['width']<=width and box['y']+box['height']<844
+  indicator.click();expect(page.locator('#activityDialog')).to_be_visible();page.locator('#closeActivity').click()
+  page.evaluate('processingFixture.switchView("venture")')
+  expect(indicator).to_be_hidden()
+  page.evaluate('processingFixture.ventureWork(true)')
+  expect(indicator).to_be_visible();expect(indicator.locator('span')).to_have_text('1')
+  page.evaluate('processingFixture.ventureWork(false)')
+  expect(indicator).to_have_attribute('data-state','complete')
+  page.wait_for_timeout(2200);expect(indicator).to_be_hidden()
+  page.evaluate('processingFixture.switchView("vision")')
+  expect(indicator).to_be_visible();expect(indicator.locator('span')).to_have_text('1')
   page.evaluate('processingFixture.done()');expect(indicator).to_have_attribute('data-state','complete')
   page.wait_for_timeout(2200);expect(indicator).to_be_hidden()
   page.evaluate('document.documentElement.dataset.workspacePage="vision";processingFixture.nodes()')
