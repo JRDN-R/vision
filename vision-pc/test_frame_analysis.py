@@ -85,7 +85,7 @@ class FrameAnalysisTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('ffmpeg'),'FFmpeg required')
     def test_maximum_real_video_manifest(self):
         server.app.config['FFMPEG']=shutil.which('ffmpeg');source=self.root/'sample.mp4'
-        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=160x90:rate=24','-t','2','-c:v','libx264',str(source)],check=True)
+        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=800x450:rate=24','-t','2','-c:v','libx264',str(source)],check=True)
         data=source.read_bytes()
         response=self.client.post(self.base+'/media/upload/maximum-test',json={'name':'sample.mp4','size':len(data),'processing':{'screenshotDetail':'maximum','describeFrames':True}},headers=self.headers)
         self.assertEqual(response.status_code,202)
@@ -100,5 +100,7 @@ class FrameAnalysisTests(unittest.TestCase):
         with self.client.get(self.base+'/frames/'+job+'/7',headers=self.headers) as response:self.assertEqual(response.status_code,200)
         self.assertFalse((self.service.root/job/'source.input').exists())
         self.assertEqual(server.frame_analysis.row(job)['analysis_step'],2)
+        metadata=json.loads((server.frame_analysis.root/job/'0000.json').read_text())
+        self.assertEqual(metadata['width'],800)  # Not reduced to the preview's 640 pixels.
 
 if __name__=='__main__':unittest.main()

@@ -71,7 +71,7 @@ with sync_playwright() as pw:
   badges.nth(0).click();expect(page.locator('#activityDialog')).to_be_visible()
   expect(page.locator('#activitySummary')).to_contain_text('Running node')
   page.locator('#closeActivity').click()
-  plus=page.locator('#boardAddButton')
+  plus=page.locator('#addNodeButton')
   if plus.count():
    p=plus.bounding_box()
    for b in badges.all():
