@@ -2,8 +2,8 @@
 export const DEFAULT_BACKEND = 'https://desktop-vjt2br2.tail385c9d.ts.net';
 export function createTitleEyesClient({getToken, backend = DEFAULT_BACKEND, fetchImpl = globalThis.fetch} = {}) {
   if (typeof getToken !== 'function') throw new TypeError('Provide getToken() for your Vision account.');
-  const base = backend.replace(/\/$/, '') + '/api/title-eyes/jobs';
-  const idPath = id => { if (!/^[a-f0-9]{24}$/.test(id)) throw new Error('Invalid title request.'); return '/' + id; };
+  const base = backend.replace(/\/$/, '') + '/api/title-eyes';
+  const idPath = id => { if (!/^[a-f0-9]{24}$/.test(id)) throw new Error('Invalid title request.'); return '/jobs/' + id; };
   async function request(path, {method = 'GET', body, signal} = {}) {
     const controller = new AbortController(), abort = () => controller.abort();
     if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, {once:true});
@@ -31,7 +31,7 @@ export function createTitleEyesClient({getToken, backend = DEFAULT_BACKEND, fetc
   async function submit(image, {requestId = crypto.randomUUID(), signal} = {}) {
     if (!(image instanceof Blob) || !image.size || image.size > 10 * 1024 * 1024) throw new Error('Choose an image smaller than 10 MB.');
     const form = new FormData(); form.append('image', image, image.name || 'slide.jpg'); form.append('requestId', requestId);
-    return request('', {method:'POST', body:form, signal});
+    return request('/jobs', {method:'POST', body:form, signal});
   }
   async function extract(image, {signal, onProgress = () => {}, onAccepted = () => {}, ...options} = {}) {
     let job = await submit(image, {...options, signal}); onAccepted(job);
@@ -47,5 +47,5 @@ export function createTitleEyesClient({getToken, backend = DEFAULT_BACKEND, fetc
     if (job.status !== 'complete') throw new Error(job.error || 'The title could not be read.');
     return job;
   }
-  return {submit, get, remove, extract};
+  return {submit, get, remove, extract, standby: options => request('/standby', options)};
 }

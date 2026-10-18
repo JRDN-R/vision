@@ -10,13 +10,27 @@ The existing, pinned **Qwen3.5-0.8B** visual worker identifies the main headline
 
 A deterministic English title-case pass keeps common articles, conjunctions and short prepositions lowercase in the middle, while capitalizing the first/last word and the first word after a colon. Recognized acronyms and mixed-case names are preserved. For example, `THE COST OF A WEDDING` becomes `The Cost of a Wedding`. This is a practical title-case convention, not a complete AP/Chicago linguistic parser; phrasal verbs and unfamiliar acronyms may need editing.
 
-Supported input: one JPEG, PNG, WebP or still GIF, at most 10 MiB and 32 megapixels. The server orients and sanitizes it into a JPEG no larger than 1600 × 1600. Animated images and non-images are rejected. Images are not sent to a cloud model. The PC uses the same verified model/projector and shared inference lock as existing local visual work. No 9B/27B answering pass is needed. It waits while OBS is running or available memory is below 10 GiB.
+Supported input: one JPEG, PNG, WebP or still GIF, at most 10 MiB and 32 megapixels. The server orients and sanitizes it into a JPEG no larger than 1600 × 1600. Animated images and non-images are rejected. Images are not sent to a cloud model. The PC uses the same verified model/projector and shared inference lock as existing local visual work. No 9B/27B answering pass is needed. Title-eyes uses scheduled standby as described below, and waits while OBS is running or available memory is below 10 GiB.
 
 Accepted jobs are owned by the signed-in account and persist through page/server restarts. This tab remembers the latest accepted job ID in session storage. The prepared image is discarded from the job after completion, failure, cancellation or expiry. Results expire after 24 hours. These jobs do not create Venture conversations or Vision projects. Local server administrators retain access to server data.
 
+## Sunday and Wednesday standby
+
+The **title-eyes** worker preloads automatically on **Sundays and Wednesdays**, all day according to the church PC’s Windows local clock. Set that clock to Eastern Time with automatic daylight-saving adjustment. No browser tab needs to remain open. The processor must be running; if the PC is off at midnight, standby begins when the processor next starts on a scheduled day.
+
+On **Monday, Tuesday, Thursday, Friday and Saturday**, title-eyes is off: no preload and no on-demand title extraction. New uploads return HTTP 423 with the schedule explanation. Existing completed results remain readable until their normal expiry. At the end of a scheduled day, the model is stopped and unfinished requests are ended with an explicit schedule message; they must be submitted again on a scheduled day. This schedule controls title-eyes only. Other Vision/Venture features retain their existing on-demand model behavior.
+
+On scheduled days, one verified model process is reused between slides. There is no ten-minute idle shutdown. Each slide still has a ten-minute processing deadline, and existing file checks run when a new process starts. Changes to the installed model/runtime files, manifests, or settings invalidate the retained instance and trigger a fresh load/verification. No integrity checks are globally disabled, and no verification result is trusted across a server restart.
+
+Standby yields to queued Venture, frame-description and project-naming work rather than holding the shared inference lock all day. It also unloads when OBS starts or memory is constrained, and reloads after the constraint clears. Preloading or reloading takes time; the schedule does not promise an instantly ready model at midnight or during those interruptions.
+
+The page reports actual current model-process resident memory in decimal GB. This is **not** the entire PC’s memory usage or a measured constant. The model/projector files total about 0.8 GB, but runtime buffers require additional memory. The existing **4 GiB maximum model-process resident-memory limit** and at least **10 GiB available system-memory reserve** remain enforced. These are limits, not claimed typical usage; no 0.8 GB RAM guarantee is made. Actual Windows standby RAM and startup savings still need measurement on the church PC.
+
+Authenticated `GET /api/title-eyes/standby` returns the schedule, server-local time, next scheduled start, loaded state, current resident bytes, memory limit, phase and loads since server restart. The JavaScript client exposes `client.standby()`. A status read never loads the model itself.
+
 ## One-time server update
 
-The UI is hosted by GitHub Pages. The new authenticated API must be installed on FUPCJ Server before extraction works. This reuses the installed visual model and adds no new model or Python dependency.
+The UI is hosted by GitHub Pages. The latest title-eyes schedule/controller must be installed on FUPCJ Server for scheduled standby and RAM reporting to work. This reuses the installed visual model and adds no new model or Python dependency. Update after the livestream ends because the updater restarts the processor.
 
 Run the normal updater on the church PC:
 
@@ -41,7 +55,7 @@ Use `Authorization: Bearer <Vision Firebase ID token>` on every request. Tokens 
 | GET | `/api/title-eyes/jobs/{id}` | Read your job’s progress or result. Poll about every two seconds. |
 | DELETE | `/api/title-eyes/jobs/{id}` | Cancel/remove your job and its retained data. Returns `{ "deleted": true }`. |
 
-Reuse a requestId when retrying the same upload after a network error. A requestId identifies the original request, so use a fresh one for a different slide or a deliberate new attempt. Limits: three active jobs per account and twenty active jobs across the server. A full queue returns 429. Another account’s ID returns 404. The API returns 503 when the configured local visual worker is disabled.
+Reuse a requestId when retrying the same upload after a network error. A requestId identifies the original request, so use a fresh one for a different slide or a deliberate new attempt. Limits: three active jobs per account and twenty active jobs across the server. A full queue returns 429. Another account’s ID returns 404. The API returns 503 when the configured local visual worker is disabled, and 423 for a new upload on an off day.
 
 Example completed response:
 
@@ -84,4 +98,4 @@ console.log(result.title); // plain title text or null
 
 ## Verification
 
-Offline tests cover account ownership, repeat uploads, malformed inputs/results, title casing, the shared model lock, OBS deferral, cancellation, restart recovery and cleanup. They use controlled model responses; they do not measure real OCR accuracy on sermon slides. Validate several representative slides against the church PC’s installed model after updating, especially mixed title/speaker/scripture layouts and decorative fonts.
+Offline tests cover account ownership, repeat uploads, malformed inputs/results, title casing, schedule weekdays/midnight, preloading without a browser, process reuse, memory-limit shutdown, installed-file changes, the shared model lock, OBS deferral, cancellation, restart recovery and cleanup. They use controlled model responses; they do not measure real OCR accuracy on sermon slides. Validate several representative slides against the church PC’s installed model after updating, especially mixed title/speaker/scripture layouts and decorative fonts.

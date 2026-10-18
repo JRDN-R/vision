@@ -31,7 +31,7 @@ function fixture() {
  window:{addEventListener:(name,fn)=>{events[name]=fn;}},navigator:{clipboard:{writeText:async text=>{copied=text;}}},
  sessionStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
  initAuth:async fn=>{callback=fn;fn(identity);},user:()=>identity,accountEpoch:()=>0,authError:error=>error.message,signOut:async()=>{identity=null;callback(null);},
- createTitleEyesClient:()=>({submit:async()=>{submitted++;return {id:'a'.repeat(24)};},get:async()=>mode==='complete'?{status:'complete',title:'The Cost of a Wedding',uncertain:false}:{status:'processing',phase:'Reading the title'},remove:async()=>{deleted++;}}),
+ createTitleEyesClient:()=>({standby:async()=>({loaded:true,phase:'Ready',residentBytes:950_000_000}),submit:async()=>{submitted++;return {id:'a'.repeat(24)};},get:async()=>mode==='complete'?{status:'complete',title:'The Cost of a Wedding',uncertain:false}:{status:'processing',phase:'Reading the title'},remove:async()=>{deleted++;}}),
  accountGoogleLogin:{prepare:async()=>{},ready:()=>true}};
  vm.createContext(context);vm.runInContext(fs.readFileSync('web/title-eyes/app.js','utf8').replace(/^import .*;\n/gm,''),context);
  return {el:id=>elements.get(id),events,timers,setMode:value=>{mode=value;},signIn:uid=>{identity={uid};callback(identity);},stats:()=>({submitted,deleted,copied}),flush:async()=>{for(let i=0;i<12;i++)await Promise.resolve();}};
