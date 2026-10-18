@@ -36,6 +36,10 @@ def manifest_path(settings):
                 Path(settings.get('modelPath') or '__missing__').parent / 'visual' / 'visual-worker-manifest.json')
 
 
+class IncompleteVisualInspection(LocalFailure):
+    """A bounded generation ended without a complete observation; safe to retry."""
+
+
 class VisualRuntime(LlamaRuntime):
     alias = 'vision-qwen3.5-0.8b'
     thinking = False
@@ -101,5 +105,5 @@ class VisualRuntime(LlamaRuntime):
                 if len(text) > 4000 or '<think>' in text or '</think>' in text:
                     raise LocalFailure('The visual worker returned an invalid or oversized finding.')
         if finish != 'stop' or not text.strip():
-            raise LocalFailure('Visual inspection did not finish. No incomplete finding was cached.')
+            raise IncompleteVisualInspection('Visual inspection did not finish. No incomplete finding was cached.')
         return text.strip()

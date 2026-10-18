@@ -410,3 +410,29 @@ does not yet complete board attachment on the server.
 ### Local Qwen and RAG preview
 
 The optional Qwen provider, durable local queue, versioned preferences, lossless RAG cache/export compression, and indexing progress are documented in [the implementation and installation guide](../docs/local-qwen-rag.md). Ordinary updates keep Qwen disabled and do not activate account defaults. Photo input, FUPCJ hardware validation, and streamed 400+ MB source ingestion remain pending.
+
+
+## Background video processing after upload
+
+Video uploads from the current app capture transcription provider and sound-effect
+settings at acceptance. The server extracts audio and hands it directly to its
+durable transcription queue. Closing Vision, switching apps, or losing the
+browser connection does not cancel accepted work. Keep FUPCJ Server running.
+Gemini still requires the original account's approval and existing billing checks.
+
+Prepared video outputs and transcription handoffs survive server restarts. A
+full/unavailable transcription queue retries every 30 seconds without repeating
+video preparation. Reopening the saved project retrieves its upload receipt,
+transcription results, and frame observations; no second audio upload is needed.
+Manual retries after a terminal transcription error may retrieve prepared audio.
+
+Incomplete frame generations retry up to three attempts with a 30-second delay,
+retaining completed frame observations. Repeated failures pause with an explicit
+Resume action. User pauses and missing-model errors stay actionable. The upgrade
+also requeues older jobs paused with the incomplete-visual-inspection error once.
+
+Deploy the frontend and update FUPCJ Server with the existing
+`Setup-Vision-PC.ps1 -Action Update` workflow. New uploads require the
+`backgroundVideoPipelineV1` capability; already accepted legacy uploads retain
+their previous transcription handoff. Pending upload request IDs are saved in
+the project before file transfer so a lost acceptance response can be recovered.

@@ -11,7 +11,7 @@ function harness({id='',file=true}={}){
  let now=1000;
  const listeners={},context={state:{nodes:[node]},history:[],future:[],accountAuthEpoch:1,AbortController,DOMException,Blob,FormData,
   Date:{now:()=>now},Map,Math,String,Number,console,setTimeout:()=>1,clearTimeout(){},markDirty(){},renderActivity(){},
-  projectCapabilities:async()=>({capabilities:{uploadedMedia:true}}),ensureRemoteProject:async()=>{},
+  projectCapabilities:async()=>({capabilities:{uploadedMedia:true},videoMedia:{backgroundVideoPipelineV1:true}}),ensureRemoteProject:async()=>{},
   cleanupPCVideoPlayers(){},window:{addEventListener:(name,callback)=>listeners[name]=callback}};
  vm.createContext(context);vm.runInContext(workerSource+'\n'+onlineSource+`\ninstallPCVideoControls=()=>{};pcVideoSetPoster=()=>{};
  this.api={pump:pumpPCVideos,work:workPCVideo,retry:retryPCVideo,resume:pcVideoResume,uploads:pcVideoUploads,retries:pcVideoRetryAt,workers:pcVideoWorkers,setRequest:fn=>{pcVideoRequest=fn;}};`,context);
