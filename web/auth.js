@@ -3,7 +3,7 @@ const VISION_FIREBASE={apiKey:'AIzaSyDh1AHhi41cAXcSFnvFkfeZWmxc8gI0zSg',authDoma
 const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='vision-account-mode-v1';
 // Only an explicit, allowlisted destination on this visit can leave Vision.
 // Keep it in the URL so a refresh/reset attempt survives without sessionStorage.
-const accountContinueURL=(()=>{try{const url=new URL(location.href),dest=url.searchParams.get('continue');if(!/^https?:$/.test(url.protocol)||!['vortex','admins'].includes(dest))return '';const target=new URL('./'+dest+'/',url),connect=url.searchParams.get('connect');if(dest==='admins'&&/^[A-Za-z0-9_-]{43}$/.test(connect||''))target.searchParams.set('connect',connect);return target.href;}catch{return '';}})();
+const accountContinueURL=(()=>{try{const url=new URL(location.href),dest=url.searchParams.get('continue');if(!/^https?:$/.test(url.protocol)||!['vortex','admins'].includes(dest))return '';const target=new URL('./'+dest+'/',window.VisionWorkspaceRoute?.rootURL()||url),connect=url.searchParams.get('connect');if(dest==='admins'&&/^[A-Za-z0-9_-]{43}$/.test(connect||''))target.searchParams.set('connect',connect);return target.href;}catch{return '';}})();
 const accountContinueName=accountContinueURL?(new URL(accountContinueURL).pathname.endsWith('/admins/')?'FirstUPCJax Admins':'Vortex'):'';
 let accountForwarding=false;
 let accountRestoring=true,accountRestoreFailed=false,accountObserver=null;

@@ -39,3 +39,16 @@
  .workspace-in-venture #sidebarToggle{visibility:hidden}
  .venture-popover{top:calc(64px + env(safe-area-inset-top,0px))}
 }
+
+/* An inactive page must not paint through the entering page's animation. This
+   also applies before authentication and before the application has initialized. */
+html[data-workspace-page="venture"]{background:#111314}
+html[data-workspace-page="venture"] body{background:#111314}
+html[data-workspace-page="venture"] main.app,
+html[data-workspace-page="venture"] #appHeader,
+html[data-workspace-page="venture"] #headerReveal,
+html[data-workspace-page="venture"] #mobileHeaderToggle,
+html[data-workspace-page="venture"] #sidebarToggle,
+html[data-workspace-page="venture"] #inspectorPanel,
+html[data-workspace-page="venture"] #toolbeltRail{display:none!important}
+html[data-workspace-page="vision"] #visionVenture{display:none!important}

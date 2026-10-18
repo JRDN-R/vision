@@ -1,8 +1,8 @@
 {
-  "title": "Venture prompt controls",
+  "title": "Venture has its own page",
   "items": [
-    "Copy your prompts and responses. Copy buttons show a check mark for two seconds after copying.",
-    "Use the pencil beside a prompt to return it to the composer and remove that turn and everything after it. Edit the text, choose a model, and send again.",
-    "Prompt editing requires the updated FUPCJ Server. Original attachments and earlier conversation context are retained."
+    "Open Venture directly at /vision/venture/ and bookmark it independently.",
+    "Switch with the same animated chevron. The Vision board is fully hidden while you are in Venture, including during transitions.",
+    "Switching keeps your board, drafts, uploads, and sign-in in the same running session. Browser Back and Forward follow the selected page."
   ]
 }

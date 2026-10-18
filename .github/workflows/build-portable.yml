@@ -29,6 +29,13 @@ jobs:
         run: bash web/vendor/build-firebase.sh
       - name: Rebuild the portable app from source
         run: python3 web/build.py
+      - name: Verify Venture page routing and animation
+        run: |
+          node --test tests/workspace-route.test.cjs
+          python3 -m venv /tmp/vision-route-tests
+          /tmp/vision-route-tests/bin/pip install playwright==1.51.0
+          /tmp/vision-route-tests/bin/python -m playwright install --with-deps chromium
+          /tmp/vision-route-tests/bin/python tests/workspace-route-browser.py
       - name: Package reproducible source
         run: tar --exclude=.git -czf /tmp/vision-source.tar.gz .
       - name: Upload portable build
@@ -63,7 +70,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Vision.html index.html portable-manifest.json web/vendor
+          git add Vision.html index.html venture/index.html venture/manifest.webmanifest portable-manifest.json web/vendor
           if ! git diff --cached --quiet; then
             git commit -m 'Build portable Vision from current sources'
             git push origin "HEAD:$GITHUB_REF_NAME"

@@ -39,6 +39,7 @@ function workspaceLocal(value) {
  try {if(value)localStorage.setItem(key,JSON.stringify(value));return JSON.parse(localStorage.getItem(key)||'null');}catch{return null;}
 }
 function workspaceChosenURL() {
+ const route=window.VisionWorkspaceRoute?.chosen();if(route)return route;
  const value=new URLSearchParams(location.search).get('view');return WORKSPACE_VIEWS.has(value)?value:null;
 }
 async function workspaceSave(change) {
@@ -59,7 +60,7 @@ function workspaceSwitch(view) {
  workspace.navigation++;
  if(!accountSignedIn()){openAccountDialog();return;}
  if(view==='venture'){
-  for(const id of ['accountDialog','projectsDialog'])$(id)?.close();
+  for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
   if(!venture.open)void ventureOpen();
  }else ventureClose();
 }
@@ -200,12 +201,20 @@ workspaceInstall();
 const workspacePriorGate=accountUpdateGate;
 accountUpdateGate=function(){workspacePriorGate();queueMicrotask(()=>void workspaceIdentity());};
 const workspacePriorClose=ventureClose;
-ventureClose=function(){const changed=venture.open;workspace.navigation++;workspaceClearSources();workspacePriorClose();workspaceSyncSwitch();if(changed)workspaceAnimateView('vision');};
+ventureClose=function(){const changed=venture.open;workspace.navigation++;workspaceClearSources();workspacePriorClose();if(changed){window.VisionWorkspaceRoute?.commit('vision');requestAnimationFrame(()=>{if(typeof updateView==='function')updateView();});}workspaceSyncSwitch();if(changed)workspaceAnimateView('vision');};
 $('ventureBack').onclick=ventureClose;
 const workspacePriorOpen=ventureOpen;
-ventureOpen=function(){const changed=!venture.open;const pending=workspacePriorOpen();workspaceSyncSwitch();if(changed&&venture.open)workspaceAnimateView('venture');return pending;};
+ventureOpen=function(){
+ const changed=!venture.open;let pending;
+ if(venture.ready&&venture.uid===ventureScope()){
+  venture.open=true;$('visionVenture').hidden=false;venture.viewport?.();venturePaintAccount();venturePaintStatus();ventureSchedule(0);pending=Promise.resolve();
+ }else pending=workspacePriorOpen();
+ if(venture.open)window.VisionWorkspaceRoute?.commit('venture');workspaceSyncSwitch();if(changed&&venture.open)workspaceAnimateView('venture');return pending;
+};
 const workspacePriorSidebar=ventureSidebar;
 ventureSidebar=function(show){workspacePriorSidebar(show);workspaceSyncSwitch();};
 const workspacePriorPaint=venturePaint;
 venturePaint=function(){workspacePriorPaint();if(workspace.sourceCID&&workspace.sourceCID!==venture.current?.id)workspaceClearSources();};
 if(typeof accountReady!=='undefined')void accountReady.then(()=>workspaceIdentity());else void workspaceIdentity();
+
+window.addEventListener('vision-workspace-route',event=>workspaceSwitch(event.detail.view));

@@ -99,6 +99,7 @@ def build():
             raise ValueError('Missing preserved asset: ' + kind + ' ' + digest)
         return value
     source = re.sub(r'\{\{VISION_(BUNDLE|ASSET)_([a-f0-9]{64})\}\}', restore, template)
+    source = source.replace('{{VISION_WORKSPACE_ROUTE}}', (WEB / 'workspace-route.js').read_text(encoding='utf-8'))
     chunks = [(WEB / name).read_text(encoding='utf-8') for name in SCRIPTS]
     # Boot only after all optional interfaces and persistence hooks are installed.
     chunks = [re.sub(r'\nrenderAll\(\);\s*$', '\n', part) for part in chunks]
@@ -171,6 +172,24 @@ def build():
         raise ValueError('Expected one app and loader Content Security Policy')
     loader = re.sub(policy_pattern, lambda _: policy.group(0), loader)
     index.write_text(loader, encoding='utf-8')
+    # Independent direct entry, with the same runtime and cache version as Vision.
+    venture_loader = loader.replace('./Vision.html', '../Vision.html').replace('./Vision-icon-', '../Vision-icon-')
+    venture_loader = venture_loader.replace('https://jrdn-r.github.io/vision/\"', 'https://jrdn-r.github.io/vision/venture/\"')
+    venture_loader = venture_loader.replace('Vision — advance AI prompt generator', 'Venture — by Jordan R.').replace('Loading Vision…', 'Loading Venture…').replace('Open Vision', 'Open Venture').replace('Vision could not finish loading.', 'Venture could not finish loading.')
+    venture_loader = venture_loader.replace('content=\"Vision\"', 'content=\"Venture\"')
+    # The fallback must select Venture even when the app is loaded directly.
+    venture_loader = venture_loader.replace("'../Vision.html'+location.search+location.hash", "'../Vision.html?view=venture'+location.hash")
+    venture_loader = venture_loader.replace('href=\"../Vision.html\"', 'href=\"../Vision.html?view=venture\"')
+    venture_loader = venture_loader.replace('Venture — by Jordan R. by Jordan R.', 'Venture — by Jordan R.').replace('to use the board.', 'to use Venture.')
+    venture_loader = venture_loader.replace('Vision by Jordan R. Connect images, videos, notes, and files into a visual AI prompt.', 'Venture by Jordan R. Your AI conversations, files, and models in one workspace.')
+    venture_dir = ROOT / 'venture'
+    venture_dir.mkdir(exist_ok=True)
+    (venture_dir / 'index.html').write_text(venture_loader, encoding='utf-8')
+    venture_manifest = json.loads((ROOT / 'manifest.webmanifest').read_text())
+    venture_manifest.update(name='Venture', short_name='Venture', id='./', start_url='./', scope='../', description='Your AI conversations, files, and models.')
+    for icon in venture_manifest.get('icons', []):
+        icon['src'] = '../' + icon['src'].removeprefix('./')
+    (venture_dir / 'manifest.webmanifest').write_text(json.dumps(venture_manifest, indent=2) + '\n', encoding='utf-8')
     print('Built Vision', release + ':', len(source.encode('utf-8')), 'bytes; SHA256', digest)
 
 

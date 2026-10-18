@@ -77,7 +77,7 @@ function navigationDetailsIcon(){
  button.textContent=sidebarOpen?'Details ↓':'Details ↑';
 }
 function navigationVortexURL(){
- return !['http:','https:'].includes(location.protocol)?'https://jrdn-r.github.io/vision/vortex/':new URL('vortex/',location.href).href;
+ return !['http:','https:'].includes(location.protocol)?'https://jrdn-r.github.io/vision/vortex/':new URL('vortex/',window.VisionWorkspaceRoute?.rootURL()||location.href).href;
 }
 async function navigationOpenVortex(event){
  // A normal link still supports opening Vortex in a separate tab. For a
