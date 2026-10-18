@@ -1,9 +1,8 @@
 {
-  "title": "Mobile video playback and project context",
+  "title": "Video preview loading correction",
   "items": [
-    "Video previews load before a fresh tap starts playback on iPhone. Playback failures now show a retry action.",
-    "Starting another video pauses the previous video, including when using native playback controls.",
-    "AI ZIP and RAG exports use neutral filenames. Project names are excluded from retrieved context, with instructions to ignore names retained in editable backups or older metadata.",
-    "Update FUPCJ Server for name-free live RAG context, then refresh Vision. Existing lightweight 480-pixel H.264 previews are reused."
+    "Corrected a page security policy that blocked Vision\u2019s own video and audio previews.",
+    "The existing lightweight previews can be played without uploading or processing the originals again.",
+    "Refresh Vision after the website update publishes. This correction requires no FUPCJ Server update."
   ]
 }
