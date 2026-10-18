@@ -1,5 +1,6 @@
 """Account-owned title-only OCR using the installed lightweight visual worker."""
 from __future__ import annotations
+from datetime import datetime
 import io
 import json
 import re
@@ -9,9 +10,9 @@ import time
 import warnings
 from flask import g, jsonify, request
 from local_runtime import LocalFailure
-from local_visual_runtime import VisualRuntime, IncompleteVisualInspection
+from local_visual_runtime import IncompleteVisualInspection
+from title_eyes_standby import Standby, StandbyRuntime as VisualRuntime, scheduled, resource_pause
 from media import data_url
-from owned_assets import exclusive_file
 
 MAX_BYTES = 10 * 1024 * 1024
 TTL = 24 * 3600
@@ -101,9 +102,14 @@ class TitleEyes:
         self.stop,self.wake=threading.Event(),threading.Event()
         self.lock=threading.RLock()
         self.runtime_factory=VisualRuntime
+        self.now=datetime.now
+        self.standby=Standby(self)
         self.register_routes()
 
     def initialize(self):
+        self.standby.close()
+        self.standby.retry_at=0
+        self.standby.loads=0
         self.stop.clear()
         with self.db() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS title_eyes_jobs (
@@ -143,6 +149,11 @@ class TitleEyes:
             if request.path.startswith('/api/title-eyes/'):
                 request.max_content_length=MAX_BYTES+64*1024
 
+        @self.app.get('/api/title-eyes/standby')
+        def standby_status():
+            self.owner()
+            return jsonify(self.standby.status())
+
         @self.app.post('/api/title-eyes/jobs')
         def create_title():
             uid=self.owner()
@@ -154,6 +165,8 @@ class TitleEyes:
                 if old:return jsonify(self.public(old)),202
             if not self.sessions.local.settings.get('enabled') or not self.sessions.local.settings.get('visualEnabled'):
                 raise self.Error('Enable the existing local visual worker on FUPCJ Server, then try again.',503)
+            if not scheduled(self.now()):
+                raise self.Error('Title-eyes is off today. It is available Sundays and Wednesdays, using the church PC clock.',423)
             upload=request.files.get('image')
             if not upload:raise self.Error('Add a slide image.')
             try:picture=prepare_image(upload.read(MAX_BYTES+1))
@@ -187,57 +200,75 @@ class TitleEyes:
 
     def work_once(self):
         self.sweep()
+        if not scheduled(self.now()):
+            self.standby.close('Off today · available Sundays and Wednesdays')
+            with self.db() as db:
+                db.execute(f"UPDATE title_eyes_jobs SET status='error',phase='Schedule ended',error='Title-eyes is off today. Submit again on Sunday or Wednesday.',image=NULL WHERE status IN {ACTIVE}")
+            return False
         with self.db() as db:
             row=db.execute("SELECT * FROM title_eyes_jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
-        if not row:return False
-        row=dict(row);job=row['id']
+        row=dict(row) if row else None
+        job=row['id'] if row else None
         admin=self.app.config['TITLE_EYES_ACCOUNT_ADMIN']
-        if admin.blocked(row['uid']):
+        if row and admin.blocked(row['uid']):
             with self.db() as db:db.execute('DELETE FROM title_eyes_jobs WHERE id=?',(job,))
             return True
         def phase(text):
-            with self.db() as db:db.execute(f'UPDATE title_eyes_jobs SET phase=? WHERE id=? AND status IN {ACTIVE}',(text,job))
+            if job:
+                with self.db() as db:db.execute(f'UPDATE title_eyes_jobs SET phase=? WHERE id=? AND status IN {ACTIVE}',(text,job))
         deadline=time.monotonic()+660
         def cancelled():
             current=self.row(job)
-            return self.stop.is_set() or time.monotonic()>deadline or not current or current['status']!='processing' or admin.blocked(row['uid'])
+            return (self.stop.is_set() or not scheduled(self.now()) or time.monotonic()>deadline
+                    or not current or current['status']!='processing' or admin.blocked(row['uid']))
         try:
-            import psutil
-            if psutil.virtual_memory().available<10*1024**3 or any((p.info.get('name') or '').lower() in ('obs','obs.exe','obs64','obs64.exe','obs32.exe') for p in psutil.process_iter(['name'])):
-                phase('Waiting for available memory or OBS to close');return False
-            with exclusive_file(self.app.config['DATA_DIR']/'local-inference.lock'):
-                with self.db() as db:
-                    changed=db.execute("UPDATE title_eyes_jobs SET status='processing',phase='Reading the title' WHERE id=? AND status='queued'",(job,)).rowcount
-                if not changed:return False
-                settings=self.sessions.local.settings
-                if not settings.get('enabled') or not settings.get('visualEnabled'):
-                    raise LocalFailure('Enable the existing local visual worker on FUPCJ Server.')
-                with self.runtime_factory(settings,cancelled,phase) as runtime:
-                    for attempt in range(2):
-                        try:
-                            result=parse_title(runtime.inspect(data_url(row['image'],'image/jpeg'),PROMPT))
-                            break
-                        except (IncompleteVisualInspection,ValueError):
-                            if attempt:raise
-                            phase('Taking another look at the lettering')
-                    if cancelled():raise InterruptedError()
-                with self.db() as db:
-                    db.execute("UPDATE title_eyes_jobs SET status='complete',phase='Ready',result=?,image=NULL WHERE id=? AND status='processing'",(json.dumps(result),job))
-        except BlockingIOError:
-            phase('Waiting for the local model');return False
-        except InterruptedError:
+            # Even without a queued slide, scheduled days proactively preload.
+            runtime=self.standby.ensure()
+            if runtime is None:
+                phase(self.standby.phase)
+                return False
+            if not row:return False
             with self.db() as db:
-                if self.stop.is_set():db.execute("UPDATE title_eyes_jobs SET status='queued',phase='Waiting to resume' WHERE id=? AND status='processing'",(job,))
-                else:db.execute("UPDATE title_eyes_jobs SET status='error',phase='Stopped',error='Reading took too long. Try a clearer image.',image=NULL WHERE id=? AND status='processing'",(job,))
+                changed=db.execute("UPDATE title_eyes_jobs SET status='processing',phase='Reading the title' WHERE id=? AND status='queued'",(job,)).rowcount
+            if not changed:return False
+            self.standby.active=True
+            begin=getattr(runtime,'begin_request',None)
+            if begin:begin(cancelled,phase)
+            for attempt in range(2):
+                try:
+                    result=parse_title(runtime.inspect(data_url(row['image'],'image/jpeg'),PROMPT))
+                    break
+                except (IncompleteVisualInspection,ValueError):
+                    if attempt or cancelled():raise
+                    phase('Taking another look at the lettering')
+            if cancelled():raise InterruptedError()
+            with self.db() as db:
+                db.execute("UPDATE title_eyes_jobs SET status='complete',phase='Ready',result=?,image=NULL WHERE id=? AND status='processing'",(json.dumps(result),job))
         except Exception as error:
-            message=str(error)[:240] if isinstance(error,ValueError) else 'The local visual worker could not finish. Check FUPCJ Server and try again.'
-            with self.db() as db:db.execute("UPDATE title_eyes_jobs SET status='error',phase='Could not read title',error=?,image=NULL WHERE id=? AND status='processing'",(message,job))
-        return True
+            self.standby.close('Waiting to resume')
+            if row:
+                with self.db() as db:
+                    if self.stop.is_set() or (scheduled(self.now()) and resource_pause()):
+                        db.execute("UPDATE title_eyes_jobs SET status='queued',phase='Waiting to resume' WHERE id=? AND status='processing'",(job,))
+                    else:
+                        message=('Title-eyes is off today. Submit again on Sunday or Wednesday.' if not scheduled(self.now()) else
+                                 str(error)[:240] if isinstance(error,ValueError) else 'The local visual worker could not finish. Check FUPCJ Server and try again.')
+                        db.execute(f"UPDATE title_eyes_jobs SET status='error',phase='Could not read title',error=?,image=NULL WHERE id=? AND status IN {ACTIVE}",(message,job))
+        finally:
+            self.standby.active=False
+            runtime=self.standby.runtime
+            if runtime is not None:
+                finish=getattr(runtime,'finish_request',None)
+                if finish:finish()
+        return bool(row)
 
     def start(self):
         def run():
-            while not self.stop.is_set():
-                try:self.work_once()
-                except Exception:self.app.logger.error('Title-eyes worker could not complete a queue check.')
-                self.wake.wait(2);self.wake.clear()
+            try:
+                while not self.stop.is_set():
+                    try:self.work_once()
+                    except Exception:self.app.logger.error('Title-eyes worker could not complete a queue check.')
+                    self.wake.wait(2);self.wake.clear()
+            finally:
+                self.standby.close('Server stopping')
         threading.Thread(target=run,name='title-eyes',daemon=True).start()

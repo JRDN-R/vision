@@ -1,5 +1,5 @@
 import {initAuth, user, accountEpoch, authError, signOut} from '../vortex/auth.js?v=1.0.4&rev=moises.1';
-import {createTitleEyesClient} from './client.js?v=1';
+import {createTitleEyesClient} from './client.js?v=2';
 const $ = id => document.getElementById(id);
 let file = null, previewURL = '', generation = 0, jobId = '', timer, pending = false, copyTimer, uploadId = '', controller;
 const api = createTitleEyesClient({getToken:async () => {
@@ -106,14 +106,32 @@ $('google').onclick=async()=>{
   }catch(error){$('loginStatus').textContent=authError(error);}finally{$('google').disabled=false;}
 };
 $('loginForm').onsubmit=async event=>{event.preventDefault();$('emailLogin').disabled=true;try{await window.VisionFirebaseSDK.auth.signInWithEmailAndPassword(auth(),$('email').value.trim(),$('password').value);$('password').value='';}catch(error){$('loginStatus').textContent=authError(error);}finally{$('emailLogin').disabled=false;}};
+let standbyTimer;
+async function refreshStandby() {
+  clearTimeout(standbyTimer);
+  if (!user()) return;
+  const epoch=accountEpoch();
+  try {
+    const info=await api.standby();
+    if(epoch!==accountEpoch() || !user())return;
+    const memory=Number.isFinite(info.residentBytes) && info.loaded ? ' · '+(info.residentBytes/1e9).toFixed(2)+' GB RAM' : '';
+    $('standbyStatus').textContent=(info.loaded && info.phase==='Ready' ? 'Model ready' : info.phase)+memory+' · Sundays & Wednesdays';
+  } catch(error) {
+    if(epoch!==accountEpoch() || !user())return;
+    $('standbyStatus').textContent=error.status===404 ? 'Scheduled standby needs the latest server update.' : 'Standby status unavailable. The server may be offline.';
+  }
+  standbyTimer=setTimeout(refreshStandby,10000);
+}
 let priorUid=null;
 void initAuth(identity=>{
+  clearTimeout(standbyTimer);
+  $('standbyStatus').textContent='Ready Sundays and Wednesdays · church PC time';
   const switched=priorUid && priorUid!==identity?.uid;priorUid=identity?.uid||null;
   invalidate();jobId='';busy(false);$('titleText').value='';copyState();
   if(switched){file=null;clearPreview();}
   $('account').disabled=false;$('account').textContent=identity?'Sign out':'Sign in';
-  if(identity){$('login').close();jobId=remembered();if(jobId){busy(true);void poll(jobId,generation);}else if(file){void start();}else status('Ready for your slide.');}
+  if(identity){void refreshStandby();$('login').close();jobId=remembered();if(jobId){busy(true);void poll(jobId,generation);}else if(file){void start();}else status('Ready for your slide.');}
   else status('Choose a slide, then sign in with your Vision account.');
 }).catch(error=>{status(authError(error),true);$('account').textContent='Refresh to connect';});
-window.addEventListener('pagehide',()=>{clearTimeout(timer);controller?.abort();});
-window.addEventListener('pageshow',event=>{if(event.persisted&&jobId&&user()){invalidate();void poll(jobId,generation);}});
+window.addEventListener('pagehide',()=>{clearTimeout(standbyTimer);clearTimeout(timer);controller?.abort();});
+window.addEventListener('pageshow',event=>{if(event.persisted&&user())void refreshStandby();if(event.persisted&&jobId&&user()){invalidate();void poll(jobId,generation);}});

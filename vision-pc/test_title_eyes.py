@@ -1,4 +1,5 @@
 """Title OCR API boundaries and queued processing; no real model/network calls."""
+from datetime import datetime
 import io
 import json
 import unittest
@@ -13,8 +14,11 @@ class TitleEyesTests(unittest.TestCase):
     def setUp(self):
         test_uploaded_media.UploadedMediaTests.setUp(self)
         self.store=server.title_eyes
+        self.store.now=lambda: datetime(2026,10,18,12)
         server.sessions.local.settings={'enabled':True,'visualEnabled':True}
     def tearDown(self):
+        self.store.standby.close()
+        self.store.now=datetime.now
         self.store.runtime_factory=VisualRuntime
         self.tmp.cleanup()
     def submit(self,rid='slide-test-1',headers=None,raw=None):
@@ -25,6 +29,7 @@ class TitleEyesTests(unittest.TestCase):
         with patch('psutil.process_iter',return_value=[]),patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
             return self.store.work_once()
     def fake(self,answer):
+        self.store.standby.close()
         class Runtime:
             def __init__(self,*args):pass
             def __enter__(self):return self
@@ -111,5 +116,136 @@ class TitleEyesTests(unittest.TestCase):
     def test_missing_model_is_explicit(self):
         server.sessions.local.settings={}
         self.assertEqual(self.submit().status_code,503)
+
+
+class StandbyScheduleTests(unittest.TestCase):
+    setUp=TitleEyesTests.setUp
+    tearDown=TitleEyesTests.tearDown
+    submit=TitleEyesTests.submit
+    work=TitleEyesTests.work
+    def test_exact_weekdays_and_midnight(self):
+        from title_eyes_standby import scheduled, next_start
+        from datetime import timedelta
+        monday=datetime(2026,10,19)
+        self.assertEqual([scheduled(monday+timedelta(days=n)) for n in range(7)], [False,False,True,False,False,False,True])
+        self.assertTrue(scheduled(datetime(2026,10,18,23,59,59)))
+        self.assertFalse(scheduled(datetime(2026,10,19,0,0,0)))
+        self.assertEqual(next_start(monday),'2026-10-21T00:00:00')
+        self.assertEqual(next_start(datetime(2026,10,21,23,59)),'2026-10-25T00:00:00')
+
+    def test_off_days_reject_uploads_without_loading(self):
+        self.store.now=lambda:datetime(2026,10,19,12)
+        with patch.object(self.store,'runtime_factory',side_effect=AssertionError('Must stay off')):
+            self.assertEqual(self.submit().status_code,423)
+            self.assertFalse(self.work())
+        self.assertEqual(self.client.get('/api/title-eyes/standby').status_code,401)
+        value=self.client.get('/api/title-eyes/standby',headers=self.headers).json
+        self.assertFalse(value['scheduled']);self.assertFalse(value['loaded']);self.assertEqual(value['residentBytes'],0)
+
+    def counting_runtime(self):
+        events=[]
+        class Runtime:
+            resident_bytes=950_000_000
+            def __init__(self,*args):events.append('create')
+            def __enter__(self):events.append('load');return self
+            def __exit__(self,*args):events.append('stop')
+            def retain(self):events.append('retain')
+            def reusable(self):return True
+            def begin_request(self,*args):events.append('begin')
+            def finish_request(self):events.append('idle')
+            def inspect(self,*args):events.append('inspect');return '{"title":"THE COST OF A WEDDING","uncertain":false}'
+        self.store.runtime_factory=Runtime
+        return events
+
+    def test_proactive_warmup_reuses_one_process_for_multiple_slides(self):
+        events=self.counting_runtime()
+        self.assertFalse(self.work()) # No slide: starts on schedule anyway.
+        self.submit('warm-test-1');self.work()
+        self.submit('warm-test-2');self.work()
+        self.assertEqual(events.count('load'),1);self.assertEqual(events.count('retain'),1)
+        self.assertEqual(events.count('inspect'),2);self.assertNotIn('stop',events)
+        value=self.client.get('/api/title-eyes/standby',headers=self.headers).json
+        self.assertTrue(value['loaded']);self.assertEqual(value['residentBytes'],950_000_000)
+        self.assertEqual(value['memoryLimitBytes'],4*1024**3)
+        with self.assertRaises(BlockingIOError):
+            from owned_assets import exclusive_file
+            with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
+
+    def test_unloads_at_end_of_day_and_allows_other_workers(self):
+        events=self.counting_runtime();self.work()
+        job=self.submit().json['id']
+        self.store.now=lambda:datetime(2026,10,19,0)
+        self.work();self.assertEqual(events.count('stop'),1)
+        self.assertEqual(self.store.row(job)['status'],'error');self.assertIsNone(self.store.row(job)['image'])
+        from owned_assets import exclusive_file
+        with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
+        self.store.now=lambda:datetime(2026,10,21,0)
+        self.work();self.assertEqual(events.count('load'),2)
+
+    def test_obs_memory_and_competing_work_release_then_reload(self):
+        events=self.counting_runtime();self.work()
+        with patch('title_eyes_standby.resource_pause',return_value='Waiting for OBS to close'):
+            self.work();self.assertIsNone(self.store.standby.runtime)
+        self.work();self.assertEqual(events.count('load'),2)
+        with patch.object(self.store.standby,'competing_work',return_value=True):
+            self.work();self.assertIsNone(self.store.standby.runtime)
+        self.work();self.assertEqual(events.count('load'),3)
+        with patch('title_eyes_standby.resource_pause',return_value='Waiting for available memory'):
+            self.work();self.assertIsNone(self.store.standby.runtime)
+
+    def test_failure_during_preload_releases_lock_and_backs_off(self):
+        class Broken:
+            def __init__(self,*args):pass
+            def __enter__(self):raise ValueError('Invalid installation')
+            def __exit__(self,*args):pass
+        self.store.runtime_factory=Broken
+        self.work();self.assertIsNone(self.store.standby.runtime)
+        from owned_assets import exclusive_file
+        with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
+        self.assertGreater(self.store.standby.retry_at,0)
+        with patch.object(self.store,'runtime_factory',side_effect=AssertionError('Retry backoff')):self.work()
+
+    def test_changed_model_files_cause_fresh_load(self):
+        events=self.counting_runtime();self.work()
+        with patch.object(self.store.standby.runtime,'reusable',return_value=False):self.work()
+        self.assertEqual(events.count('stop'),1);self.assertEqual(events.count('load'),2)
+
+    def test_idle_runtime_has_no_per_slide_ten_minute_lifetime(self):
+        from title_eyes_standby import StandbyRuntime
+        runtime=StandbyRuntime({},lambda:False,lambda _:None)
+        runtime.finish_request();self.assertIsNone(runtime.deadline)
+        import time
+        runtime.begin_request(lambda:False,lambda _:None)
+        self.assertGreater(runtime.deadline,time.monotonic()+590)
+        runtime.finish_request();self.assertIsNone(runtime.deadline)
+        runtime.http.close()
+
+
+    def test_real_file_fingerprint_rejects_changes_and_runtime_inventory_additions(self):
+        from title_eyes_standby import StandbyRuntime
+        path=self.root/'model.gguf';path.write_bytes(b'original')
+        root=self.root/'runtime';root.mkdir();binary=root/'llama-server.exe';binary.write_bytes(b'runtime')
+        runtime=StandbyRuntime({},lambda:False,lambda _:None)
+        runtime._watched=[str(path),str(binary)]
+        runtime._runtime_root=root;runtime._inventory={'llama-server.exe'}
+        runtime.process=SimpleNamespace(poll=lambda:None)
+        runtime._fingerprint=runtime.fingerprint()
+        self.assertTrue(runtime.reusable())
+        path.write_bytes(b'changed!');self.assertFalse(runtime.reusable())
+        runtime._fingerprint=runtime.fingerprint();self.assertTrue(runtime.reusable())
+        (root/'extra.dll').write_bytes(b'extra');self.assertFalse(runtime.reusable())
+        runtime.http.close()
+
+    def test_memory_limit_stops_the_resident_child(self):
+        from title_eyes_standby import StandbyRuntime
+        runtime=StandbyRuntime({},lambda:False,lambda _:None)
+        runtime.process=SimpleNamespace(pid=123)
+        runtime.done=SimpleNamespace(wait=lambda _:False)
+        fake=SimpleNamespace(memory_info=lambda:SimpleNamespace(rss=5*1024**3))
+        with patch('psutil.Process',return_value=fake),patch('psutil.virtual_memory',return_value=SimpleNamespace(available=30*1024**3)),patch.object(runtime,'stop_child') as stop:
+            runtime.monitor()
+            stop.assert_called_once_with(runtime.process)
+        self.assertIn('4 GiB',runtime.stop_reason)
+        runtime.http.close()
 
 if __name__=='__main__':unittest.main()

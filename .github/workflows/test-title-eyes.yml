@@ -2,7 +2,7 @@ name: Test title-eyes
 on:
   push:
     branches: [main]
-    paths: ['title-eyes/**','web/title-eyes/**','vision-pc/title_eyes.py','vision-pc/test_title_eyes.py','vision-pc/server.py','vision-pc/account_administration.py','.github/workflows/test-title-eyes.yml']
+    paths: ['title-eyes/**','web/title-eyes/**','vision-pc/title_eyes.py','vision-pc/title_eyes_standby.py','vision-pc/test_title_eyes.py','vision-pc/server.py','vision-pc/account_administration.py','.github/workflows/test-title-eyes.yml']
   pull_request:
     paths: ['title-eyes/**','web/title-eyes/**','vision-pc/**','tests/title-eyes.test.cjs','.github/workflows/test-title-eyes.yml']
   workflow_dispatch:
