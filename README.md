@@ -226,6 +226,13 @@ does not claim to attach a local file automatically to another website.
 
 ## Mobile playback and AI export names
 
+Version 1.0.8.5 corrects a missing `media-src` rule that caused the page security
+policy to block its own blob previews. The rule allows only `blob:` and `data:`
+media; authenticated downloads still use the existing connection policy. The
+portable app and both hosted entry pages receive the same policy during the build.
+This correction needs a page refresh after deployment, with no server update or
+video reprocessing.
+
 Preview playback uses the existing private 480-pixel H.264/AAC MP4. Tap to load,
 then tap **Play video** once the preview is ready. That second tap preserves
 Safari's playback permission after the authenticated download. Starting another

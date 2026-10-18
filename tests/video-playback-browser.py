@@ -3,8 +3,10 @@ No account, server, or provider network calls; the preview route is a fixture.
 """
 from pathlib import Path
 import os
+import re
 import subprocess
 import tempfile
+import time
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,8 +14,14 @@ URL = 'https://video-preview.test/'
 source = (ROOT/'web/video-preview.js').read_text()
 player_code = source[source.index('function pauseOtherPCVideos'):source.index('function installPCVideoControls')]
 css = (ROOT/'web/video-preview.css').read_text()
-html = '''<html><meta charset="utf-8"><style>body{margin:0}.canvas-wrap{position:relative;width:180px;height:260px;display:inline-block}</style><style>'''+css+'''</style><body><script>
-const pcVideoPlayers=new Map(),state={nodes:[]};let bad=false,downloads=0,revoked=0;
+policy_meta = re.search(r'<meta http-equiv="Content-Security-Policy" content="[^"]+">', (ROOT/'web/document.html').read_text())[0]
+# document.write cannot loosen a loader's existing CSP: check every entry point.
+for entry in ('Vision.html','index.html','venture/index.html'):
+    built_policy=re.search(r'<meta http-equiv="Content-Security-Policy" content="[^"]+">', (ROOT/entry).read_text())[0]
+    assert built_policy==policy_meta, entry+' must use the current application policy; rebuild first'
+assert 'media-src blob: data:;' in policy_meta
+html = '''<html><meta charset="utf-8">'''+policy_meta+'''<style>body{margin:0}.canvas-wrap{position:relative;width:180px;height:260px;display:inline-block}</style><style>'''+css+'''</style><body><script>
+const pcVideoPlayers=new Map(),state={nodes:[]};let bad=false,downloads=0,revoked=0;window.mediaViolations=[];document.addEventListener('securitypolicyviolation',e=>{if(e.effectiveDirective==='media-src')mediaViolations.push({directive:e.effectiveDirective,blocked:e.blockedURI});});
 const revoke=URL.revokeObjectURL.bind(URL);URL.revokeObjectURL=url=>{revoked++;revoke(url);};
 function pcVideoCurrent(project,n,id){return project===state&&state.nodes.includes(n)&&n.pcVideo.requestId===id;}
 async function pcVideoRequest(n,suffix,options){downloads++;const r=await fetch(bad?'/bad.mp4':'/preview.mp4',{signal:options.signal});return r.blob();}
@@ -23,6 +31,16 @@ function installPCVideoControls(n){const wrap=document.getElementById(n.id);let 
 '''+player_code+'''
 for(const id of ['one','two']){const n={id,title:id,src:'',pcVideo:{requestId:id}};state.nodes.push(n);const w=document.createElement('div');w.id=id;w.className='canvas-wrap';document.body.append(w);installPCVideoControls(n);}
 </script></body></html>'''
+
+def wait_js(page, expression, arg=None):
+    # Poll from Python: wait_for_function evaluates strings in the page and can
+    # conflict with the production policy's intentional ban on unsafe-eval.
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        if page.evaluate(expression,arg):
+            return
+        page.wait_for_timeout(50)
+    raise AssertionError('Timed out: '+expression)
 
 with tempfile.TemporaryDirectory() as temp:
     movie=Path(temp)/'preview.mp4'
@@ -43,28 +61,40 @@ with tempfile.TemporaryDirectory() as temp:
             browser=browser_type.launch(headless=True)
             try:
                 context=browser.new_context(viewport={'width':390,'height':844},has_touch=True,is_mobile=True)
+                blocked_policy=True
                 def route(r):
                     path=r.request.url
-                    if path==URL:r.fulfill(content_type='text/html',body=html)
+                    if path==URL:r.fulfill(content_type='text/html',body=html.replace('media-src blob: data:;','') if blocked_policy else html)
                     elif path.endswith('/preview.mp4'):r.fulfill(content_type='video/mp4',body=movie.read_bytes())
                     elif path.endswith('/bad.mp4'):r.fulfill(content_type='video/mp4',body=b'not a video')
+                    elif path.startswith(('blob:','data:')):r.continue_()
                     else:r.abort()
                 context.route('**/*',route)
+                page=context.new_page();page.goto(URL)
+                page.locator('#one .pc-video-play').click()
+                wait_js(page,'mediaViolations.length>0')
+                assert page.evaluate('mediaViolations[0].blocked')=='blob'
+                print('REPRODUCED:',browser_type.name,'previous policy blocks the private preview')
+                page.close();blocked_policy=False
                 page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(URL)
                 def load(id):
                     page.locator('#'+id+' .pc-video-play').click()
-                    expect(page.locator('#'+id+' [role=status]')).to_have_text('Preview loaded. Tap to play.')
+                    try:
+                        expect(page.locator('#'+id+' [role=status]')).to_have_text('Preview loaded. Tap to play.')
+                    except AssertionError:
+                        print('MEDIA DIAGNOSTICS:', page.locator('#'+id+' video').evaluate("""(v)=>({code:v.error?.code,message:v.error?.message,h264:v.canPlayType('video/mp4; codecs="avc1.42E01E"'),aac:v.canPlayType('audio/mp4; codecs="mp4a.40.2"')})"""))
+                        raise
                     assert page.locator('#'+id+' video').evaluate('(v)=>v.paused && v.playsInline && v.currentTime===0')
                 def play(id):
                     page.locator('#'+id+' .pc-video-notice button').first.click()
-                    page.wait_for_function("id=>{const v=document.querySelector('#'+id+' video');return !v.paused&&v.currentTime>0;}",arg=id)
+                    wait_js(page,"id=>{const v=document.querySelector('#'+id+' video');return !v.paused&&v.currentTime>0;}",id)
                 load('one');play('one')
                 load('two');assert page.locator('#one video').evaluate('(v)=>v.paused')
                 play('two');assert page.locator('#one video').evaluate('(v)=>v.paused')
                 # Native controls/resume also pause the other player.
                 page.locator('#one video').evaluate('(v)=>v.play()')
-                page.wait_for_function("document.querySelector('#two video').paused")
+                wait_js(page,"document.querySelector('#two video').paused")
                 # Policy rejection is visible and permits another fresh tap.
                 page.evaluate("const v=document.querySelector('#two video');v.realPlay=v.play;v.play=()=>Promise.reject(new DOMException('Blocked','NotAllowedError'));pcVideoPlayers.get('two').notice.hidden=false;")
                 page.locator('#two .pc-video-notice button').first.click()
@@ -85,6 +115,7 @@ with tempfile.TemporaryDirectory() as temp:
                 page.evaluate("for(const id of [...pcVideoPlayers.keys()])stopPCVideoPlayer(id)")
                 assert page.locator('video').count()==0
                 assert page.evaluate('pcVideoPlayers.size')==0
+                assert not page.evaluate('mediaViolations'),page.evaluate('mediaViolations')
                 assert not errors,errors
                 print('PASS:',browser_type.name,'real MP4, fresh tap, exclusive playback, rejection recovery, decode retry, URL cleanup')
             finally:browser.close()
