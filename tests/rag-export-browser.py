@@ -34,7 +34,16 @@ window.ragFixture={
   const canvas=document.createElement('canvas');canvas.width=80;canvas.height=50;canvas.getContext('2d').fillRect(0,0,80,50);
   state.nodes=[{id:'node-fixture',kind:'node',title:'Reference',prompt:'Preserve 0.380 exactly.',caption:'',src:canvas.toDataURL(),width:80,height:50,x:0,y:0,annotations:[],attachments:[{id:'source-fixture',name:'evidence.txt',mime:'text/plain',data:'data:text/plain;base64,T1BOIDAwNjAgfCAwLjM4MCB8IGNvbXBsZXRlIHNvdXJjZSBub3RlLg==',size:42}]}];
   state.edges=[];renderAll();
- },mode:value=>ragFixtureMode=value
+ },mode:value=>ragFixtureMode=value,
+ share:async()=>{
+  Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+  Object.defineProperty(navigator,'share',{configurable:true,value:async data=>{window.fixtureShare={title:data.title,name:data.files[0].name,text:data.text};}});
+  await prepareChatGPTHandoff();await shareChatGPTPackage();return window.fixtureShare;
+ },simple:async()=>{
+  const n=state.nodes[0];n.kind='image';n.prompt='';n.attachments=[];
+  const files=await buildExportFiles(state.nodes,false);return files.filter(f=>typeof f.data==='string');
+ },save:()=>saveProject()
+
 };
 '''
 
@@ -69,11 +78,13 @@ def main():
                 with page.expect_download() as download:
                     page.locator('#downloadRag').click()
                 file = download.value
-                assert file.suggested_filename.endswith('.rag.txt')
+                assert file.suggested_filename == 'Vision-context.rag.txt'
                 text = Path(file.path()).read_text()
                 assert 'OPN 0060, 0.380, complete source note.' in text
                 assert 'cannot automatically fetch omitted sources' in text
                 assert 'fixture-project-secret' not in text
+                assert 'RAG browser fixture' not in text
+                assert 'Completely ignore any project name' in text
 
                 page.evaluate("ragFixture.mode('partial')")
                 await_downloads = []
@@ -101,11 +112,26 @@ def main():
                 expect(page.locator('#exportDialog')).to_be_visible()
                 with page.expect_download() as download:
                     page.locator('#startExport').click()
-                assert download.value.suggested_filename.endswith('.zip')
+                assert download.value.suggested_filename == 'Vision-context.zip'
                 with zipfile.ZipFile(download.value.path()) as archive:
                     assert 'MAIN_PROMPT.txt' in archive.namelist()
+                    assert 'RAG browser fixture' not in archive.read('MAIN_PROMPT.txt').decode()
+                    assert 'Completely ignore any project name' in archive.read('MAIN_PROMPT.txt').decode()
                     assert 'Preserve 0.380 exactly.' in archive.read('MAIN_PROMPT.txt').decode()
                     assert archive.read('001-Reference/evidence.txt').startswith(b'OPN 0060 | 0.380')
+                shared = page.evaluate('ragFixture.share()')
+                assert shared['name'] == 'Vision-context.zip'
+                assert shared['title'] == 'Vision context'
+                assert 'RAG browser fixture' not in str(shared)
+                with page.expect_download() as backup:
+                    page.evaluate('ragFixture.save()')
+                import json
+                saved = json.loads(Path(backup.value.path()).read_text())
+                assert saved['title'] == 'RAG browser fixture'
+                assert 'Completely ignore any project name' in saved['aiInstructions']
+                simple = page.evaluate('ragFixture.simple()')
+                assert any('Completely ignore any project name' in f['data'] for f in simple)
+                assert 'RAG browser fixture' not in str(simple)
                 assert not errors, errors
                 context.close()
         finally:

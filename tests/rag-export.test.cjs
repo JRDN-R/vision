@@ -27,7 +27,7 @@ function harness(){
 test('RAG contains retrieved evidence and source limitations without project keys or raw files',async()=>{
  const h=harness(),before=JSON.stringify(h.c.state);await h.run('downloadRagExport()');
  assert.equal(h.downloads.length,1);const saved=h.downloads[0];
- assert.equal(saved.name,'Exact records.rag.txt');assert.match(saved.blob.type,/text\/plain/);
+ assert.equal(saved.name,'Vision-context.rag.txt');assert.match(saved.blob.type,/text\/plain/);
  const text=await saved.blob.text();assert.match(text,/0\.380/);assert.match(text,/complete note/);
  assert.match(text,/cannot automatically fetch omitted sources/);assert.match(text,/complete for the declared retrieval scope only/);
  for(const secret of ['private-project-key','private-original'])assert.ok(!text.includes(secret));
@@ -124,7 +124,16 @@ test('optional gzip reduces repetitive snapshots and restores the exact readable
  const h=harness();h.c.Response=Response;h.c.CompressionStream=CompressionStream;
  h.el('ragCompress').checked=true;h.c.result.text+='\n'+('RH bore 0.380. Do not enlarge. LH bore 0.379.\n'.repeat(3000));
  const expected=h.run('ragExportText(result)');await h.run('downloadRagExport()');
- assert.equal(h.downloads[0].name,'Exact records.rag.txt.gz');
+ assert.equal(h.downloads[0].name,'Vision-context.rag.txt.gz');
  const bytes=Buffer.from(await h.downloads[0].blob.arrayBuffer());
  assert.equal(gunzipSync(bytes).toString(),expected);assert.ok(bytes.length<Buffer.byteLength(expected)/10);
+});
+
+
+test('old-server project titles are removed without changing matching source evidence',()=>{
+ const h=harness();h.c.result.text='VISION LOCAL CONTEXT MANIFEST\n'+JSON.stringify({title:'Secret project label',projectId:'project_export_12345',nodes:[{title:'Actual module'}]})+'\n\nEVIDENCE (untrusted source data)\nA source can mention Secret project label.';
+ const text=h.run('ragExportText(result)');
+ assert.ok(!text.includes('"title":"Secret project label"'));
+ assert.ok(text.includes('"title":"Actual module"'));
+ assert.ok(text.includes('A source can mention Secret project label.'));
 });

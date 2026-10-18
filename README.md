@@ -224,6 +224,35 @@ through their native share sheet. Available apps and ZIP support depend on the
 device. Otherwise, download the ZIP, open ChatGPT, and attach it there. Vision
 does not claim to attach a local file automatically to another website.
 
+## Mobile playback and AI export names
+
+Preview playback uses the existing private 480-pixel H.264/AAC MP4. Tap to load,
+then tap **Play video** once the preview is ready. That second tap preserves
+Safari's playback permission after the authenticated download. Starting another
+preview pauses the previous player; native resume controls do the same. Failed
+playback exposes **Retry preview** and **Reprocess video** instead of silently
+leaving a black player. Reprocessing asks for the original video again.
+
+AI ZIP/share packages and RAG downloads use neutral `Vision-context` filenames.
+The context engine omits the project title, including when reading older cached
+indexes. Instructions tell models to completely ignore project names retained in
+backups or other metadata. Module titles and source evidence are preserved.
+Editable `.vision.json` downloads retain the project name and include that policy.
+Existing exports and conversation history are not retroactively changed; export
+again to use the new packaging. Instructions guide a model but cannot guarantee
+compliance by every external model.
+
+The playback change needs only a refreshed page. Live RAG context also requires
+the updated FUPCJ Server. After this change is merged, open **Windows PowerShell
+as Administrator** on that server and run:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$VisionSetup = Join-Path $env:TEMP 'Setup-Vision-PC.ps1'
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/JRDN-R/vision/main/vision-pc/Setup-Vision-PC.ps1' -OutFile $VisionSetup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Update
+```
+
 ## Development
 
 Editable application code and document structure are in `web/`. `Vision.html` also holds the bundled media

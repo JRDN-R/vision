@@ -1,11 +1,9 @@
 {
-  "title": "Node activity and background processing",
+  "title": "Mobile video playback and project context",
   "items": [
-    "Activity now appears above each working node, with separate running, awaiting and attention states.",
-    "Opt into automatic project naming in Project Settings. The local model suggests a name after your first file; names you type stay yours.",
-    "Maximum and Medium describe every other screenshot. Balanced and Minimal describe each one. All screenshots remain saved and skipped descriptions are labeled.",
-    "Uploaded-video screenshots retain more detail, and visual prompts avoid carrying earlier caption mistakes forward.",
-    "After your upload is accepted, FUPCJ Server continues video preparation, transcription and visual descriptions while you are away. Results sync when you return, and incomplete inspections retry automatically.",
-    "Update FUPCJ Server, then refresh Vision. The server must remain running; Gemini approval and existing processing limits still apply."
+    "Video previews load before a fresh tap starts playback on iPhone. Playback failures now show a retry action.",
+    "Starting another video pauses the previous video, including when using native playback controls.",
+    "AI ZIP and RAG exports use neutral filenames. Project names are excluded from retrieved context, with instructions to ignore names retained in editable backups or older metadata.",
+    "Update FUPCJ Server for name-free live RAG context, then refresh Vision. Existing lightweight 480-pixel H.264 previews are reused."
   ]
 }
