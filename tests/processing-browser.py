@@ -9,6 +9,7 @@ index=html.rfind('})();')
 hooks='''
 accountCanUseApp=()=>true;accountUpdateGate();
 window.processingFixture={
+ ready:async()=>{await accountReady;await projectRecoverStartup();},
  open:()=>openProcessingSettings(),
  settings:()=>({...state.settings}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
@@ -34,6 +35,7 @@ with sync_playwright() as pw:
   page.route('**/*',lambda route:route.fulfill(body=html,content_type='text/html') if route.request.url=='https://processing.test/' else route.abort())
   page.goto('https://processing.test/',wait_until='domcontentloaded')
   page.wait_for_function('!!window.processingFixture')
+  page.evaluate('processingFixture.ready()')
   # Fixture bypasses account navigation only; real dialogs, CSS and handlers run.
   page.evaluate('document.querySelectorAll("dialog[open]").forEach(d=>d.close());processingFixture.open()')
   expect(page.locator('#processingDialog')).to_be_visible()
@@ -44,7 +46,7 @@ with sync_playwright() as pw:
   page.locator('#projectAutoName').check()
   page.locator('#saveProcessing').click()
   settings=page.evaluate('processingFixture.settings()')
-  assert settings['screenshotDetail']=='maximum' and settings['transcriptionProvider']=='gemini' and settings['includeSoundEvents']
+  assert settings['screenshotDetail']=='maximum' and settings['transcriptionProvider']=='gemini' and settings['includeSoundEvents'],settings
   page.evaluate('processingFixture.restore()')
   assert page.evaluate('processingFixture.settings().screenshotDetail')=='maximum'
   assert page.evaluate('processingFixture.settings().autoNameProject') is True
