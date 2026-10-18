@@ -708,11 +708,11 @@ function validateTranscriptionJobs(raw,attachments){
    if(!section||!Number.isFinite(section.start)||!Number.isFinite(section.end)||section.start<0||section.end<=section.start||section.start<previous-.01||!['audio/mpeg','audio/mp3','audio/wav'].includes(section.mimeType))throw new Error('A queued audio section is invalid.');
    previous=section.end;const done=section.done===true;
    if(done&&typeof section.text!=='string')throw new Error('A completed audio section is missing its transcript.');
-   if(!done&&(typeof section.audioData!=='string'||!/^data:audio\/(?:mpeg|mp3|wav);base64,[A-Za-z0-9+/]+={0,2}$/i.test(section.audioData)||section.audioData.length>19000000))throw new Error('A queued audio section is missing or too large.');
+   if(!done&&!(/^[a-f0-9]{24}$/.test(job.mediaId||'')&&validASRReference(job.remoteProjectId)&&validASRBackend(job.backendUrl)&&section.audioData==null)&&(typeof section.audioData!=='string'||!/^data:audio\/(?:mpeg|mp3|wav);base64,[A-Za-z0-9+/]+={0,2}$/i.test(section.audioData)||section.audioData.length>19000000))throw new Error('A queued audio section is missing or too large.');
    return{start:section.start,end:section.end,mimeType:section.mimeType,audioData:done?null:section.audioData,text:done?section.text:null,done};
   });
   const source=attachments.find(a=>a.id===job.sourceId),provider=job.provider==='gemini'?'gemini':'local',migrated=job.provider!=='local'&&job.provider!=='gemini';
-  const remote={remoteId:validASRReference(job.remoteId),remoteRequestId:validASRReference(job.remoteRequestId)||job.id,backendUrl:validASRBackend(job.backendUrl),remoteProjectId:validASRReference(job.remoteProjectId),submitted:job.submitted===true,remoteTerminal:job.remoteTerminal===true,phase:typeof job.phase==='string'?job.phase.slice(0,150):'',progress:Number.isFinite(job.progress)?Math.max(0,Math.min(100,job.progress)):0};
+  const remote={mediaId:/^[a-f0-9]{24}$/.test(job.mediaId||'')?job.mediaId:null,remoteId:validASRReference(job.remoteId),remoteRequestId:validASRReference(job.remoteRequestId)||job.id,backendUrl:validASRBackend(job.backendUrl),remoteProjectId:validASRReference(job.remoteProjectId),submitted:job.submitted===true,remoteTerminal:job.remoteTerminal===true,phase:typeof job.phase==='string'?job.phase.slice(0,150):'',progress:Number.isFinite(job.progress)?Math.max(0,Math.min(100,job.progress)):0};
   if(remote.remoteId&&(!remote.backendUrl||!remote.remoteProjectId))throw new Error('The saved FUPCJ Server transcription connection is incomplete.');
   return{provider,includeSoundEvents:job.includeSoundEvents===true,...remote,preservedSections:job.preservedSections===true||(migrated&&sections.some(section=>section.done)),id:job.id,sourceId:source.id,sourceName:source.name,sourceKind:videoFile(source)?'video':'audio',offsetSeconds:Number.isFinite(job.offsetSeconds)?job.offsetSeconds:0,createdAt:typeof job.createdAt==='string'?job.createdAt:new Date().toISOString(),status:!migrated&&job.status==='error'?'error':job.status==='approval_waiting'?'approval_waiting':'waiting',error:!migrated&&typeof job.error==='string'?job.error.slice(0,600):null,sections};
  });
@@ -758,7 +758,7 @@ function changeQueuedProvider(id,provider){
  const entry=queueEntries().find(e=>e.job.id===id);if(!entry||!['local','gemini'].includes(provider))return;const{n,job,source}=entry;
  if(job.provider===provider||(job.submitted||job.remoteId)&&!job.remoteTerminal)return;
  checkpoint();if(asrRuntime?.job===job)asrRuntime.controller.abort();job.provider=provider;job.preservedSections=job.sections.some(section=>section.done);job.status='waiting';job.error=null;job.nextAttemptAt=0;
- for(const field of ['remoteId','backendUrl','remoteProjectId','submitted','remoteTerminal','phase','progress','connectionError'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
+ for(const field of ['remoteId','submitted','remoteTerminal','phase','progress','connectionError'])delete job[field];job.remoteRequestId=uid();source.status='queued';if(job.sourceKind==='video')source.transcriptionStatus='waiting';
  syncQueueHistory(n,job);queueChanged(n);scheduleTranscriptionQueue();
 }
 function renderTranscriptionQueue(){
@@ -843,6 +843,15 @@ async function pumpLocalTranscription(runtime){
   if(job.provider==='gemini'&&!(Array.isArray(caps)?caps.includes('geminiTranscription'):caps?.geminiTranscription===true))throw new Error('Update FUPCJ Server to queue Gemini processing and account approvals.');
   const meta=await ensureRemoteProject();if(!queueAlive(runtime))return;
   job.remoteRequestId=job.remoteRequestId||job.id;job.backendUrl=meta.backendUrl;job.remoteProjectId=meta.id;
+  // A retry can reuse prepared server audio without storing it in the board.
+  if(job.mediaId)for(const [index,section]of job.sections.entries()){
+   if(section.done||section.audioData)continue;
+   const response=await projectRequest('/projects/'+meta.id+'/media/'+encodeURIComponent(job.mediaId)+'/audio/'+index,{signal:runtime.controller.signal});
+   if(!response.ok)await projectResponse(response);if(!queueAlive(runtime))return;
+   const blob=await response.blob();if(!queueAlive(runtime))return;
+   if(!blob.size||blob.size>LOCAL_ASR_SECTION_MAX_BYTES)throw new Error('The prepared audio section is unavailable or too large.');
+   section.audioData=await readFile(new Blob([blob],{type:section.mimeType}));if(!queueAlive(runtime))return;
+  }
   const payload=JSON.stringify({clientRequestId:job.remoteRequestId,provider:job.provider,sourceName:job.sourceName,includeSoundEvents:job.includeSoundEvents===true,sections:job.sections.filter(section=>!section.done).map(({start,end,mimeType,audioData})=>({start,end,mimeType,audioData}))});
   if(new Blob([payload]).size>Math.min(LOCAL_ASR_MAX_BYTES,Number(health.localTranscription?.maxRequestBytes)||LOCAL_ASR_MAX_BYTES))throw new Error('This audio exceeds FUPCJ Server upload limit of 100 MiB. Split the source into shorter clips. No paid provider was used.');
   job.submitted=true;job.status='sending';job.error=null;syncQueueHistory(n,job);queueChanged(n);if(typeof projectBackup==='function')await projectBackup();if(!queueAlive(runtime))return;
@@ -1009,7 +1018,7 @@ function renderActivity(){
   if(retry){const button=document.createElement('button');button.className='ghost';button.textContent='Retry';button.onclick=retry;row.appendChild(button);}
   host.appendChild(row);return row;
  };
- for(const {source}of visual){const job=source.visualAnalysis,row=add(source.name+' · visual descriptions',job.error||`${job.completed||0} / ${job.count||0} frames · ${job.status}`,job.count?100*(job.completed||0)/job.count:null);const button=document.createElement('button');button.textContent=job.status==='paused'?'Resume':'Pause';button.onclick=()=>controlFrameAnalysis(source,job.status==='paused'?'resume':'pause');row.appendChild(button);}
+ for(const {source}of visual){const job=source.visualAnalysis,row=add(source.name+' · visual descriptions',job.connectionError?'Cannot reach FUPCJ Server · reconnecting automatically; processing may still be running':job.error||`${job.completed||0} / ${job.count||0} frames · ${job.status}`,job.count?100*(job.completed||0)/job.count:null);const button=document.createElement('button');button.textContent=job.status==='paused'?'Resume':'Pause';button.onclick=()=>controlFrameAnalysis(source,job.status==='paused'?'resume':'pause');row.appendChild(button);}
  for(const task of active)add(task.title,task.detail+' · '+Math.round(task.progress||0)+'%',task.progress||0);
  for(const n of videos){const media=n.pcVideo;add(media.sourceName||n.title,media.status==='error'?media.error:media.phase||'Preparing video',media.status==='error'?null:media.progress||0,media.status==='error'?()=>retryPCVideo(n):null);}
  for(const {n,source,job}of documents)add(source.name,job.error||job.phase||'Preparing document',null,['error','paused'].includes(job.status)?()=>retryDocument(n,source):null);
@@ -1026,4 +1035,4 @@ $('queueIndicator').onclick=openActivity;
 document.body.appendChild($('queueIndicator'));
 for(const type of ['pointerdown','touchstart','wheel'])$('queueIndicator').addEventListener(type,event=>event.stopPropagation());
 for(const [id,target]of [['transcribeProvider','transcribeFiles'],['activityProvider','activitySummary'],['youtubeProvider','youtubeProviderAnchor']]){const control=providerChoice(transcriptionProvider(),setTranscriptionProvider,'New transcriptions');control.id=id;$(target).after(control);control.after(soundEventsChoice(id+'Sounds'));}
-const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='Keep Vision open until FUPCJ Server accepts the audio, then processing continues in the background. Gemini jobs wait here until your account is approved.';$('activityProvider').after(asrNote);
+const asrNote=document.createElement('p');asrNote.className='mini-note';asrNote.textContent='Once FUPCJ Server confirms your upload, you can leave Vision. Video, transcription and visual descriptions continue on the server and sync when you return. Gemini jobs may wait for account approval.';$('activityProvider').after(asrNote);

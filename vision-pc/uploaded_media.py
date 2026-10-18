@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 
-from flask import jsonify, request, send_file
+from flask import g, jsonify, request, send_file
 
 from media import MEDIA_LOCK, data_url, snapshot_interval, timestamp
 from sessions import safe_name
@@ -136,7 +136,7 @@ class UploadedMedia:
         ready = ffmpeg.is_file() and ffmpeg.with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe').is_file()
         return dict(ready=ready, maxUploadBytes=UPLOAD_LIMIT, maxDuration=MAX_DURATION,
                     maxPreviewBytes=PREVIEW_LIMIT, maxResultBytes=RESULT_LIMIT,
-                    frameCollectionsV1=True, resumableUpload=True, uploadChunkBytes=UPLOAD_CHUNK_BYTES)
+                    backgroundVideoPipelineV1=True, frameCollectionsV1=True, resumableUpload=True, uploadChunkBytes=UPLOAD_CHUNK_BYTES)
 
     def row(self, job_id, project_id=None):
         if not re.fullmatch(r'[0-9a-f]{24}', job_id):
@@ -235,6 +235,9 @@ class UploadedMedia:
             options_path = self.upload_directory(project_id, request_id) / 'processing.json'
             if options_path.exists():
                 shutil.copyfile(options_path, directory / 'processing.json')
+            transcription_path = self.upload_directory(project_id, request_id) / 'transcription.json'
+            if transcription_path.exists():
+                shutil.copyfile(transcription_path, directory / 'transcription.json')
             moved = True
             with self.db() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -266,6 +269,68 @@ class UploadedMedia:
         self.wake.set()
         return self.row(job_id, project_id)
 
+    def transcription_options(self, value):
+        if value is None:
+            return None  # Legacy clients retain their existing audio handoff.
+        if not isinstance(value, dict) or value.get('provider') not in ('local', 'gemini') or not isinstance(value.get('includeSoundEvents', False), bool):
+            raise self.Error('Choose valid video transcription settings.')
+        if value['provider'] == 'gemini' and g.auth_kind != 'firebase-google':
+            raise self.Error('Sign in with Google to request Gemini processing.', 403)
+        # Identity comes exclusively from the authenticated upload, never JSON.
+        return dict(provider=value['provider'], includeSoundEvents=value.get('includeSoundEvents', False),
+                    requesterUid=g.uid, authKind=g.auth_kind)
+
+    def handoff_transcription(self, value):
+        """Durable server-to-server handoff; no browser or live login required.
+
+        The media ID is the idempotency key, including after a restart between
+        enqueue and writing the receipt. Full queues are retried by the worker.
+        """
+        directory = self.root / value['id']
+        options_path, result_path = directory / 'transcription.json', directory / 'result.json'
+        if not options_path.exists() or not result_path.exists():
+            return
+        options = json.loads(options_path.read_text())
+        result = json.loads(result_path.read_text())
+        receipt = result.get('transcription') or {}
+        if receipt.get('id') or not result.get('audioSections') or receipt.get('retryAt', 0) > time.time():
+            return
+        trials = self.app.config.get('TRIALS')
+        if self.stop.is_set() or self.row(value['id'])['cancel_requested'] or (trials and trials.expired(value['project_id'])):
+            return
+        service = self.app.config['TRANSCRIPTIONS']
+        try:
+            sections = []
+            for index, part in enumerate(result['audioSections']):
+                audio = directory / f'audio-{index:03d}.mp3'
+                if not 0 < audio.stat().st_size <= AUDIO_LIMIT:
+                    raise MediaFailure('Prepared audio is unavailable for transcription.')
+                sections.append(dict(start=part['start'], end=part['end'], mimeType='audio/mpeg',
+                                     audioData=data_url(audio.read_bytes(), 'audio/mpeg')))
+            accepted = service.enqueue(value['project_id'], dict(clientRequestId='media-'+value['id'],
+                sourceName=value['source_name'], provider=options['provider'],
+                includeSoundEvents=options['includeSoundEvents'], sections=sections),
+                options['requesterUid'], options['authKind'])
+            result['transcription'] = dict(**accepted, provider=options['provider'],
+                                          includeSoundEvents=options['includeSoundEvents'])
+        except Exception as error:
+            # Keep prepared audio and the durable intent if setup, capacity or
+            # connectivity is temporarily unavailable. Never restart FFmpeg.
+            result['transcription'] = dict(status='waiting', retryAt=time.time()+30,
+                phase='Waiting for server transcription queue',
+                error=str(error)[:400] if isinstance(error, (self.Error, MediaFailure)) else 'Server transcription handoff will retry automatically.')
+        if directory.exists() and not self.row(value['id'])['cancel_requested']:
+            atomic_json(result_path, result)
+
+    def handoff_transcriptions(self):
+        with self.db() as db:
+            rows = [dict(row) for row in db.execute("SELECT * FROM uploaded_media WHERE status='complete' AND cancel_requested=0")]
+        for row in rows:
+            try:
+                self.handoff_transcription(row)
+            except Exception:
+                self.app.logger.exception('Video transcription handoff will retry')
+
     def register_routes(self):
         app = self.app
         @app.post('/api/projects/<project_id>/media/upload/<request_id>')
@@ -276,6 +341,7 @@ class UploadedMedia:
             if not self.capability()['ready']:
                 raise self.Error('Update FUPCJ Server processor to install its video tools.', 503)
             payload = request.get_json(silent=True) or {}
+            transcription = self.transcription_options(payload.get('transcription'))
             name = safe_name(payload.get('name', ''))
             raw_size = payload.get('size')
             if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size <= 0:
@@ -317,6 +383,8 @@ class UploadedMedia:
                 from frame_analysis import processing_options
                 if not (directory / 'processing.json').exists() and payload.get('processing') is not None:
                     atomic_json(directory / 'processing.json', processing_options(payload['processing']))
+                if transcription is not None and not (directory / 'transcription.json').exists():
+                    atomic_json(directory / 'transcription.json', transcription)
                 source.touch(exist_ok=True)
                 received = source.stat().st_size
                 if received > size:
@@ -442,6 +510,10 @@ class UploadedMedia:
             request.max_content_length = BODY_LIMIT
             if not self.capability()['ready']:
                 raise self.Error('Update FUPCJ Server processor to install its video tools.', 503)
+            try:
+                transcription = self.transcription_options(json.loads(request.form['transcription']) if request.form.get('transcription') else None)
+            except ValueError:
+                raise self.Error('Invalid transcription settings.')
             request_id = request.form.get('requestId', '')
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', request_id):
                 raise self.Error('A valid requestId is required.')
@@ -483,6 +555,8 @@ class UploadedMedia:
                 directory.mkdir(mode=0o700)
                 try:
                     os.replace(source, directory / 'source.input')
+                    if transcription is not None:
+                        atomic_json(directory / 'transcription.json', transcription)
                     if request.form.get('processing'):
                         from frame_analysis import processing_options
                         try:
@@ -614,12 +688,24 @@ class UploadedMedia:
                 shutil.rmtree(directory, ignore_errors=True)
                 self.update(row['id'], status='cancelled', phase='Removed', output_size=0)
             elif row['status'] in ACTIVE:
+                if (directory / 'result.json').is_file():
+                    # FFmpeg committed its result before the server stopped.
+                    # Do not regenerate frames or depend on the original file.
+                    result = json.loads((directory / 'result.json').read_text())
+                    options_path = directory / 'processing.json'
+                    if result.get('frameCollection') and options_path.exists():
+                        options = json.loads(options_path.read_text())
+                        self.app.config['FRAME_ANALYSIS'].seal(result['frameCollection'], options.get('describeFrames'))
+                    size = sum(path.stat().st_size for path in directory.iterdir() if path.is_file() and path.name != 'source.input')
+                    self.update(row['id'], status='complete', phase='Video ready', progress=100, output_size=size)
+                    (directory / 'source.input').unlink(missing_ok=True)
+                    continue
                 if row['attempts'] >= 3 or not (directory / 'source.input').is_file():
                     self.update(row['id'], status='error', phase='Stopped', error='Video processing was interrupted. Add the video again to retry.')
                     shutil.rmtree(directory, ignore_errors=True)
                 else:
                     for path in directory.iterdir():
-                        if path.name not in ('source.input', 'processing.json'):
+                        if path.name not in ('source.input', 'processing.json', 'transcription.json'):
                             path.unlink(missing_ok=True)
                     self.update(row['id'], status='queued', phase='Resuming video after FUPCJ Server restart', progress=0)
             elif row['status'] == 'complete':
@@ -632,6 +718,7 @@ class UploadedMedia:
             return False
         locked = False
         try:
+            self.handoff_transcriptions()
             # Uploaded videos and YouTube extraction share the same CPU slot.
             locked = MEDIA_LOCK.acquire(blocking=False)
             if not locked:
@@ -681,6 +768,11 @@ class UploadedMedia:
                 self.app.config['AUDIT_LOGS'].project_event(value['project_id'], 'processing_finished', jobType='video',
                     outcome=current['status'], processingWallSeconds=time.monotonic()-processing_started,
                     uploadedBytes=value['source_size'], outputBytes=current['output_size'])
+            if current['status'] == 'complete':
+                try:
+                    self.handoff_transcription(current)
+                except Exception:
+                    self.app.logger.exception('Video transcription handoff will retry')
             return True
         finally:
             if locked:
@@ -866,6 +958,8 @@ class UploadedMedia:
             raise MediaFailure('The video snapshots exceed the project limit. Try a shorter video.')
         if store:
             result['frameCollection'] = job_id
+        if (directory / 'transcription.json').exists() and audio_sections:
+            result['transcription'] = dict(status='waiting', phase='Waiting for server transcription queue')
         atomic_json(directory / 'result.json', result)
         if store:
             store.seal(job_id, processing.get('describeFrames'))

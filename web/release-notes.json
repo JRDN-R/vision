@@ -1,9 +1,9 @@
 {
-  "title": "Project video settings and background descriptions",
+  "title": "Processing continues after you leave",
   "items": [
-    "Set screenshot detail, transcription and sound effects for each project from Project Settings.",
-    "Maximum captures up to four screenshots per second. Larger screenshot sets stay on FUPCJ Server and download with your export.",
-    "The local visual worker can describe frames in the background, retain timestamped observations and resume interrupted analysis.",
-    "Activity is now a floating button in Vision and Venture, with progress, pause/resume and persistent error notices. Update FUPCJ Server to use the new video processing features."
+    "Once your video upload is accepted, FUPCJ Server prepares snapshots, queues transcription and sound effects, and continues visual descriptions without keeping Vision open.",
+    "Return to your project to retrieve progress and completed results without uploading the video or audio again.",
+    "Incomplete visual inspections retry automatically from the last saved frame. Connection loss no longer appears as a paused analysis.",
+    "Update FUPCJ Server before uploading with this version. The server must remain running; Gemini approval and existing processing limits still apply."
   ]
 }

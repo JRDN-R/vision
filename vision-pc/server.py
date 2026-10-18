@@ -781,6 +781,7 @@ def openai_artifact(container_id, file_id):
 
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
+app.config["TRANSCRIPTIONS"] = transcriptions
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 frame_analysis = FrameAnalysis(app, connect_db, APIError, sessions)
 app.config["FRAME_ANALYSIS"] = frame_analysis

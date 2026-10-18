@@ -52,15 +52,15 @@ async function refreshFrameAnalysis(){
     let report=await projectResponse(await projectRequest(frameCollectionPath(source.frameCollection)+'?summary=1'));
     if(!boardAsyncCurrent(context)||!n.attachments.includes(source))return;
     const prior=source.visualAnalysis;
-    source.visualAnalysis={status:report.status,completed:report.completed,count:report.count,error:report.error};
     if(prior?.completed!==report.completed||prior?.status!==report.status){
      report=await projectResponse(await projectRequest(frameCollectionPath(source.frameCollection)));if(!boardAsyncCurrent(context)||!n.attachments.includes(source))return;
      const id=source.id+'-visual',name=source.name.replace(/\.[^.]+$/,'')+'.visual-timeline.txt';
      n.attachments=n.attachments.filter(a=>a.id!==id);
      n.attachments.push({id,name,mime:'text/plain',data:textDataURL(frameReportText(report)),size:0,generated:true,status:report.status==='complete'?'complete':'partial',videoOf:source.id,createdAt:new Date().toISOString()});
-     markDirty();renderActivity();
+     markDirty();
     }
-   }catch(error){if(boardAsyncCurrent(context)){source.visualAnalysis={...source.visualAnalysis,status:'paused',error:error.message};renderActivity();}}
+    source.visualAnalysis={status:report.status,completed:report.completed,count:report.count,error:report.error};renderActivity();
+   }catch(error){if(boardAsyncCurrent(context)){source.visualAnalysis={...source.visualAnalysis,connectionError:true};renderActivity();}}
   }
  }finally{framePollBusy=false;}
 }
@@ -68,6 +68,8 @@ async function controlFrameAnalysis(source,action){
  try{await projectResponse(await projectRequest(frameCollectionPath(source.frameCollection),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})}));source.visualAnalysis.status=action==='pause'?'paused':'queued';markDirty();await refreshFrameAnalysis();}catch(error){toast(error.message,true);}
 }
 setInterval(()=>void refreshFrameAnalysis(),5000);
+window.addEventListener('online',()=>void refreshFrameAnalysis());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshFrameAnalysis();});
 
 const processingDialog=document.createElement('dialog');processingDialog.id='processingDialog';
 processingDialog.innerHTML='<form method="dialog"><div class="row spread"><h2>Project Settings</h2><button aria-label="Close settings">×</button></div><p class="mini-note">Applies to new video imports in this project. Existing jobs keep their settings.</p><label>Transcription<select id="projectTranscription"><option value="local">FUPCJ Server · Whisper</option><option value="gemini">Gemini</option></select></label><label class="check-row"><input type="checkbox" id="projectSounds"> Include sound effects</label><label>Screenshot detail<select id="projectDetail"><option value="maximum">Maximum · every 0.25 seconds, up to 1,200</option><option value="medium">Medium · every second, up to 600</option><option value="balanced">Balanced · every 3 seconds, up to 300</option><option value="minimal">Minimal · every 10 seconds, up to 120</option></select></label><p id="projectFrameEstimate" class="mini-note"></p><label class="check-row"><input type="checkbox" id="projectDescribe"> Describe screenshots in the background</label><p class="mini-note">Uses the installed Qwen 0.8B visual worker. Pauses while OBS is running. Screenshots stay on FUPCJ Server and download when you export; descriptions sync to this project.</p><button type="button" id="frameStorageButton">Manage saved screenshots</button><div id="frameStorageList"></div><div class="row"><button id="saveProcessing" class="primary" type="button">Save settings</button></div></form>';
