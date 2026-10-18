@@ -369,7 +369,7 @@ def health():
                    intelligentContext=sessions.context.capability(),
                    vortex=vortex.capability(),
                    churchAdmins={'enabled': church_admin.settings.get('enabled') is True, 'version': '1.0.0', 'nativeMcpReady': bool(church_mcp.catalog), 'credentialsSaved': (church_admin.directory/'pco-credentials.dpapi').is_file()},
-                   capabilities={'frameCollectionsV1': True, 'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   capabilities={'projectAutoNamingV1': True, 'frameCollectionsV1': True, 'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):

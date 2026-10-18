@@ -90,10 +90,19 @@ class BackgroundUploadTests(unittest.TestCase):
     def test_restart_after_outputs_committed_never_reruns_video(self):
         job=self.upload()
         self.process(self.service.row(job))
+        # A crash after saving outputs but before sealing keeps the preset.
+        directory = self.service.root/job
+        result = json.loads((directory/'result.json').read_text())
+        result['frameCollection'] = job
+        atomic_json(directory/'result.json', result)
+        atomic_json(directory/'processing.json', {'describeFrames':True, 'screenshotDetail':'medium'})
+        server.frame_analysis.create('project_video_test1', job)
         self.service.update(job,status='processing')
         (self.service.root/job/'source.input').unlink()
         self.service.recover()
         self.assertEqual(self.service.row(job)['status'],'complete')
+        self.assertEqual(server.frame_analysis.row(job)['analysis_step'], 2)
+        self.assertEqual(server.frame_analysis.row(job)['status'], 'queued')
         with patch.object(server.transcriptions,'capability',return_value={'ready':True}), \
              patch.object(server.transcriptions,'sound_capability',return_value={'ready':True}), \
              patch.object(self.service,'process',side_effect=AssertionError('must not rerun video')):

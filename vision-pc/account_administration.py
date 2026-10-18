@@ -237,6 +237,7 @@ class AccountAdministration:
                     ('local_transcriptions', "project_id=? AND status IN ('queued','processing')"),
                     ('uploaded_media', "project_id=? AND status IN ('queued','processing')"),
                     ('frame_collections', "project_id=? AND status IN ('collecting','queued','processing')"),
+                    ('project_naming', "project_id=? AND status IN ('queued','processing')"),
                     ('document_jobs', "project_id=? AND status IN ('queued','processing')")):
                     if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', (pid,)).fetchone():
                         return True
@@ -324,7 +325,7 @@ class AccountAdministration:
                     db.execute('DELETE FROM '+table+' WHERE '+col+' IN '
                                '(SELECT id FROM project_runs WHERE project_id=?)', (pid,))
                 for table, col in (('local_transcriptions','project_id'),('uploaded_media','project_id'),
-                                   ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),('frame_collections','project_id'),
+                                   ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),('frame_collections','project_id'),('project_naming','project_id'),
                                    ('venture_search','cid'),('context_sync_jobs','project_id'),
                                    ('project_runs','project_id')):
                     if table in existing:

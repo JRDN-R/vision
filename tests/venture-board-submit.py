@@ -12,12 +12,14 @@ shell = (ROOT / 'Vision.html').read_text()
 probe = r'''
 let boardFixtureCounter=0;
 if(!crypto.randomUUID)crypto.randomUUID=()=> 'board-fixture-'+(++boardFixtureCounter);
+window.boardSubmissionReady=async()=>{await accountReady;await projectRecoverStartup();};
 window.boardSubmissionSetup=()=>{
  accountSignedIn=()=>true;ventureScope=()=> 'board-fixture';
  ventureSchedule=()=>{};ventureRemember=()=>{};ventureLoadHistory=async()=>{};
  document.querySelectorAll('[data-account-inert]').forEach(el=>{el.inert=false;delete el.dataset.accountInert;});
  document.documentElement.classList.remove('account-locked');$('accountGate').hidden=true;
  venture.uid='board-fixture';venture.open=true;venture.ready=true;
+ window.VisionWorkspaceRoute.commit('venture');
  $('visionVenture').hidden=false;ventureSidebar(false);
  const canvas=document.createElement('canvas');canvas.width=40;canvas.height=40;
  canvas.getContext('2d').fillRect(0,0,40,40);
@@ -106,6 +108,7 @@ with sync_playwright() as pw:
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.route('**/*', lambda route: route.abort())
             page.set_content(shell, wait_until='load')
+            page.evaluate('boardSubmissionReady()')
             page.evaluate('boardSubmissionSetup()')
             page.locator('#workspaceNews').wait_for(state='visible')
             page.locator('#workspaceNews button').click()

@@ -242,6 +242,6 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
         # The temporary directory (including source video and extracted audio) is gone.
         update(job_id, status="complete", phase="Ready to add to Vision", progress=100, result=encoded)
         if frame_store:
-            frame_store.seal(job_id, processing.get('describeFrames'))
+            frame_store.seal(job_id, processing.get('describeFrames'), processing.get('screenshotDetail'))
     except Exception as error:
         update(job_id, status="error", phase="Stopped", error=friendly_error(error))

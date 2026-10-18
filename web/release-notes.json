@@ -1,9 +1,11 @@
 {
-  "title": "Processing continues after you leave",
+  "title": "Node activity and background processing",
   "items": [
-    "Once your video upload is accepted, FUPCJ Server prepares snapshots, queues transcription and sound effects, and continues visual descriptions without keeping Vision open.",
-    "Return to your project to retrieve progress and completed results without uploading the video or audio again.",
-    "Incomplete visual inspections retry automatically from the last saved frame. Connection loss no longer appears as a paused analysis.",
-    "Update FUPCJ Server before uploading with this version. The server must remain running; Gemini approval and existing processing limits still apply."
+    "Activity now appears above each working node, with separate running, awaiting and attention states.",
+    "Opt into automatic project naming in Project Settings. The local model suggests a name after your first file; names you type stay yours.",
+    "Maximum and Medium describe every other screenshot. Balanced and Minimal describe each one. All screenshots remain saved and skipped descriptions are labeled.",
+    "Uploaded-video screenshots retain more detail, and visual prompts avoid carrying earlier caption mistakes forward.",
+    "After your upload is accepted, FUPCJ Server continues video preparation, transcription and visual descriptions while you are away. Results sync when you return, and incomplete inspections retry automatically.",
+    "Update FUPCJ Server, then refresh Vision. The server must remain running; Gemini approval and existing processing limits still apply."
   ]
 }
