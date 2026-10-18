@@ -28,6 +28,7 @@ from church_oauth import PUBLIC_PATHS as CHURCH_PUBLIC_PATHS, MCP_PATH as CHURCH
 from transcription import LocalTranscription
 from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
 from frame_analysis import FrameAnalysis, processing_options
+from title_eyes import TitleEyes
 from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
@@ -115,6 +116,7 @@ def configure(config_path, migrate_gemini=False):
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
     frame_analysis.initialize()
+    title_eyes.initialize()
     documents.initialize(config)
     vortex.initialize()
     sessions.venture.documents = documents
@@ -198,7 +200,8 @@ def api_error(error):
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
-        message = ('Dictation recording exceeds 12 MB.' if request.path.startswith('/api/venture/dictation')
+        message = ('Slide image exceeds 10 MB.' if request.path.startswith('/api/title-eyes/')
+                   else 'Dictation recording exceeds 12 MB.' if request.path.startswith('/api/venture/dictation')
                    else 'Profile image exceeds 6 MB.' if request.path=='/api/venture/profile'
                    else 'Document uploads exceed 50 MB.' if '/documents' in request.path
                    else 'Video uploads exceed 5 GB. Choose a smaller video.' if '/media' in request.path
@@ -248,8 +251,8 @@ def authorize():
     if request.path == '/api/trial/start' and request.method == 'POST':
         return
     if token.startswith('trial_'):
-        if request.path.startswith('/api/vortex/'):
-            raise APIError('Sign in to use Vortex.', 401)
+        if request.path.startswith(('/api/vortex/', '/api/title-eyes/')):
+            raise APIError('Sign in to use this tool.', 401)
         trials.authorize(token)
         return
     expected = app.config.get('CONNECTION_TOKEN', '')
@@ -785,10 +788,12 @@ app.config["TRANSCRIPTIONS"] = transcriptions
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 frame_analysis = FrameAnalysis(app, connect_db, APIError, sessions)
 app.config["FRAME_ANALYSIS"] = frame_analysis
+title_eyes = TitleEyes(app, connect_db, APIError, sessions)
 documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
 account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
+app.config['TITLE_EYES_ACCOUNT_ADMIN'] = account_admin
 owned_assets = OwnedAssets(app, connect_db, APIError)
 owned_assets.register_routes()
 church_admin = ChurchAdmin(app, connect_db, protect_secret, unprotect_secret, account_admin.blocked)
@@ -835,6 +840,7 @@ def main():
         transcriptions.start()
         uploaded_media.start()
         frame_analysis.start()
+        title_eyes.start()
         documents.start()
         vortex.start()
         church_admin.start()
@@ -865,6 +871,8 @@ def main():
             documents.wake.set()
             uploaded_media.stop.set()
             frame_analysis.stop.set()
+            title_eyes.stop.set()
+            title_eyes.wake.set()
             uploaded_media.wake.set()
         return 0
     except Exception as error:
