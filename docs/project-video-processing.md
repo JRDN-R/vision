@@ -7,22 +7,28 @@ explicit selection and uses the existing account approval flow. Old projects
 retain their previous import-preference behavior until Project Settings is saved.
 Already accepted imports retain the options captured when submitted.
 
-| Preset | Starting interval | Maximum frames | Five-minute video |
-|---|---|---|---|
-| Maximum | 0.25 seconds | 1,200 | 1,200 |
-| Medium | 1 second | 600 | 300 |
-| Balanced | 3 seconds | 300 | 100 |
-| Minimal | 10 seconds | 120 | 30 |
+| Preset | Starting interval | Maximum screenshots | Five-minute video | Descriptions |
+|---|---|---|---|---|
+| Maximum | 0.25 seconds | 1,200 | 1,200 | Every other screenshot (600) |
+| Medium | 1 second | 600 | 300 | Every other screenshot (150) |
+| Balanced | 3 seconds | 300 | 100 | Every screenshot (100) |
+| Minimal | 10 seconds | 120 | 30 | Every screenshot (30) |
 
 The interval is `max(starting interval, duration / maximum frames)`. These are
 samples: even Maximum can miss fast movement between frames. Automatic extra
-scene-cut extraction is not part of this release.
+scene-cut extraction is not part of this release. Description sampling starts at
+the first screenshot (1, 3, 5, ...). Skipped screenshots remain saved and are
+explicitly marked not analyzed in TXT and JSON exports. Old collections retain
+their original cadence. Progress counts screenshots processed, including skips;
+reports also include the number described and the planned description count.
 
 ## Storage and exports
 
 Uploaded videos and YouTube imports retain individual timestamped JPEGs in
 project-owned frame collections. Only a thumbnail and frame identifiers travel
-in the result manifest and editable project. JPEG reads require the existing
+in the result manifest and editable project. New uploaded-video collections use
+up to 1280-pixel screenshots, matching YouTube, instead of reusing the 640-pixel
+preview thumbnail. JPEG quality steps down only if needed for the file limit. JPEG reads require the existing
 project authorization. No credential, arbitrary URL or local path is stored in a
 frame reference. Imports submitted by older clients keep the inline result format.
 
@@ -53,8 +59,9 @@ at most 16 images. New batches defer while OBS is running or free RAM is under
 from the last saved frame. Pause/resume controls are available in Activity.
 
 Pillow records image dimensions, aspect ratio, dominant colors and a coarse visual
-signature. Qwen receives current pixels plus the previous observation for cautious
-continuity. Exact decoded pixel duplicates reuse a labeled prior observation;
+signature. Qwen describes current pixels independently with conservative
+sampling and an explicit instruction to omit uncertain claims. Previous captions
+are not fed back into the model, avoiding propagation of earlier hallucinations. Exact decoded pixel duplicates reuse a labeled prior observation;
 similar images are still independently inspected. Coarse similarity groups nearby
 observations into ranges while retaining every changed description. This is a
 heuristic, not object tracking or evidence of continuous action. Frames are
@@ -62,11 +69,31 @@ captioned after extraction completes, independently of transcription.
 
 ## Activity and rollout
 
-The existing Activity button lives directly under `body`, outside the collapsible
-header and workspace transforms. It respects mobile safe areas, remains clickable
-in Vision and Venture, shows errors until resolved, and briefly shows a completion
-checkmark. Video, transcription, document, export, visual analysis and current
-Venture/board runs report there.
+Each node with source work has its own pill immediately above its top-left edge.
+It follows the node through movement and zoom. Running jobs spin; awaiting jobs
+have a stationary indicator; paused/error jobs remain visible. Clicking opens
+Activity with that node identified. Completed node badges disappear. Work without
+a source node (such as project-wide export or Venture chat) keeps the global
+Activity entry point at the upper-left workspace edge, clear of the add button.
+
+## Automatic project naming
+
+Project Settings has an opt-in toggle, off by default. After the first file,
+naming waits for source preparation and requests a durable local suggestion.
+It runs once for an untitled saved project. Manual names, disabling the toggle,
+account changes, and project switches prevent a late suggestion from renaming
+anything. The title is applied through ordinary revision-checked project saving;
+the worker never directly overwrites the saved title. Resume/reopen retrieves the
+same request. Activity provides retry if the model is unavailable.
+
+The same installed Qwen3.5-0.8B worker reads a bounded overview of all nodes
+(titles, captions, prompts, filenames, and text excerpts) and up to six image
+previews. It does not claim exhaustive inspection of all attachment contents.
+It shares the inference lock and OBS/RAM guards, yields to foreground Qwen work,
+and does not download weights or call a paid provider. Temporary trial projects
+are excluded. Naming jobs are cleaned up with account deletion.
+
+## Deployment and validation
 
 Update FUPCJ Server using the existing Setup-Vision-PC update procedure after
 merging, then refresh Vision. New clients explicitly reject older processors that
@@ -77,3 +104,8 @@ checkpoint recovery with a mock visual runtime, duplicate provenance, presets,
 project settings and stale response guards. Real Windows model throughput and OBS
 coexistence require verification on the target server; they are not inferred from
 these offline tests. The GitHub workflow also runs phone/desktop browser checks.
+
+These changes tune inference and image preparation; they do not fine-tune model
+weights or establish a measured accuracy gain. A larger model remains a separate
+installation/benchmark decision. The present runtime remains pinned to the
+verified Qwen3.5-0.8B model and projector.

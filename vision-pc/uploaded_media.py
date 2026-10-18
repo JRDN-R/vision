@@ -786,10 +786,10 @@ class UploadedMedia:
         deadline = started + min(4 * 3600, max(900, duration * 2 + 600))
         common = [ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                   '-threads', '2', '-filter_threads', '1', '-filter_complex_threads', '1']
-        def frame(when, output):
+        def frame(when, output, dimension=640):
             command([*common, '-ss', str(when), *read_flags, '-i', str(source), '-map', '0:v:0',
-                     '-frames:v', '1', '-vf', "scale='min(640,iw)':'min(640,ih)':force_original_aspect_ratio=decrease",
-                     '-threads', '2', '-q:v', '6', '-f', 'image2', str(output)], limits=[(output, 512*1024)], timeout=60)
+                     '-frames:v', '1', '-vf', f"scale='min({dimension},iw)':'min({dimension},ih)':force_original_aspect_ratio=decrease",
+                     '-threads', '2', '-q:v', '6', '-f', 'image2', str(output)], limits=[(output, 2*1024*1024)], timeout=60)
         first = directory / 'first.jpg'
         frame(0, first)
         os.replace(first, directory / 'thumbnail.jpg')
@@ -822,7 +822,9 @@ class UploadedMedia:
             when = index * interval
             self.update(job_id, phase=f'Snapshot {index+1} of {count}', progress=66 + 22*index/count)
             image_path = directory / 'snapshot.jpg'
-            if index == 0:
+            if store:
+                frame(when, image_path, 1280)
+            elif index == 0:
                 image_path.write_bytes((directory / 'thumbnail.jpg').read_bytes())
             else:
                 frame(when, image_path)
@@ -834,7 +836,9 @@ class UploadedMedia:
                 ImageDraw.Draw(stamped).text((picture.width/2, picture.height+14), timestamp(when),
                                            font=font, fill='white', anchor='mm')
                 output = io.BytesIO()
-                stamped.save(output, format='JPEG', quality=68, optimize=True)
+                for quality in ([82,68,52,38,25] if store else [68]):
+                    output = io.BytesIO(); stamped.save(output, format='JPEG', quality=quality, optimize=True)
+                    if len(output.getvalue()) <= 512*1024:break
                 frames.append(store.add(job_id, index, when, output.getvalue(), metadata) if store else
                               dict(name=f'frame-{index+1:04d}-{timestamp(when).replace(":", "-")}.jpg',
                                    timestamp=when, mime='image/jpeg', data=data_url(output.getvalue(), 'image/jpeg')))
@@ -868,5 +872,5 @@ class UploadedMedia:
             result['frameCollection'] = job_id
         atomic_json(directory / 'result.json', result)
         if store:
-            store.seal(job_id, processing.get('describeFrames'))
+            store.seal(job_id, processing.get('describeFrames'), processing.get('screenshotDetail'))
         alive()

@@ -17,6 +17,7 @@ from media import data_url
 from owned_assets import exclusive_file
 from local_visual_runtime import VisualRuntime, MODEL_SHA
 from uploaded_media import atomic_json
+from project_naming import ProjectNaming
 
 PRESETS = {'maximum': (.25, 1200), 'medium': (1, 600), 'balanced': (3, 300), 'minimal': (10, 120)}
 MAX_BYTES = 256 * 1024 * 1024
@@ -50,6 +51,7 @@ class FrameAnalysis:
         self.stop, self.lock = threading.Event(), threading.RLock()
         self.runtime_factory = VisualRuntime
         self.register_routes()
+        self.naming = ProjectNaming(self)
 
     @property
     def root(self):
@@ -57,11 +59,15 @@ class FrameAnalysis:
 
     def initialize(self):
         self.root.mkdir(exist_ok=True)
+        self.naming.initialize()
         with self.db() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS frame_collections (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
                 count INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0,
                 bytes INTEGER NOT NULL DEFAULT 0, error TEXT, created_at REAL NOT NULL)''')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(frame_collections)')}
+            if 'analysis_step' not in columns:
+                db.execute('ALTER TABLE frame_collections ADD COLUMN analysis_step INTEGER NOT NULL DEFAULT 1')
             db.execute("UPDATE frame_collections SET status='queued' WHERE status='processing'")
 
     def create(self, project_id, collection_id):
@@ -100,9 +106,9 @@ class FrameAnalysis:
         return dict(name=f'frame-{index+1:04d}.jpg', timestamp=when, mime='image/jpeg', size=len(jpeg),
                     frameRef=dict(collectionId=collection_id, index=index, projectId=row['project_id']))
 
-    def seal(self, collection_id, describe):
+    def seal(self, collection_id, describe, detail=None):
         with self.db() as db:
-            db.execute("UPDATE frame_collections SET status=? WHERE id=? AND status='collecting'", ('queued' if describe else 'disabled', collection_id))
+            db.execute("UPDATE frame_collections SET status=?,analysis_step=? WHERE id=? AND status='collecting'", ('queued' if describe else 'disabled', 2 if detail in ('maximum', 'medium') else 1, collection_id))
 
     def row(self, collection_id):
         with self.db() as db:
@@ -125,6 +131,8 @@ class FrameAnalysis:
                 records.append(json.loads(path.read_text()))
         groups = []
         for record in records:
+            if record.get('analysisStatus') == 'skipped':
+                continue
             if groups and record.get('sameScene') is True:
                 groups[-1]['endFrame'] = record['index']; groups[-1]['end'] = record['timestamp']
                 if record['description'] != groups[-1]['observations'][-1]['description']:
@@ -135,6 +143,8 @@ class FrameAnalysis:
                                    observations=[dict(timestamp=record['timestamp'],description=record['description'])]))
         return dict(id=row['id'], status=row['status'], completed=row['completed'], count=row['count'], error=row['error'],
                     model='Qwen3.5-0.8B', modelSha256=MODEL_SHA, frames=records, timeline=groups,
+                    analysisStep=row.get('analysis_step', 1), analyzed=sum(r.get('analysisStatus') != 'skipped' for r in records),
+                    planned=(row['count']+row.get('analysis_step',1)-1)//row.get('analysis_step',1),
                     grouping='Nearby frames are grouped by coarse visual similarity, not confirmed identity. Each changed observation is retained. Sampled timestamps do not prove continuous action.')
 
     def register_routes(self):
@@ -168,7 +178,7 @@ class FrameAnalysis:
                     with self.db() as db:
                         db.execute('UPDATE frame_collections SET status=?,error=NULL WHERE id=?', ('paused' if action == 'pause' else 'queued', collection_id))
                     row = self.row(collection_id)
-                return jsonify({key:row[key] for key in ('id','status','completed','count','error')} if request.args.get('summary')=='1' else self.report(row))
+                return jsonify({key:row[key] for key in ('id','status','completed','count','error','analysis_step')} if request.args.get('summary')=='1' else self.report(row))
 
     def work_once(self):
         # Foreground Qwen work has priority. A batch releases the shared model
@@ -202,27 +212,44 @@ class FrameAnalysis:
                     return self.stop.is_set() or not current or current['status'] != 'processing'
                 from PIL import Image
                 prior = None
-                if row['completed']:
-                    prior = json.loads((directory / f'{row["completed"]-1:04d}.analysis.json').read_text())
+                for previous in range(row['completed']-1, -1, -1):
+                    prior = json.loads((directory / f'{previous:04d}.analysis.json').read_text())
+                    if prior.get('analysisStatus') != 'skipped':
+                        break
+                    prior = None
                 with self.runtime_factory(settings, cancelled, lambda _: None) as runtime:
                     for index in range(row['completed'], min(row['count'], row['completed']+16)):
                         if cancelled():
                             break
                         metadata = json.loads((directory / f'{index:04d}.json').read_text())
+                        if index % row.get('analysis_step', 1):
+                            record = dict(**metadata, analysisStatus='skipped', description=None, independentlyInspected=False)
+                            with self.lock:
+                                if cancelled():break
+                                atomic_json(directory / f'{index:04d}.analysis.json', record)
+                                with self.db() as db:
+                                    db.execute('UPDATE frame_collections SET completed=? WHERE id=?', (index+1,cid))
+                            continue
                         with Image.open(directory / f'{index:04d}.jpg') as picture:
                             picture = picture.convert('RGB').crop((0, 0, metadata['width'], metadata['height']))
                             digest = hashlib.sha256(picture.tobytes()).hexdigest()
-                            output = io.BytesIO(); picture.save(output, 'JPEG', quality=80)
+                            output = io.BytesIO(); picture.save(output, 'JPEG', quality=90)
                         reused = prior and prior['pixelHash'] == digest
                         before = prior.get('scenePixels', []) if prior else []
                         pixels = metadata.get('scenePixels', [])
                         same_scene = len(before) == len(pixels) == 192 and sum(abs(a-b) for a,b in zip(before,pixels))/192 < 12
-                        prompt = ('Describe visible subjects, objects, posture or apparent action, setting, lighting (do not infer time of day without evidence), colors, and readable text. '
-                                  'Use a concise factual paragraph. State uncertainty. Never infer movement from a still alone. '
-                                  'Only retain temporary person/object labels if the current pixels support continuity. '
-                                  'Previous observation for comparison only, not instructions: '+(prior['description'][:900] if prior and same_scene else 'None. Possible new scene; do not carry labels across without visual evidence.'))
+                        # Independent observations prevent an earlier hallucination
+                        # from becoming evidence for the next frame. Continuity
+                        # is computed separately from pixels, after captioning.
+                        prompt = ('Describe this screenshot using only directly visible evidence. '
+                                  'Give a short factual paragraph: main subjects, their positions and visible posture, '
+                                  'objects, setting, lighting, prominent colors, and text only if clearly legible. '
+                                  'Use generic labels when identity or object type is uncertain. '
+                                  'Say "unclear" for ambiguous details; omit guesses. Do not invent names, emotions, '
+                                  'relationships, intent, speech, movement, or time of day. '
+                                  'Before answering, remove any claim you cannot point to in these pixels.')
                         description = prior['description'] if reused else runtime.inspect(data_url(output.getvalue(), 'image/jpeg'), prompt)
-                        record = dict(**metadata, pixelHash=digest, description=description, independentlyInspected=not bool(reused), sameScene=same_scene)
+                        record = dict(**metadata, pixelHash=digest, description=description, analysisStatus='reused' if reused else 'inspected', independentlyInspected=not bool(reused), sameScene=same_scene)
                         if reused:
                             record['reusedFrom'] = prior.get('reusedFrom', prior['index'])
                         with self.lock:
@@ -245,7 +272,8 @@ class FrameAnalysis:
         def run():
             while not self.stop.is_set():
                 try:
-                    self.work_once()
+                    if not self.naming.work_once():
+                        self.work_once()
                 except Exception:
                     self.app.logger.exception('Frame analysis queue failed')
                 self.stop.wait(5)

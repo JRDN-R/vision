@@ -1,9 +1,9 @@
 {
-  "title": "Project video settings and background descriptions",
+  "title": "Node activity and automatic project names",
   "items": [
-    "Set screenshot detail, transcription and sound effects for each project from Project Settings.",
-    "Maximum captures up to four screenshots per second. Larger screenshot sets stay on FUPCJ Server and download with your export.",
-    "The local visual worker can describe frames in the background, retain timestamped observations and resume interrupted analysis.",
-    "Activity is now a floating button in Vision and Venture, with progress, pause/resume and persistent error notices. Update FUPCJ Server to use the new video processing features."
+    "Activity now appears above each working node, with separate running, awaiting and attention states.",
+    "Opt into automatic project naming in Project Settings. The local model suggests a name after your first file; names you type stay yours.",
+    "Maximum and Medium describe every other screenshot. Balanced and Minimal describe each one. All screenshots remain saved and skipped descriptions are labeled.",
+    "Uploaded-video screenshots retain more detail, and visual prompts avoid carrying earlier caption mistakes forward. Update FUPCJ Server, then refresh Vision."
   ]
 }

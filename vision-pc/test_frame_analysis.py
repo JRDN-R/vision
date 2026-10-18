@@ -56,6 +56,27 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(report['frames'][0]['aspectRatio'],'16:9');self.assertEqual(len(report['timeline']),1)
         self.assertEqual(report['timeline'][0]['endFrame'],17)
 
+    def test_every_other_snapshot_is_explicitly_unanalyzed(self):
+        store,cid=self.collection(19)
+        with server.connect_db() as db:db.execute("UPDATE frame_collections SET analysis_step=2 WHERE id=?",(cid,))
+        calls=[]
+        class FakeRuntime:
+            def __init__(self,*args):pass
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def inspect(self,image,question):calls.append(question);return 'A red surface.'
+        store.runtime_factory=FakeRuntime;server.sessions.local.settings={'enabled':True,'visualEnabled':True}
+        with patch('psutil.process_iter',return_value=[]),patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
+            store.work_once();store.initialize();store.work_once()
+        report=store.report(store.row(cid))
+        self.assertEqual(report['status'],'complete');self.assertEqual(report['completed'],19)
+        self.assertEqual(report['analyzed'],10);self.assertEqual(report['planned'],10)
+        self.assertEqual(len(calls),1)
+        self.assertNotIn('Previous observation',calls[0])
+        for frame in report['frames'][1::2]:
+            self.assertEqual(frame['analysisStatus'],'skipped');self.assertIsNone(frame['description']);self.assertNotIn('reusedFrom',frame)
+        self.assertEqual(report['frames'][18]['reusedFrom'],0)
+
     def test_missing_model_preserves_frames(self):
         store,cid=self.collection();server.sessions.local.settings={}
         self.assertTrue(store.work_once());self.assertEqual(store.row(cid)['status'],'paused')
@@ -78,5 +99,6 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(result['frames'][1]['timestamp'],.25);self.assertEqual(server.frame_analysis.row(job)['status'],'queued')
         with self.client.get(self.base+'/frames/'+job+'/7',headers=self.headers) as response:self.assertEqual(response.status_code,200)
         self.assertFalse((self.service.root/job/'source.input').exists())
+        self.assertEqual(server.frame_analysis.row(job)['analysis_step'],2)
 
 if __name__=='__main__':unittest.main()

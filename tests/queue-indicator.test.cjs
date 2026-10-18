@@ -2,10 +2,10 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const base=fs.readFileSync('web/base.js','utf8'),html=fs.readFileSync('web/document.html','utf8'),css=fs.readFileSync('web/styles.css','utf8');
-const helpers=base.slice(base.indexOf('function activityQueueState(){'),base.indexOf('function openActivity(){'));
+const helpers=base.slice(base.indexOf('function activityQueueState(){'),base.indexOf('function openActivity('));
 const makeElement=()=>({children:[],attributes:{},hidden:false,textContent:'',appendChild(child){this.children.push(child);return child;},replaceChildren(){this.children=[];},setAttribute(key,value){this.attributes[key]=value;},querySelector(){return this.children[0];}});
 const elements={activityList:makeElement(),activitySummary:makeElement(),queueIndicator:makeElement()};elements.queueIndicator.appendChild(makeElement());
-const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,setTimeout(){},document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){},notifyActivityQueue(){}};
+const context={state:{nodes:[]},entries:[],mediaActivity:[],recentActivity:[],navigator:{onLine:true},Set,Date,Number,String,Math,setTimeout(){},document:{createElement:makeElement},$:id=>elements[id],queueEntries:()=>context.entries,queueStatusText:job=>job.phase||'Queued',canRetryTranscription:()=>false,addQueueProviderControl(){},retryPCVideo(){},notifyActivityQueue(){},renderNodeActivities(){}};
 vm.createContext(context);vm.runInContext(helpers,context);context.notifyActivityQueue=()=>{};
 const render=()=>vm.runInContext('renderActivity()',context),count=()=>Number(elements.queueIndicator.children[0].textContent);
 render();assert.equal(elements.queueIndicator.hidden,true);
