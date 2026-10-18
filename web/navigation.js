@@ -121,6 +121,7 @@ function navigationInstall(){
   const control=$(id);if(!control)continue;control.innerHTML=ventureIcon(icon)+'<span class="workspace-nav-label">'+label+'</span>';
  }
  const extra=(label,icon,action)=>{const control=document.createElement('button');control.type='button';control.innerHTML=ventureIcon(icon)+'<span>'+label+'</span>';control.onclick=action;menu.querySelector('.top-actions').append(control);};
+ extra('Project Settings','settings',()=>{navigationCloseMenu(false);openProcessingSettings();});
  extra('Board details','settings',()=>{navigationCloseMenu(false);setSidebar(true);});
  menu.querySelector('.top-actions').append(navigationAdminsLink('workspaceAdminsLink'));
  extra('Processing activity','retry',openActivity);

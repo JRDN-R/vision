@@ -10,7 +10,7 @@ function normalizePCVideo(value){
  const id=/^[-\w]{1,120}$/.test(value.id||'')?value.id:'';
  const status=['uploading','waiting','working','error','complete'].includes(value.status)?value.status:'waiting';
  const preview=value.preview&&value.preview.mime==='video/mp4'&&Number(value.preview.size)>0&&Number(value.preview.size)<=PC_VIDEO_PREVIEW_LIMIT?{mime:'video/mp4',size:Number(value.preview.size),width:Math.min(1920,Math.max(1,Number(value.preview.width)||480)),height:Math.min(1920,Math.max(1,Number(value.preview.height)||270))}:null;
- return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
+ return{requestId:value.requestId,id,projectId:value.projectId,backendUrl:config.backendUrl,sourceId:String(value.sourceId||'').slice(0,100),sourceName:String(value.sourceName||'video.mp4').slice(0,180),sourceSize:Math.max(0,Number(value.sourceSize)||0),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,processing:value.processing?normalizeProcessingSettings(value.processing):null,status,phase:String(value.phase||'').slice(0,250),error:String(value.error||'').slice(0,500),progress:Math.max(0,Math.min(100,Number(value.progress)||0)),preview,previewDeleted:value.previewDeleted===true,needsFile:value.needsFile===true};
 }
 function pcVideoCurrent(project,n,requestId){return state===project&&state.nodes.includes(n)&&n.pcVideo?.requestId===requestId;}
 function pcVideoUpdate(n,values,{save=true}={}){
@@ -54,7 +54,7 @@ function pcVideoUploadPhase(sent,total,started,initial){
  return 'Uploading to FUPCJ Server · '+percent.toFixed(percent<10?1:0)+'% · '+readableBytes(sent)+' of '+readableBytes(total)+(rate>0?' · '+readableBytes(rate)+'/s':'')+' · keep this page open';
 }
 async function pcVideoBeginResumable(n,file,signal){
- return pcVideoRequest(n,'/upload/'+encodeURIComponent(n.pcVideo.requestId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size}),signal,timeoutMs:30000});
+ return pcVideoRequest(n,'/upload/'+encodeURIComponent(n.pcVideo.requestId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size,processing:n.pcVideo.processing}),signal,timeoutMs:30000});
 }
 async function pcVideoUploadResumable(n,file,health,signal,check){
  let state=await pcVideoBeginResumable(n,file,signal);check();
@@ -95,7 +95,7 @@ async function importPCVideoFiles(files,location,options={}){
   const n=await createModuleNode('video',file.name||'Video',point);assertBoardAsyncContext(context);
   const meta=ensureProjectIdentity(),source={id:uid(),name:file.name||'video.mp4',mime:file.type||mimeFromName(file.name),size:file.size,metadataOnly:true,role:'video',generated:false,status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   n.attachments.push(source);n.videoSourceId=source.id;n.fileType='Video';
-  n.pcVideo={requestId:'media-'+uid(),id:'',projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',sourceId:source.id,sourceName:source.name,sourceSize:file.size,provider,includeSoundEvents,status:'waiting',phase:'Waiting to upload · keep this page open',progress:0,error:'',preview:null};
+  n.pcVideo={requestId:'media-'+uid(),id:'',projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',sourceId:source.id,sourceName:source.name,sourceSize:file.size,provider,includeSoundEvents,processing:processingSettings(),status:'waiting',phase:'Waiting to upload · keep this page open',progress:0,error:'',preview:null};
   created.push(n);if(file.size>PC_VIDEO_UPLOAD_LIMIT)pcVideoUpdate(n,{status:'error',error:'This video exceeds FUPCJ Server’s 5 GB upload limit. Choose a smaller copy.'});else{pcVideoUploads.set(n.pcVideo.requestId,file);void pcVideoFirstFrame(n,file,project);}
   refreshNodeAttachments(n);installPCVideoControls(n);markDirty();
  }
@@ -134,6 +134,7 @@ async function workPCVideo(runtime){
    if(recovered&&/^[-\w]{1,120}$/.test(recovered.id||'')){
     pcVideoUpdate(n,{id:recovered.id,status:'working',phase:'Recovered accepted upload',error:''});pcVideoUploads.delete(requestId);
    }else{
+    if(n.pcVideo.processing&&health.videoMedia?.frameCollectionsV1!==true)throw new Error('Update FUPCJ Server to enable project screenshot presets and background visual descriptions.');
     const file=pcVideoUploads.get(requestId),limit=Number(health.videoMedia?.maxUploadBytes)||PC_VIDEO_UPLOAD_LIMIT;
     if(!file){const missing=new Error('FUPCJ Server has no accepted upload for this video. Select the same video again to upload it.');missing.code='VISION_VIDEO_FILE_REQUIRED';throw missing;}if(file.size>limit)throw new Error('This video exceeds FUPCJ Server upload limit of '+Math.round(limit/1048576)+' MB. Choose a smaller copy.');
     await ensureRemoteProject();check();let accepted;
@@ -141,7 +142,7 @@ async function workPCVideo(runtime){
      accepted=await pcVideoUploadResumable(n,file,health,signal,check);
     }else{
      if(file.size>PC_VIDEO_LEGACY_UPLOAD_LIMIT)throw new Error('Update FUPCJ Server to enable reliable resumable uploads for videos over 100 MB.');
-     const form=new FormData();form.append('file',file,file.name);form.append('requestId',requestId);
+     const form=new FormData();form.append('file',file,file.name);form.append('requestId',requestId);form.append('processing',JSON.stringify(n.pcVideo.processing));
      pcVideoUpdate(n,{status:'uploading',phase:'Uploading video · keep this page open until accepted',progress:0});
      accepted=await pcVideoRequest(n,'',{method:'POST',body:form,signal});check();
     }
@@ -180,8 +181,8 @@ function pcVideoArtifactSuffix(n,value,type,index){
 async function applyPCVideoResult(runtime,result){
  const{project,n,controller}=runtime,requestId=n.pcVideo.requestId,source=n.attachments.find(a=>a.id===n.pcVideo.sourceId);
  const check=()=>{if(controller.signal.aborted||!pcVideoCurrent(project,n,requestId)||!n.attachments.includes(source))throw new DOMException('The destination module changed.','AbortError');};check();
- if(!source||!Array.isArray(result.frames)||!result.frames.length||result.frames.length>120||!Array.isArray(result.audioSections)||result.audioSections.length>16)throw new Error('FUPCJ Server returned incomplete video results.');
- let frameBytes=0;const frames=result.frames.map((frame,index)=>{if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(frame.data||'')||!Number.isFinite(frame.timestamp)||frame.timestamp<0)throw new Error('A video snapshot could not be read.');frameBytes+=frame.data.length;if(frameBytes>28*1024*1024)throw new Error('The video snapshots exceed the project size limit.');return{id:source.id+'-frame-'+index,name:String(frame.name||'frame-'+index+'.jpg').slice(0,180),mime:'image/jpeg',size:bytesFromDataURL(frame.data).length,data:frame.data,timestamp:frame.timestamp,requestedTimestamp:frame.timestamp,role:'video-frame',videoOf:source.id,generated:true,status:'complete',createdAt:new Date().toISOString()};});
+ if(!source||!Array.isArray(result.frames)||!result.frames.length||result.frames.length>1200||!Array.isArray(result.audioSections)||result.audioSections.length>16)throw new Error('FUPCJ Server returned incomplete video results.');
+ let frameBytes=0;const frames=result.frames.map((frame,index)=>{if(frame.frameRef)return frameAttachment(frame,source,index);if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(frame.data||'')||!Number.isFinite(frame.timestamp)||frame.timestamp<0)throw new Error('A video snapshot could not be read.');frameBytes+=frame.data.length;if(frameBytes>28*1024*1024)throw new Error('The video snapshots exceed the project size limit.');return{id:source.id+'-frame-'+index,name:String(frame.name||'frame-'+index+'.jpg').slice(0,180),mime:'image/jpeg',size:bytesFromDataURL(frame.data).length,data:frame.data,timestamp:frame.timestamp,requestedTimestamp:frame.timestamp,role:'video-frame',videoOf:source.id,generated:true,status:'complete',createdAt:new Date().toISOString()};});
  pcVideoArtifactSuffix(n,result.preview?.url,'preview');
  const preview=normalizePCVideo({...n.pcVideo,preview:result.preview})?.preview;if(!preview)throw new Error('FUPCJ Server returned an invalid video preview.');
  pcVideoUpdate(n,{preview,phase:'Receiving snapshots and prepared audio'});
@@ -193,6 +194,7 @@ async function applyPCVideoResult(runtime,result){
   const audioData=await readFile(new Blob([blob],{type:part.mime}));check();sections.push({start:part.start,end:part.end,mimeType:part.mime,audioData,text:null,done:false});
  }
  check();n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);
+ attachFrameCollection(source,result);
  source.videoDuration=Number(result.duration)||0;source.snapshotInterval=Number(result.snapshotInterval)||0;source.videoHasAudio=!!result.audioSections.length;source.snapshotsStatus='complete';
  pcVideoSetPoster(n,result.thumbnail||frames[0].data,project);
  if(sections.length){const job={id:uid(),provider:n.pcVideo.provider,includeSoundEvents:n.pcVideo.includeSoundEvents===true,sourceId:source.id,sourceName:source.name,sourceKind:'video',offsetSeconds:0,createdAt:new Date().toISOString(),status:'waiting',error:null,sections};n.transcriptionJobs=n.transcriptionJobs||[];n.transcriptionJobs.push(job);source.status='queued';source.transcriptionStatus='waiting';queueChanged(n);scheduleTranscriptionQueue();}

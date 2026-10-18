@@ -17,7 +17,7 @@ function fixture(){
   importImages:async(files,location)=>{for(const f of files)state.nodes.push({id:'image-'+(++serial),kind:'image',title:f.name,attachments:[],x:location?.x||0,y:location?.y||0});},
   importMedia:async()=>{throw Error('Legacy video should not run');},importPCVideoFiles:async(files,location)=>{calls.push(['video',files[0].name]);const n=await c.createModuleNode('video',files[0].name,location);return[n];}
  };
- vm.createContext(c);vm.runInContext([oneLine('mimeFromName'),oneLine('videoFile'),oneLine('exportIsVideo'),oneLine('stripVideoPayload'),oneLine('boardAsyncContext'),oneLine('boardAsyncCurrent'),oneLine('assertBoardAsyncContext')].join('\n')+'\n'+base.slice(base.indexOf('function validateAttachments('),base.indexOf('async function validateProject('))+'\n'+imports.slice(0,imports.indexOf('// The Add menu')),c);
+ vm.createContext(c);vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/processing.js'),'utf8').split('\n').find(line=>line.startsWith('function normalizeFrameRef(')),c);vm.runInContext([oneLine('mimeFromName'),oneLine('videoFile'),oneLine('exportIsVideo'),oneLine('stripVideoPayload'),oneLine('boardAsyncContext'),oneLine('boardAsyncCurrent'),oneLine('assertBoardAsyncContext')].join('\n')+'\n'+base.slice(base.indexOf('function validateAttachments('),base.indexOf('async function validateProject('))+'\n'+imports.slice(0,imports.indexOf('// The Add menu')),c);
  return{c,state,calls,painted,run:code=>vm.runInContext(code,c)};
 }
 (async()=>{

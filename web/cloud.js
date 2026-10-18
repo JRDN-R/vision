@@ -94,7 +94,7 @@ function normalizeYouTubeImports(raw){
   if(!value||typeof value!=='object')return[];try{
    const text=(x,max=180)=>String(x||'').slice(0,max),clientRequestId=text(value.clientRequestId),targetId=text(value.targetId),sourceId=text(value.sourceId),u=new URL(value.backendUrl);
    if(!/^[\w-]{8,180}$/.test(clientRequestId)||!targetId||!sourceId||u.protocol!=='https:'||u.username||u.password||u.search||u.hash||ids.has(clientRequestId))return[];
-   ids.add(clientRequestId);return[{provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,...(value.sourceKind==='vortex'?{sourceKind:'vortex',projectId:text(value.projectId,120)}:{}),url:value.sourceKind==='vortex'?normalizeVortexURL(String(value.url||'')):normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
+   ids.add(clientRequestId);return[{processing:value.processing?normalizeProcessingSettings(value.processing):null,projectId:text(value.projectId,120),provider:value.provider==='gemini'?'gemini':'local',includeSoundEvents:value.includeSoundEvents===true,...(value.sourceKind==='vortex'?{sourceKind:'vortex',projectId:text(value.projectId,120)}:{}),url:value.sourceKind==='vortex'?normalizeVortexURL(String(value.url||'')):normalizeYouTubeURL(String(value.url||'')),clientRequestId,backendUrl:u.origin+u.pathname.replace(/\/+$/,''),targetId,sourceId,remoteId:text(value.remoteId),createdAt:text(value.createdAt,40),status:value.status==='failed'?'failed':value.status==='auth'?'auth':'waiting'}];
   }catch{return[];}
  });
 }
@@ -136,11 +136,11 @@ async function importYouTube(){
  try{url=normalizeYouTubeURL($('youtubeURL').value);}catch(e){$('youtubeNotice').textContent=e.message;return;}
  const createNew=$('youtubeNewModule').checked||!nodeById(selected),targetId=selected,project=state,provider=transcriptionProvider(),includeSoundEvents=soundEventsSelected(provider);
  try{
-  $('youtubeImport').disabled=true;await ensureCloudSession();if(state!==project)return;
+  $('youtubeImport').disabled=true;await ensureCloudSession();const health=await projectCapabilities();if(!health.capabilities?.frameCollectionsV1)throw new Error('Update FUPCJ Server to enable project screenshot presets and background visual descriptions.');await ensureRemoteProject();if(state!==project)return;
   const n=createNew?await createModuleNode('video','YouTube video'):nodeById(targetId);if(state!==project||!n||!state.nodes.includes(n))return;
   const source={id:uid(),name:'YouTube video.mp4',mime:'video/mp4',size:0,metadataOnly:true,role:'video',status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   checkpoint();n.attachments.push(source);if(createNew)n.videoSourceId=source.id;
-  const job={url,provider,includeSoundEvents,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
+  const job={url,provider,includeSoundEvents,processing:processingSettings(),projectId:ensureProjectIdentity().id,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
   state.youtubeImports=state.youtubeImports||[];state.youtubeImports.push(job);youtubeTask(job);markDirty();updateVideoAttachments(n);renderActivity();$('youtubeDialog').close();
   toast('YouTube import queued. Save your project to keep pending work.');scheduleYouTubeImports();
  }catch(error){$('youtubeNotice').textContent=error.message;toast(error.message,true);}finally{if(typeof syncYouTubeSearchUI==='function')syncYouTubeSearchUI();else $('youtubeImport').disabled=youtubeImportRunning;}
@@ -165,21 +165,21 @@ async function pumpYouTubeImports(){
  const check=()=>{if(signal.aborted||(typeof accountAuthEpoch!=='undefined'&&accountAuthEpoch!==authEpoch)||state!==project||!state.nodes.includes(n)||!n.attachments.includes(source)||!state.youtubeImports?.includes(job))throw new DOMException('The destination module is no longer open.','AbortError');if(job.backendUrl!==cloudConfig?.backendUrl)throw new DOMException('The connection changed.','AbortError');};
  try{
   check();job.status='working';task.detail=job.remoteId?'Reconnecting':'Connecting';renderActivity();
-  if(!job.remoteId){const accepted=await youtubeAPI(job.sourceKind==='vortex'?'vortex/import':'youtube',{method:'POST',body:JSON.stringify({...(job.sourceKind==='vortex'?{projectId:job.projectId}:{}),url:job.url,provider:job.provider,clientRequestId:job.clientRequestId,includeSoundEvents:job.includeSoundEvents===true}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
+  if(!job.remoteId){const accepted=await youtubeAPI(job.sourceKind==='vortex'?'vortex/import':'youtube',{method:'POST',headers:job.processing?{'X-Vision-Project-Key':ensureProjectIdentity().key}:{},body:JSON.stringify({...(job.sourceKind==='vortex'?{projectId:job.projectId}:{}),url:job.url,...(job.processing?{projectId:job.projectId,processing:job.processing}:{}),provider:job.provider,clientRequestId:job.clientRequestId,includeSoundEvents:job.includeSoundEvents===true}),signal});check();if(!accepted.id)throw new Error('The server did not return an import ID.');job.remoteId=String(accepted.id);markDirty();}
   let result;
   while(true){check();const status=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId),{signal});check();task.detail=status.phase||status.status;task.progress=Math.min(90,Number(status.progress||0)*.9);renderActivity();if(['error','failed','cancelled'].includes(status.status)){terminal=true;throw new Error(status.error||'The video could not be imported.');}if(status.status==='complete'){result=await youtubeAPI('jobs/'+encodeURIComponent(job.remoteId)+'/result',{signal});check();break;}await new Promise(resolve=>setTimeout(resolve,1200));}
   while(busy||ioBusy){check();await new Promise(resolve=>setTimeout(resolve,250));}check();ioBusy=true;ownsIO=true;
   if(job.sourceKind==='vortex'){await applyVortexImportResult(n,source,job,result,check);check();}
   else{
-  if(!Array.isArray(result.frames)||!result.frames.length)throw new Error('No screenshots were returned.');
-  const title=String(result.title||'YouTube video').slice(0,150),frames=result.frames.map((frame,index)=>{
+  if(!Array.isArray(result.frames)||!result.frames.length||result.frames.length>1200)throw new Error('No screenshots were returned.');
+  const title=String(result.title||'YouTube video').slice(0,150),frames=result.frames.map((frame,index)=>{if(frame.frameRef)return frameAttachment(frame,source,index);
    if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(frame.data||''))throw new Error('A screenshot could not be read.');
    return{id:job.sourceId+'-frame-'+index,name:String(frame.name||'frame.jpg'),mime:'image/jpeg',size:bytesFromDataURL(frame.data).length,data:frame.data,timestamp:frame.timestamp,requestedTimestamp:frame.timestamp,role:'video-frame',videoOf:source.id,generated:true,status:'complete',createdAt:new Date().toISOString()};
   });
-  source.name=title+'.mp4';task.title=title;source.videoDuration=result.duration;source.snapshotInterval=result.snapshotInterval;
+  attachFrameCollection(source,result);source.name=title+'.mp4';task.title=title;source.videoDuration=result.duration;source.snapshotInterval=result.snapshotInterval;
   // Replace only generated frames belonging to this import when recovering an interrupted application.
   n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);source.snapshotsStatus='complete';
-  if(n.videoSourceId===source.id){n.title=title;n.src=result.frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;await renderNode(n);}
+  if(n.videoSourceId===source.id){n.title=title;n.src=result.thumbnail||result.frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;await renderNode(n);}
   if((job.includeSoundEvents||job.provider==='gemini')&&!result.audio?.data)throw new Error('This processing option requires the original YouTube audio. Update FUPCJ Server and retry this import. Captions alone cannot detect sounds.');
   if(result.transcript?.text&&!job.includeSoundEvents&&job.provider!=='gemini'){source.transcriptionProvider='captions';storeVideoTranscript(n,source,String(result.transcript.text),'complete');recordActivity(title,'Screenshots and captions ready');toast('YouTube import complete: screenshots and captions ready.');}
   else if(result.audio?.data){

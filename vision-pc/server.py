@@ -27,6 +27,7 @@ from church_mcp import ChurchMCP
 from church_oauth import PUBLIC_PATHS as CHURCH_PUBLIC_PATHS, MCP_PATH as CHURCH_MCP_PATH
 from transcription import LocalTranscription
 from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
+from frame_analysis import FrameAnalysis, processing_options
 from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
@@ -113,6 +114,7 @@ def configure(config_path, migrate_gemini=False):
     app.config['GEMINI_USAGE'].initialize()
     transcriptions.initialize(config, config_path)
     uploaded_media.initialize()
+    frame_analysis.initialize()
     documents.initialize(config)
     vortex.initialize()
     sessions.venture.documents = documents
@@ -367,7 +369,7 @@ def health():
                    intelligentContext=sessions.context.capability(),
                    vortex=vortex.capability(),
                    churchAdmins={'enabled': church_admin.settings.get('enabled') is True, 'version': '1.0.0', 'nativeMcpReady': bool(church_mcp.catalog), 'credentialsSaved': (church_admin.directory/'pco-credentials.dpapi').is_file()},
-                   capabilities={'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
+                   capabilities={'frameCollectionsV1': True, 'intelligentContextV1': bool(sessions.context.engine), 'ventureV2': True, 'ventureV1': True, 'ventureMaxUploadBytes': 128*1024*1024, 'runParametersV1': True, 'persistentProjects': True, 'persistentRuns': True, 'projectRevision': True, 'accountProjects': bool(app.config.get('FIREBASE_IDENTITY')), 'localTranscription': local['ready'], 'geminiTranscription': True, 'soundEvents': sounds['ready'], 'uploadedMedia': video['ready'], 'documentProcessing': document['ready'], 'temporarySessions': trials.enabled()})
 
 
 def get_job(job_id):
@@ -411,6 +413,12 @@ def youtube():
             url = normalize_url(payload.get('url', ''))
         except (ValueError, AttributeError):
             raise APIError('Paste a direct YouTube video, Shorts, or youtu.be link.')
+    if source_kind == 'youtube' and payload.get('processing') is not None:
+        project_id = payload.get('projectId')
+        if not isinstance(project_id, str):
+            raise APIError('Save the destination project before importing video.')
+        sessions.project(project_id)
+        import_options.update(projectId=project_id, processing=processing_options(payload['processing']))
     options_json = json.dumps(import_options, sort_keys=True)
     client_id = payload.get('clientRequestId')
     if client_id is not None and (not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', client_id)):
@@ -532,6 +540,9 @@ def _process_next_job():
                         deno=app.config['DENO'], temp_root=str(app.config['DATA_DIR'] / 'temporary'),
                         include_sound_events=bool(value['include_sound_events']),
                         provider=value['provider'],
+                        processing=json.loads(value['import_options']).get('processing'),
+                        frame_store=frame_analysis if json.loads(value['import_options']).get('processing') else None,
+                        project_id=json.loads(value['import_options']).get('projectId'),
                         **({'deadline': deadline} if deadline is not None else {}))
     except Exception:
         if trial_id and trials.expired(trial_id):
@@ -771,6 +782,8 @@ def openai_artifact(container_id, file_id):
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
+frame_analysis = FrameAnalysis(app, connect_db, APIError, sessions)
+app.config["FRAME_ANALYSIS"] = frame_analysis
 documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
@@ -820,6 +833,7 @@ def main():
         sessions.start()
         transcriptions.start()
         uploaded_media.start()
+        frame_analysis.start()
         documents.start()
         vortex.start()
         church_admin.start()
@@ -849,6 +863,7 @@ def main():
             documents.stop.set()
             documents.wake.set()
             uploaded_media.stop.set()
+            frame_analysis.stop.set()
             uploaded_media.wake.set()
         return 0
     except Exception as error:

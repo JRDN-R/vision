@@ -62,3 +62,19 @@ header .brand{width:56px;gap:2px;flex-direction:column;align-items:flex-start}
 /* Queue count stays in the header; notifications leave board controls clear. */
 #appHeader .queue-indicator{min-width:46px;height:46px;padding:0 10px}
 @media(prefers-reduced-motion:reduce){#toast{transition:none;transform:none}}
+
+/* One activity control outside transformed headers, boards and workspace panes. */
+body > #queueIndicator{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:calc(84px + env(safe-area-inset-bottom) + var(--activity-keyboard-offset,0px));z-index:1500;display:flex;gap:10px;border-radius:24px;min-height:48px;min-width:132px;padding:0 18px;isolation:isolate}
+body > #queueIndicator[hidden]{display:none}
+body > #queueIndicator::before{inset:9px auto 9px 10px;width:26px;height:26px}
+body > #queueIndicator span{margin-left:26px}
+body > #queueIndicator::after{content:'Activity';font-size:13px}
+body > #queueIndicator[data-state="error"]{background:#ffc6b4;border-color:#c66d52}
+body > #queueIndicator[data-state="error"]::before{animation:none;border-color:#a43c26}
+#processingDialog{width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto}
+#processingDialog label{display:flex;gap:10px;flex-direction:column;margin:16px 0}
+#processingDialog label.check-row{flex-direction:row;align-items:center}
+#processingDialog select{width:100%;padding:10px;font:inherit}
+#frameStorageList>div{padding:10px 0;border-bottom:1px solid #ffffff20}
+
+body > #queueIndicator[data-state="complete"]{background:#c6f68b}body > #queueIndicator[data-state="complete"]::before{animation:none;border-color:transparent}

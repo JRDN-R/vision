@@ -236,6 +236,7 @@ class AccountAdministration:
                     ('project_runs', "project_id=? AND status IN ('queued','preparing','submitting','in_progress','saving')"),
                     ('local_transcriptions', "project_id=? AND status IN ('queued','processing')"),
                     ('uploaded_media', "project_id=? AND status IN ('queued','processing')"),
+                    ('frame_collections', "project_id=? AND status IN ('collecting','queued','processing')"),
                     ('document_jobs', "project_id=? AND status IN ('queued','processing')")):
                     if db.execute('SELECT 1 FROM '+table+' WHERE '+where+' LIMIT 1', (pid,)).fetchone():
                         return True
@@ -254,7 +255,7 @@ class AccountAdministration:
                 'SELECT id FROM venture_conversations WHERE uid=? AND native=1', (uid,)))
             media_ids = {table: [row[0] for row in db.execute(
                 'SELECT id FROM '+table+' WHERE project_id IN (SELECT id FROM projects WHERE owner_uid=?)', (uid,))]
-                for table in ('local_transcriptions', 'uploaded_media', 'document_jobs')}
+                for table in ('local_transcriptions', 'uploaded_media', 'document_jobs', 'frame_collections')}
             # Include jobs belonging to native Venture projects (normally no media jobs).
             for table in media_ids:
                 media_ids[table].extend(row[0] for pid in projects for row in db.execute(
@@ -274,7 +275,7 @@ class AccountAdministration:
             remove_owned(base / 'projects' / pid)
             remove_owned(base / 'context' / 'sources' / hashlib.sha256((uid+'\0'+pid).encode()).hexdigest())
         for table, directory in [('local_transcriptions','transcriptions'),
-                                 ('uploaded_media','uploaded-media'), ('document_jobs','documents')]:
+                                 ('uploaded_media','uploaded-media'), ('document_jobs','documents'), ('frame_collections','frame-collections')]:
             for job in set(media_ids[table]):
                 if not MEDIA_ID.fullmatch(job):
                     raise ValueError('A saved media identifier is invalid; cleanup was stopped.')
@@ -323,7 +324,7 @@ class AccountAdministration:
                     db.execute('DELETE FROM '+table+' WHERE '+col+' IN '
                                '(SELECT id FROM project_runs WHERE project_id=?)', (pid,))
                 for table, col in (('local_transcriptions','project_id'),('uploaded_media','project_id'),
-                                   ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),
+                                   ('uploaded_media_uploads','project_id'),('document_jobs','project_id'),('frame_collections','project_id'),
                                    ('venture_search','cid'),('context_sync_jobs','project_id'),
                                    ('project_runs','project_id')):
                     if table in existing:
