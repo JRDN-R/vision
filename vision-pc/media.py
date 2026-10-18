@@ -127,7 +127,7 @@ def friendly_error(error):
     return "The video could not be processed. Try again later, or upload a video file directly."
 
 
-def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False, deadline=None, provider='local'):
+def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_sound_events=False, deadline=None, provider='local', processing=None, frame_store=None, project_id=None):
     def budget(normal):
         if deadline is None:
             return normal
@@ -184,8 +184,11 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
             if not candidates:
                 raise ValueError("The video download did not finish. Try another public video.")
             source = max(candidates, key=lambda p: p.stat().st_size)
-            interval = snapshot_interval(duration)
-            count = math.ceil(duration / interval)
+            from frame_analysis import frame_interval, image_metadata, PRESETS
+            interval = frame_interval(duration, processing.get('screenshotDetail')) if processing else snapshot_interval(duration)
+            if frame_store:
+                frame_store.create(project_id, job_id)
+            count = min(PRESETS[processing['screenshotDetail']][1], math.ceil(duration / interval)) if processing else math.ceil(duration / interval)
             frames = []
             # Pillow's default bundled font is portable; prefer a larger local font.
             font = None
@@ -205,6 +208,7 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                 with Image.open(io.BytesIO(raw)) as picture:
                     picture = picture.convert("RGB")
                     width, height = picture.size
+                    metadata = image_metadata(picture)
                     footer = max(36, round(width * .032))
                     final = Image.new("RGB", (width, height + footer), "black")
                     final.paste(picture, (0, 0))
@@ -212,8 +216,12 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                     draw.text((width / 2, height + footer / 2), timestamp(when), font=font, fill="white", anchor="mm")
                     output = io.BytesIO()
                     final.save(output, format="JPEG", quality=82, optimize=True)
-                    frames.append({"name": f"frame-{index + 1:04d}-{timestamp(when).replace(':', '-')}.jpg",
-                                   "timestamp": when, "mime": "image/jpeg", "data": data_url(output.getvalue(), "image/jpeg")})
+                    jpeg = output.getvalue()
+                    if index == 0:
+                        thumbnail = data_url(jpeg, "image/jpeg")
+                    frames.append(frame_store.add(job_id, index, when, jpeg, metadata) if frame_store else
+                                  {"name": f"frame-{index + 1:04d}-{timestamp(when).replace(':', '-')}.jpg",
+                                   "timestamp": when, "mime": "image/jpeg", "data": data_url(jpeg, "image/jpeg")})
             audio = None
             if transcript is None or include_sound_events:
                 update(job_id, phase="Preparing audio for speech and sound detection" if include_sound_events else "Preparing audio for transcription", progress=90)
@@ -226,10 +234,14 @@ def process_job(job_id, url, ffmpeg, update, deno=None, temp_root=None, include_
                 elif b"does not contain any stream" not in converted.stderr and b"matches no streams" not in converted.stderr:
                     raise ValueError("Screenshots were created, but the audio could not be prepared. Try uploading the video directly.")
             result = {"title": title, "url": url, "duration": duration, "snapshotInterval": interval,
-                      "thumbnail": frames[0]["data"], "frames": frames, "transcript": transcript, "audio": audio,
+                      "thumbnail": thumbnail, "frames": frames, "transcript": transcript, "audio": audio,
                       "includeSoundEvents": bool(include_sound_events)}
+            if frame_store:
+                result['frameCollection'] = job_id
             encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         # The temporary directory (including source video and extracted audio) is gone.
         update(job_id, status="complete", phase="Ready to add to Vision", progress=100, result=encoded)
+        if frame_store:
+            frame_store.seal(job_id, processing.get('describeFrames'))
     except Exception as error:
         update(job_id, status="error", phase="Stopped", error=friendly_error(error))

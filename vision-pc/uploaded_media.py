@@ -136,7 +136,7 @@ class UploadedMedia:
         ready = ffmpeg.is_file() and ffmpeg.with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe').is_file()
         return dict(ready=ready, maxUploadBytes=UPLOAD_LIMIT, maxDuration=MAX_DURATION,
                     maxPreviewBytes=PREVIEW_LIMIT, maxResultBytes=RESULT_LIMIT,
-                    resumableUpload=True, uploadChunkBytes=UPLOAD_CHUNK_BYTES)
+                    frameCollectionsV1=True, resumableUpload=True, uploadChunkBytes=UPLOAD_CHUNK_BYTES)
 
     def row(self, job_id, project_id=None):
         if not re.fullmatch(r'[0-9a-f]{24}', job_id):
@@ -232,6 +232,9 @@ class UploadedMedia:
         moved = False
         try:
             os.replace(source, target)
+            options_path = self.upload_directory(project_id, request_id) / 'processing.json'
+            if options_path.exists():
+                shutil.copyfile(options_path, directory / 'processing.json')
             moved = True
             with self.db() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -311,6 +314,9 @@ class UploadedMedia:
                 directory = self.upload_directory(project_id, request_id)
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
                 source = directory / 'source.part'
+                from frame_analysis import processing_options
+                if not (directory / 'processing.json').exists() and payload.get('processing') is not None:
+                    atomic_json(directory / 'processing.json', processing_options(payload['processing']))
                 source.touch(exist_ok=True)
                 received = source.stat().st_size
                 if received > size:
@@ -477,6 +483,13 @@ class UploadedMedia:
                 directory.mkdir(mode=0o700)
                 try:
                     os.replace(source, directory / 'source.input')
+                    if request.form.get('processing'):
+                        from frame_analysis import processing_options
+                        try:
+                            options = processing_options(json.loads(request.form['processing']))
+                        except ValueError:
+                            raise self.Error('Invalid video processing settings.')
+                        atomic_json(directory / 'processing.json', options)
                     with self.db() as db:
                         db.execute('''INSERT INTO uploaded_media
                             (id,project_id,request_id,content_hash,source_name,source_size,status,phase,created_at,updated_at)
@@ -606,7 +619,7 @@ class UploadedMedia:
                     shutil.rmtree(directory, ignore_errors=True)
                 else:
                     for path in directory.iterdir():
-                        if path.name != 'source.input':
+                        if path.name not in ('source.input', 'processing.json'):
                             path.unlink(missing_ok=True)
                     self.update(row['id'], status='queued', phase='Resuming video after FUPCJ Server restart', progress=0)
             elif row['status'] == 'complete':
@@ -795,8 +808,14 @@ class UploadedMedia:
         if float(preview_details.get('format', {}).get('duration') or 0) < duration - max(.3, min(2, duration * .005)):
             raise MediaFailure('The video is too large for a complete workspace preview. Try a shorter video.')
         preview_video = next(s for s in preview_details['streams'] if s.get('codec_type') == 'video')
-        interval, frames = snapshot_interval(duration), []
-        count = math.ceil(duration / interval)
+        from frame_analysis import frame_interval, image_metadata, PRESETS
+        options_path = directory / 'processing.json'
+        processing = json.loads(options_path.read_text()) if options_path.exists() else None
+        store = self.app.config.get('FRAME_ANALYSIS') if processing else None
+        if store:
+            store.create(value['project_id'], job_id)
+        interval, frames = frame_interval(duration, processing['screenshotDetail']) if processing else snapshot_interval(duration), []
+        count = min(PRESETS[processing['screenshotDetail']][1], math.ceil(duration / interval)) if processing else math.ceil(duration / interval)
         font = ImageFont.load_default(size=16)
         for index in range(count):
             alive()
@@ -809,16 +828,18 @@ class UploadedMedia:
                 frame(when, image_path)
             with Image.open(image_path) as picture:
                 picture = picture.convert('RGB')
+                metadata = image_metadata(picture)
                 stamped = Image.new('RGB', (picture.width, picture.height+28), 'black')
                 stamped.paste(picture, (0, 0))
                 ImageDraw.Draw(stamped).text((picture.width/2, picture.height+14), timestamp(when),
                                            font=font, fill='white', anchor='mm')
                 output = io.BytesIO()
                 stamped.save(output, format='JPEG', quality=68, optimize=True)
-                frames.append(dict(name=f'frame-{index+1:04d}-{timestamp(when).replace(":", "-")}.jpg',
+                frames.append(store.add(job_id, index, when, output.getvalue(), metadata) if store else
+                              dict(name=f'frame-{index+1:04d}-{timestamp(when).replace(":", "-")}.jpg',
                                    timestamp=when, mime='image/jpeg', data=data_url(output.getvalue(), 'image/jpeg')))
             image_path.unlink(missing_ok=True)
-            if sum(len(item['data']) for item in frames) > RESULT_LIMIT - 1024*1024:
+            if sum(len(item.get('data', '')) for item in frames) > RESULT_LIMIT - 1024*1024:
                 raise MediaFailure('The video snapshots exceed the project limit. Try a shorter video.')
         base = f'/api/projects/{value["project_id"]}/media/{job_id}'
         audio_sections = []
@@ -843,5 +864,9 @@ class UploadedMedia:
         encoded_size = len(json.dumps(result, separators=(',', ':')).encode('utf-8'))
         if encoded_size > RESULT_LIMIT:
             raise MediaFailure('The video snapshots exceed the project limit. Try a shorter video.')
+        if store:
+            result['frameCollection'] = job_id
         atomic_json(directory / 'result.json', result)
+        if store:
+            store.seal(job_id, processing.get('describeFrames'))
         alive()

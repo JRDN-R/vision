@@ -155,6 +155,7 @@ class Trials:
                 db.execute("UPDATE local_transcriptions SET cancel_requested=1,status='cancelled',phase='Trial ended',result_json=NULL WHERE project_id=?", (pid,))
                 db.execute("UPDATE uploaded_media SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE project_id=?", (pid,))
                 db.execute('UPDATE project_runs SET cancel_requested=1 WHERE project_id=?', (pid,))
+                db.execute("UPDATE frame_collections SET status='paused' WHERE project_id=?", (pid,))
                 if self.documents is not None:
                     db.execute("UPDATE document_jobs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE project_id=?", (pid,))
                 db.execute("UPDATE jobs SET status='error',phase='Trial ended' WHERE uid=? AND status='queued'", ('trial:' + ident,))
@@ -169,7 +170,7 @@ class Trials:
                     with self.db() as db:
                         if db.execute("SELECT 1 FROM project_runs WHERE project_id=? AND status NOT IN ('completed','incomplete','error','cancelled')", (pid,)).fetchone():
                             continue
-                        for table, root in (('local_transcriptions', self.transcriptions.root), ('uploaded_media', self.uploaded_media.root)):
+                        for table, root in (('local_transcriptions', self.transcriptions.root), ('uploaded_media', self.uploaded_media.root), ('frame_collections', self.app.config['FRAME_ANALYSIS'].root)):
                             for row in db.execute('SELECT id FROM ' + table + ' WHERE project_id=?', (pid,)).fetchall():
                                 self.remove_directory(root / row['id'])
                             db.execute('DELETE FROM ' + table + ' WHERE project_id=?', (pid,))

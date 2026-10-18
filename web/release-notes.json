@@ -1,8 +1,9 @@
 {
-  "title": "Venture has its own page",
+  "title": "Project video settings and background descriptions",
   "items": [
-    "Open Venture directly at /vision/venture/ and bookmark it independently.",
-    "Switch with the same animated chevron. The Vision board is fully hidden while you are in Venture, including during transitions.",
-    "Switching keeps your board, drafts, uploads, and sign-in in the same running session. Browser Back and Forward follow the selected page."
+    "Set screenshot detail, transcription and sound effects for each project from Project Settings.",
+    "Maximum captures up to four screenshots per second. Larger screenshot sets stay on FUPCJ Server and download with your export.",
+    "The local visual worker can describe frames in the background, retain timestamped observations and resume interrupted analysis.",
+    "Activity is now a floating button in Vision and Venture, with progress, pause/resume and persistent error notices. Update FUPCJ Server to use the new video processing features."
   ]
 }
