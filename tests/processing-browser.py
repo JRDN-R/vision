@@ -13,7 +13,7 @@ window.processingFixture={
  open:()=>openProcessingSettings(),
  settings:()=>({...state.settings}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
- switchView:view=>{accountSignedIn=()=>true;ventureScope=()=> 'processing-fixture';venture.uid=ventureScope();venture.ready=true;ventureSchedule=()=>{};workspaceSwitch(view);},
+ switchView:view=>{accountSignedIn=()=>true;ventureScope=()=> 'processing-fixture';navigationMarkSeen();venture.uid=ventureScope();venture.ready=true;ventureSchedule=()=>{};workspaceSwitch(view);},
  ventureWork:active=>{venture.sending=active;renderActivity();},
  activity:()=>{mediaActivity.push({title:'Screenshots',detail:'Creating frames',progress:50});renderActivity();},
  done:()=>{mediaActivity.forEach(task=>task.finished=true);renderActivity();},
