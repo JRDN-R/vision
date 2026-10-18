@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Venture — by Jordan R.</title>
+<meta name="description" content="Venture by Jordan R. Your AI conversations, files, and models in one workspace.">
+<meta name="theme-color" content="#111715">
+<meta name="application-name" content="Venture">
+<meta name="apple-mobile-web-app-title" content="Venture">
+<link rel="canonical" href="https://jrdn-r.github.io/vision/venture/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Venture">
+<meta property="og:title" content="Venture — by Jordan R.">
+<meta property="og:description" content="by Jordan R. Connect images, videos, notes, and files into a visual AI prompt.">
+<meta property="og:url" content="https://jrdn-r.github.io/vision/venture/">
+<meta property="og:image" content="https://jrdn-r.github.io/vision/Vision-preview.jpg">
+<meta property="og:image:secure_url" content="https://jrdn-r.github.io/vision/Vision-preview.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Venture — by Jordan R.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Venture — by Jordan R.">
+<meta name="twitter:description" content="by Jordan R.">
+<meta name="twitter:image" content="https://jrdn-r.github.io/vision/Vision-preview.jpg">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/png" sizes="192x192" href="../Vision-icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../Vision-icon-180.png">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob: https://i.ytimg.com https://www.gstatic.com; style-src 'unsafe-inline'; script-src https://accounts.google.com/gsi/client 'unsafe-inline' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com; worker-src blob:; connect-src https://accounts.google.com/gsi/ 'self' https://raw.githubusercontent.com https://jrdn-r.github.io https://*.run.app https://*.web.app https://*.ts.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://generativelanguage.googleapis.com https://www.googleapis.com https://visionboard-api.firebaseapp.com https://www.gstatic.com blob:; frame-src blob: https://visionboard-api.firebaseapp.com https://accounts.google.com https://docs.google.com; font-src data:; manifest-src 'self' data: blob:; object-src 'none'; base-uri 'none'">
+<style>html,body{height:100%;margin:0;background:#111715;color:#eef1e8;font-family:system-ui,sans-serif}body{display:grid;place-items:center}main{text-align:center;padding:24px}p{color:#a5b0a1}a{color:#d6efac}#fallback[hidden]{display:none}</style>
+</head><body>
+<main aria-live="polite"><p id="loading">Loading Venture…</p><p id="fallback" hidden>Venture could not finish loading. <a href="../Vision.html?view=venture">Open Venture directly</a>.</p><noscript><p><a href="../Vision.html?view=venture">Open Venture</a> with JavaScript enabled to use Venture.</p></noscript></main>
+<script>
+(async()=>{
+ // Preserve the requested app if the loader needs its direct-file fallback.
+ document.querySelector('#fallback a').href='../Vision.html?view=venture'+location.hash;
+ try{
+  const response=await fetch('../Vision.html?v=e50df10a289c',{credentials:'same-origin'});
+  if(!response.ok)throw new Error('App unavailable');
+  const html=(await response.text()).replace('<button id="downloadAppBtn"','<button id="downloadAppBtn" hidden');
+  if(!html.includes('window.FrameRenderer')||!html.includes('id="board"'))throw new Error('Invalid app response');
+  // Keep the full app in the top-level document, including its mobile gestures,
+  // download controls, and pristine source capture for the offline HTML.
+  document.open();document.write(html);document.close();
+ }catch(error){
+  const loading=document.getElementById('loading'),fallback=document.getElementById('fallback');
+  if(loading)loading.hidden=true;if(fallback)fallback.hidden=false;
+ }
+})();
+</script></body></html>
