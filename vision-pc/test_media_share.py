@@ -82,6 +82,7 @@ class MediaShareTests(unittest.TestCase):
         self.assertFalse(self.work());self.assertIsNone(self.store.standby.runtime)
         got=self.request('get','drops/'+row['id']).json
         self.assertEqual(got['title'],'Wednesday');self.assertFalse(got['published']);self.assertTrue(got['publishError'])
+        self.assertNotIn('Off today',got['phase'])
         with server.connect_db() as db:db.execute('UPDATE media_share_drops SET retry_at=0')
         self.sync();self.assertTrue(self.request('get','drops/'+row['id']).json['published'])
     def test_off_day_failed_model_stops_instead_of_repeating_forever(self):

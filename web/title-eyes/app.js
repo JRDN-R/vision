@@ -115,17 +115,18 @@ async function refreshStandby() {
     const info=await api.standby();
     if(epoch!==accountEpoch() || !user())return;
     const memory=Number.isFinite(info.residentBytes) && info.loaded ? ' · '+(info.residentBytes/1e9).toFixed(2)+' GB RAM' : '';
-    $('standbyStatus').textContent=(info.loaded && info.phase==='Ready' ? 'Model ready' : info.phase)+memory+' · Sundays & Wednesdays';
+    const ready=info.loaded && info.phase==='Ready' ? (info.scheduled ? 'Model ready' : 'Model ready (on demand)') : info.phase;
+    $('standbyStatus').textContent=ready+memory+' · Warm standby Sundays & Wednesdays';
   } catch(error) {
     if(epoch!==accountEpoch() || !user())return;
-    $('standbyStatus').textContent=error.status===404 ? 'Scheduled standby needs the latest server update.' : 'Standby status unavailable. The server may be offline.';
+    $('standbyStatus').textContent=error.status===404 ? 'Daily title worker needs the latest server update.' : 'Title worker status unavailable. The server may be offline.';
   }
   standbyTimer=setTimeout(refreshStandby,10000);
 }
 let priorUid=null;
 void initAuth(identity=>{
   clearTimeout(standbyTimer);
-  $('standbyStatus').textContent='Ready Sundays and Wednesdays · church PC time';
+  $('standbyStatus').textContent='Available every day · warm standby Sundays & Wednesdays';
   const switched=priorUid && priorUid!==identity?.uid;priorUid=identity?.uid||null;
   invalidate();jobId='';busy(false);$('titleText').value='';copyState();
   if(switched){file=null;clearPreview();}

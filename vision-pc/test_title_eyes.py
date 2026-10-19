@@ -134,14 +134,29 @@ class StandbyScheduleTests(unittest.TestCase):
         self.assertEqual(next_start(monday),'2026-10-21T00:00:00')
         self.assertEqual(next_start(datetime(2026,10,21,23,59)),'2026-10-25T00:00:00')
 
-    def test_off_days_reject_uploads_without_loading(self):
+    def test_off_days_accept_titles_but_do_not_preload_without_work(self):
         self.store.now=lambda:datetime(2026,10,19,12)
-        with patch.object(self.store,'runtime_factory',side_effect=AssertionError('Must stay off')):
-            self.assertEqual(self.submit().status_code,423)
-            self.assertFalse(self.work())
+        events=self.counting_runtime()
+        self.assertFalse(self.work())
+        self.assertEqual(events,[])
         self.assertEqual(self.client.get('/api/title-eyes/standby').status_code,401)
         value=self.client.get('/api/title-eyes/standby',headers=self.headers).json
         self.assertFalse(value['scheduled']);self.assertFalse(value['loaded']);self.assertEqual(value['residentBytes'],0)
+        self.assertIn('on demand',value['phase'].lower())
+        first=self.submit('offday-one')
+        second=self.submit('offday-two')
+        self.assertEqual(first.status_code,202,first.json)
+        self.assertEqual(second.status_code,202,second.json)
+        self.assertTrue(self.work())
+        self.assertEqual(self.store.row(first.json['id'])['status'],'complete')
+        self.assertEqual(events.count('load'),1)
+        self.assertEqual(events.count('stop'),0)  # Another slide is waiting.
+        self.assertTrue(self.work())
+        self.assertEqual(self.store.row(second.json['id'])['status'],'complete')
+        self.assertEqual(events.count('load'),1)  # Reused until queue drained.
+        self.assertEqual(events.count('stop'),1)
+        self.assertFalse(self.work())
+        self.assertEqual(events.count('load'),1)
 
     def counting_runtime(self):
         events=[]
@@ -172,16 +187,32 @@ class StandbyScheduleTests(unittest.TestCase):
             from owned_assets import exclusive_file
             with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
 
-    def test_unloads_at_end_of_day_and_allows_other_workers(self):
+    def test_idle_standby_unloads_at_midnight_then_cold_starts_new_work(self):
+        events=self.counting_runtime();self.work()
+        self.assertEqual(events.count('load'),1)
+        self.store.now=lambda:datetime(2026,10,19,0)
+        self.assertFalse(self.work())
+        self.assertEqual(events.count('stop'),1)
+        from owned_assets import exclusive_file
+        with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
+        job=self.submit().json['id']
+        self.assertTrue(self.work())
+        self.assertEqual(self.store.row(job)['status'],'complete')
+        self.assertEqual(events.count('load'),2)
+        self.assertEqual(events.count('stop'),2)
+        self.store.now=lambda:datetime(2026,10,21,0)
+        self.assertFalse(self.work())
+        self.assertEqual(events.count('load'),3)
+
+    def test_queued_request_is_not_cancelled_at_warm_day_boundary(self):
         events=self.counting_runtime();self.work()
         job=self.submit().json['id']
         self.store.now=lambda:datetime(2026,10,19,0)
-        self.work();self.assertEqual(events.count('stop'),1)
-        self.assertEqual(self.store.row(job)['status'],'error');self.assertIsNone(self.store.row(job)['image'])
-        from owned_assets import exclusive_file
-        with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
-        self.store.now=lambda:datetime(2026,10,21,0)
-        self.work();self.assertEqual(events.count('load'),2)
+        self.assertTrue(self.work())
+        self.assertEqual(self.store.row(job)['status'],'complete')
+        self.assertIsNone(self.store.row(job)['image'])
+        self.assertEqual(events.count('load'),1)
+        self.assertEqual(events.count('stop'),1)
 
     def test_obs_memory_and_competing_work_release_then_reload(self):
         events=self.counting_runtime();self.work()

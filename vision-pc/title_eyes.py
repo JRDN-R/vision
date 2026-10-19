@@ -169,8 +169,6 @@ class TitleEyes:
                 if old:return jsonify(self.public(old)),202
             if not self.sessions.local.settings.get('enabled') or not self.sessions.local.settings.get('visualEnabled'):
                 raise self.Error('Enable the existing local visual worker on FUPCJ Server, then try again.',503)
-            if not scheduled(self.now()):
-                raise self.Error('Title-eyes is off today. It is available Sundays and Wednesdays, using the church PC clock.',423)
             upload=request.files.get('image')
             if not upload:raise self.Error('Add a slide image.')
             try:picture=prepare_image(upload.read(MAX_BYTES+1))
@@ -202,18 +200,17 @@ class TitleEyes:
                     return jsonify(deleted=True)
                 return jsonify(self.public(row))
 
-    def media_pending(self):
+    def pending_titles(self):
         with self.db() as db:
-            return bool(db.execute("SELECT 1 FROM title_eyes_jobs WHERE uid LIKE 'mediashare:%' AND status IN ('queued','processing') LIMIT 1").fetchone())
+            return bool(db.execute(f"SELECT 1 FROM title_eyes_jobs WHERE status IN {ACTIVE} LIMIT 1").fetchone())
 
     def work_once(self):
         self.sweep()
-        if not scheduled(self.now()):
-            with self.db() as db:
-                db.execute(f"UPDATE title_eyes_jobs SET status='error',phase='Schedule ended',error='Title-eyes is off today. Submit again on Sunday or Wednesday.',image=NULL WHERE status IN {ACTIVE} AND uid NOT LIKE 'mediashare:%'")
-            if not self.media_pending():
-                self.standby.close('Off today · available Sundays and Wednesdays')
-                return False
+        if not scheduled(self.now()) and not self.pending_titles():
+            # On non-standby days, run only for accepted work. An idle model
+            # must not occupy RAM or the shared inference lock.
+            self.standby.close('Available on demand · loads when a slide arrives')
+            return False
         with self.db() as db:
             row=db.execute("SELECT * FROM title_eyes_jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
         row=dict(row) if row else None
@@ -228,7 +225,7 @@ class TitleEyes:
         deadline=time.monotonic()+660
         def cancelled():
             current=self.row(job)
-            return (self.stop.is_set() or (not scheduled(self.now()) and not row['uid'].startswith('mediashare:')) or time.monotonic()>deadline
+            return (self.stop.is_set() or time.monotonic()>deadline
                     or not current or current['status']!='processing' or admin.blocked(row['uid']))
         try:
             # Even without a queued slide, scheduled days proactively preload.
@@ -260,8 +257,8 @@ class TitleEyes:
                     if self.stop.is_set() or title_resource_pause():
                         db.execute("UPDATE title_eyes_jobs SET status='queued',phase='Waiting to resume' WHERE id=? AND status='processing'",(job,))
                     else:
-                        message=('Title-eyes is off today. Submit again on Sunday or Wednesday.' if not scheduled(self.now()) and not row['uid'].startswith('mediashare:') else
-                                 str(error)[:240] if isinstance(error,ValueError) else 'The local visual worker could not finish. Check FUPCJ Server and try again.')
+                        message=(str(error)[:240] if isinstance(error,ValueError) else
+                                 'The local visual worker could not finish. Check FUPCJ Server and try again.')
                         db.execute(f"UPDATE title_eyes_jobs SET status='error',phase='Could not read title',error=?,image=NULL WHERE id=? AND status IN {ACTIVE}",(message,job))
         finally:
             self.standby.active=False
@@ -269,6 +266,10 @@ class TitleEyes:
             if runtime is not None:
                 finish=getattr(runtime,'finish_request',None)
                 if finish:finish()
+            # Keep one model across queued slides, but unload promptly after
+            # the last cold-start job, including across a warm-day midnight.
+            if not scheduled(self.now()) and not self.pending_titles():
+                self.standby.close('Available on demand · loads when a slide arrives')
         return bool(row)
 
     def start(self):

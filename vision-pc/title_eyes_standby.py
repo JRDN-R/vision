@@ -130,11 +130,13 @@ class Standby:
     def off_reason(self):
         if self.service.stop.is_set():
             return 'Server stopping'
-        if not scheduled(self.service.now()) and not self.service.media_pending():
-            return 'Off today · available Sundays and Wednesdays'
         settings = self.service.sessions.local.settings
         if not settings.get('enabled') or not settings.get('visualEnabled'):
             return 'Local visual worker is disabled'
+        # The schedule controls preloading, not requests. Any title job can
+        # cold-start the model outside warm-standby days.
+        if not scheduled(self.service.now()) and not self.service.pending_titles():
+            return 'Available on demand · loads when a slide arrives'
         return None
 
     def competing_work(self):
