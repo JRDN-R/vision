@@ -8,7 +8,8 @@ const navigationSpark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m1
 const navigationVortexLogo = /* VISION_VORTEX_MENU_ICON */ './vortex_menu_icon.png';
 function navigationBrand(name){
  const version=name==='Vision'?'<small class="workspace-brand-version" title="Vision version">v'+navigationVersion()+'</small>':'';
- return '<span class="workspace-brand-head" aria-hidden="true">'+ventureBrandIcon()+version+'</span><span class="workspace-brand-name">'+name+'</span>';
+ const head=name==='Vision'?'<svg class="vision-menu-head" viewBox="270 110 740 1010"><image href="{{VISION_HEADER_LOGO}}" width="1254" height="1254"/></svg>':ventureBrandIcon();
+ return '<span class="workspace-brand-head" aria-hidden="true">'+head+version+'</span><span class="workspace-brand-name">'+name+'</span>';
 }
 function navigationVersion(){return document.querySelector('meta[name="vision-version"]')?.content||'';}
 function navigationReceipt(){return 'vision-release-seen-v1:'+encodeURIComponent(ventureScope())+':'+navigationVersion();}
