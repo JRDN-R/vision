@@ -88,11 +88,12 @@ def run():
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
             assert page.locator('#workspaceMenu .workspace-brand-version').inner_text()=='v'+page.evaluate('navTest.receipt().split(":").pop()')
-            assert page.locator('#workspaceMenu .workspace-brand-head').bounding_box()['height']==45
+            # Use CSS dimensions instead of temporary bounding boxes while the
+            # original head's entrance animation is still scaling the wrapper.
             head=page.locator('#workspaceMenu .workspace-brand-head svg.venture-monocle')
             assert head.count()==1, 'Vision menu must display the original head, not V'
-            assert head.bounding_box()['width']==33 and head.bounding_box()['height']==45
-            assert page.locator('#workspaceMenu .workspace-brand-version').bounding_box()['y']>=head.bounding_box()['y']+40
+            metrics=head.evaluate("(el)=>{const s=getComputedStyle(el),p=getComputedStyle(el.parentElement),v=getComputedStyle(el.parentElement.querySelector('.workspace-brand-version'));return [s.width,s.height,p.width,p.height,v.top]}")
+            assert metrics==['33px','45px','33px','45px','43px'],metrics
             for ident in ('accountButton','newBtn','openBtn','saveBtn','runProjectBtn','exportBtn'):
                 assert page.locator('#workspaceMenu #'+ident).is_visible()
                 assert page.locator('#'+ident+' .workspace-nav-label').inner_text()
