@@ -26,11 +26,11 @@ def next_start(now):
             return candidate.isoformat()
 
 
-def resource_pause():
+def resource_pause(allow_obs=False):
     import psutil
     if psutil.virtual_memory().available < 10 * 1024**3:
         return 'Waiting for available memory'
-    if any((p.info.get('name') or '').lower() in ('obs', 'obs.exe', 'obs64', 'obs64.exe', 'obs32.exe')
+    if not allow_obs and any((p.info.get('name') or '').lower() in ('obs', 'obs.exe', 'obs64', 'obs64.exe', 'obs32.exe')
            for p in psutil.process_iter(['name'])):
         return 'Waiting for OBS to close'
     return None
@@ -130,7 +130,7 @@ class Standby:
     def off_reason(self):
         if self.service.stop.is_set():
             return 'Server stopping'
-        if not scheduled(self.service.now()):
+        if not scheduled(self.service.now()) and not self.service.media_pending():
             return 'Off today · available Sundays and Wednesdays'
         settings = self.service.sessions.local.settings
         if not settings.get('enabled') or not settings.get('visualEnabled'):
@@ -139,6 +139,10 @@ class Standby:
 
     def competing_work(self):
         with self.service.db() as db:
+            # Accepted live-slide work gets the next free lock. A deferred
+            # video job (for example while OBS is open) must not starve it.
+            if db.execute("SELECT 1 FROM title_eyes_jobs WHERE uid LIKE 'mediashare:%' AND status IN ('queued','processing') LIMIT 1").fetchone():
+                return False
             if db.execute("SELECT 1 FROM project_runs WHERE provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving') LIMIT 1").fetchone():
                 return True
             if db.execute("SELECT 1 FROM frame_collections WHERE status IN ('queued','processing') AND retry_at<=? LIMIT 1", (time.time(),)).fetchone():
@@ -149,7 +153,7 @@ class Standby:
         # Called during startup and from the runtime monitor. The model also
         # yields while idle so it never holds the global lock all day over a
         # pending Venture/video task. Active slides finish before yielding.
-        return bool(self.off_reason() or resource_pause() or (not self.active and self.competing_work()))
+        return bool(self.off_reason() or resource_pause(allow_obs=True) or (not self.active and self.competing_work()))
 
     def close(self, phase='Off'):
         runtime, lease = self.runtime, self.lease
@@ -164,7 +168,7 @@ class Standby:
                 lease.__exit__(None, None, None)
 
     def ensure(self):
-        reason = self.off_reason() or resource_pause()
+        reason = self.off_reason() or resource_pause(allow_obs=True)
         if not reason and self.competing_work():
             reason = 'Waiting for other local AI work'
         if reason:

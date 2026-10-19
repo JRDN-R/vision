@@ -64,6 +64,18 @@ class FirebaseTests(unittest.TestCase):
         with patch.dict(server.app.config, FIREBASE_IDENTITY=None):
             return self.save(self.legacy)
 
+    def test_mediashare_identity_is_restricted_to_its_project_and_routes(self):
+        media=server.media_share.identity
+        media._keys={'test':self.signing_key.public_key()};media._expires=time.monotonic()+3600
+        token=self.token(aud='fupc-media',iss='https://securetoken.google.com/fupc-media',firebase={'sign_in_provider':'anonymous'})
+        self.assertEqual(media.verify(token)['sub'],'alice')
+        with self.assertRaises(firebase_auth.InvalidIdentity):self.identity.verify(token)
+        with self.assertRaises(firebase_auth.InvalidIdentity):media.verify(self.token())
+        headers={'Authorization':'Bearer '+token,'Origin':'https://firstupc.github.io'}
+        self.assertEqual(self.client.get('/api/media-share/changes?wait=0',headers=headers).status_code,200)
+        self.assertEqual(self.client.get('/api/title-eyes/standby',headers=headers).status_code,401)
+        self.assertEqual(self.client.get('/api/health',headers=headers).status_code,401)
+
     def test_real_signature_and_required_claims(self):
         self.assertEqual(self.identity.verify(self.token())['sub'], 'alice')
         password = self.token(firebase={'sign_in_provider': 'password'})
