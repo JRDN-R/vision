@@ -74,14 +74,19 @@ def run():
                 assert page.locator('#appHeader .brand').count()==0
                 assert page.locator('#workspaceMenu .workspace-brand-version').count()==1
                 if width==390: page.screenshot(path=str(SHOTS/'compact-header.png'))
+                # Dismissing focus or interacting with the board must NOT close
+                # the title toolbar. Only the center grab handle controls it.
                 page.mouse.click(width/2,400)
-                assert not page.evaluate('navTest.header().open')
+                assert page.evaluate('navTest.header().open'), 'Board click folded explicitly opened header'
+                page.mouse.wheel(0,200)
+                assert page.evaluate('navTest.header().open'), 'Board scroll folded explicitly opened header'
                 assert chevron.bounding_box()==start and toggle.bounding_box()==anchor
-                page.locator('#headerReveal').click();assert page.evaluate('navTest.header().open')
                 page.locator('#appHeader .project-top').dispatch_event('pointerdown', {'pointerId':7,'pointerType':'touch','clientX':80,'clientY':42,'bubbles':True})
                 page.dispatch_event('body','pointermove',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
-                assert not page.evaluate('navTest.header().open'), 'Upward swipe failed'
+                page.dispatch_event('body','pointerup',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
+                assert page.evaluate('navTest.header().open'), 'Upward swipe folded explicitly opened header'
                 page.locator('#headerReveal').click()
+                assert not page.evaluate('navTest.header().open'), 'Only the center handle should collapse the header'
             else:
                 assert chevron.is_visible() and start['width']==44 and start['height']==44
                 assert chevron.evaluate('el=>el.parentElement===document.body')
