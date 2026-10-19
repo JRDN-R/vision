@@ -21,6 +21,8 @@
 .workspace-brand-name{font-family:'Lilita One',sans-serif;font-size:30px;line-height:1.1;font-weight:400;letter-spacing:.2px;color:#e3ebdf}
 .workspace-brand-head{position:relative;display:block;width:33px;height:45px;flex:none;border:0;border-radius:0;background:transparent;box-shadow:none}
 .workspace-brand-head .venture-monocle{display:block;width:100%;height:100%;filter:none;margin:0}
+.workspace-brand-head .vision-menu-head{display:block;width:33px;height:45px;overflow:visible}
+.workspace-brand-head .vision-menu-head image{pointer-events:none}
 .workspace-brand-version{position:absolute;top:43px;left:50%;transform:translateX(-50%);font:8px/1.1 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap;letter-spacing:0;color:#aab7a5}
 .workspace-menu:not([hidden]) .workspace-brand-head,.history-open .venture-sidebar .workspace-brand-head{animation:workspace-head-enter .65s .2s both cubic-bezier(.2,.8,.2,1);transform-origin:50% 75%}
 .workspace-menu:focus,.venture-sidebar:focus{outline:none}
