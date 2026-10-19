@@ -35,19 +35,30 @@ function hitMark(n,p){const ratio=n.height/n.width,pt={x:p.x,y:p.y*ratio},tol=.0
 const mobileQuery=window.matchMedia('(max-width:760px), (hover:none) and (pointer:coarse)');
 const appHeader=$('appHeader'),headerReveal=$('headerReveal'),viewportMeta=document.querySelector('meta[name="viewport"]');
 const normalViewport=viewportMeta.content;
-let headerTimer=null;
-function headerEditing(){return appHeader.contains(document.activeElement)&&document.activeElement.matches('input,textarea,select');}
-function hideMobileHeader(){clearTimeout(headerTimer);if(!mobileQuery.matches)return;document.documentElement.classList.remove('header-open');appHeader.inert=true;headerReveal.setAttribute('aria-expanded','false');headerReveal.setAttribute('aria-label','Show top toolbar');headerReveal.title='Show top toolbar';}
-function queueHeaderHide(){clearTimeout(headerTimer);}
-function showMobileHeader(){if(!mobileQuery.matches)return;document.documentElement.classList.add('header-open');appHeader.inert=false;headerReveal.setAttribute('aria-expanded','true');headerReveal.setAttribute('aria-label','Hide top toolbar');headerReveal.title='Hide top toolbar';queueHeaderHide();}
+// The mobile title toolbar starts folded. Once the user opens it, only the
+// center handle may fold it again: board touches, scrolling, text blur and
+// upward swipes must not dismiss an explicitly opened title toolbar.
+function hideMobileHeader(){
+ if(!mobileQuery.matches)return;
+ document.documentElement.classList.remove('header-open');
+ appHeader.inert=true;
+ headerReveal.setAttribute('aria-expanded','false');
+ headerReveal.setAttribute('aria-label','Show top toolbar');
+ headerReveal.title='Show top toolbar';
+}
+function showMobileHeader(){
+ if(!mobileQuery.matches)return;
+ document.documentElement.classList.add('header-open');
+ appHeader.inert=false;
+ headerReveal.setAttribute('aria-expanded','true');
+ headerReveal.setAttribute('aria-label','Hide top toolbar');
+ headerReveal.title='Hide top toolbar';
+}
 function syncMobileMode(){
  const wasMobile=document.documentElement.classList.contains('mobile-mode'),mobile=mobileQuery.matches;
- // The toolbar starts folded on mobile, but an explicitly opened toolbar
- // remains visible until the user closes it or interacts with the board.
  const expanded=mobile&&wasMobile&&document.documentElement.classList.contains('header-open');
  document.documentElement.classList.toggle('mobile-mode',mobile);
  viewportMeta.content=mobile?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;
- clearTimeout(headerTimer);
  document.documentElement.classList.toggle('header-open',expanded);
  appHeader.inert=mobile&&!expanded;
  headerReveal.setAttribute('aria-expanded',String(expanded));
@@ -55,18 +66,6 @@ function syncMobileMode(){
  headerReveal.title=expanded?'Hide top toolbar':'Show top toolbar';
 }
 headerReveal.onclick=()=>document.documentElement.classList.contains('header-open')?hideMobileHeader():showMobileHeader();
-appHeader.addEventListener('pointerdown',()=>clearTimeout(headerTimer));appHeader.addEventListener('pointerup',queueHeaderHide);
-appHeader.addEventListener('focusin',()=>clearTimeout(headerTimer));appHeader.addEventListener('focusout',()=>setTimeout(queueHeaderHide,0));
-appHeader.addEventListener('input',queueHeaderHide);
-// Only board interaction hides the header. Menus and idle time leave it alone.
-function headerBoardInteraction(e){if(mobileQuery.matches&&board.contains(e.target)&&!e.target.closest('button,input,textarea,select,a,#inspectorPanel')){if(headerEditing())document.activeElement.blur();hideMobileHeader();}}
-document.addEventListener('pointerdown',headerBoardInteraction,true);
-board.addEventListener('wheel',headerBoardInteraction,{passive:true});
-let headerSwipe=null;
-appHeader.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||e.target.closest('input,textarea,select,button'))return;headerSwipe={id:e.pointerId,x:e.clientX,y:e.clientY};});
-document.addEventListener('pointermove',e=>{if(headerSwipe?.id===e.pointerId&&e.clientY-headerSwipe.y < -24&&Math.abs(e.clientX-headerSwipe.x)<50){hideMobileHeader();headerSwipe=null;}});
-document.addEventListener('pointerup',()=>headerSwipe=null);
-appHeader.addEventListener('pointercancel',()=>headerSwipe=null);
 for(const type of ['gesturestart','gesturechange','gestureend'])document.addEventListener(type,e=>{if(mobileQuery.matches)e.preventDefault();},{passive:false});
 for(const type of ['touchstart','touchmove'])document.addEventListener(type,e=>{if(mobileQuery.matches&&e.touches.length>1)e.preventDefault();},{passive:false});
 mobileQuery.addEventListener('change',syncMobileMode);syncMobileMode();
