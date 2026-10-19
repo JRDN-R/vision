@@ -15,13 +15,14 @@ from urllib.parse import urlencode
 import requests
 from flask import g, jsonify, request
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
-from title_eyes import MAX_BYTES, ACTIVE, prepare_image
+from title_eyes import ACTIVE, prepare_image
 
 PROJECT = 'fupc-media'
 API_KEY = 'AIzaSyCZXC3ALGAKcv8eJRMaO_rX-_u5d5FBZ24'  # Public Firebase client identifier.
 ORIGIN = 'https://firstupc.github.io'
 BASE = f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/drops/'
 RETENTION = 30 * 86400
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # MediaShare only; direct TitleEyes uploads retain their limit.
 
 
 def field(value):
@@ -120,7 +121,7 @@ class MediaShare:
         except InvalidIdentity:raise self.Error('Connect to MediaShare again.',401) from None
         except IdentityUnavailable:raise self.Error('MediaShare sign-in is temporarily unavailable.',503) from None
         g.uid='mediashare:'+claims['sub'];g.auth_kind='mediashare'
-        request.max_content_length=MAX_BYTES+65536
+        request.max_content_length=MAX_UPLOAD_BYTES+65536
 
     def row(self,ident):
         with self.db() as db:row=db.execute('SELECT * FROM media_share_drops WHERE id=?',(ident,)).fetchone()
@@ -199,7 +200,7 @@ class MediaShare:
         if not settings.get('enabled') or not settings.get('visualEnabled'):raise self.Error('Enable the title-eyes model on FUPCJ Server.',503)
         file=request.files.get('image')
         if not file:raise self.Error('Choose a slide image.')
-        try:picture=prepare_image(file.read(MAX_BYTES+1))
+        try:picture=prepare_image(file.read(MAX_UPLOAD_BYTES+1),max_bytes=MAX_UPLOAD_BYTES)
         except ValueError as e:raise self.Error(str(e)) from None
         with self.lock,self.db() as db:
             db.execute('BEGIN IMMEDIATE')

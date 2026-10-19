@@ -72,10 +72,10 @@ def parse_title(raw):
     return {'title':title_case(title), 'rawTitle':title, 'uncertain':value['uncertain']}
 
 
-def prepare_image(raw):
+def prepare_image(raw, max_bytes=MAX_BYTES):
     from PIL import Image, ImageOps, UnidentifiedImageError
-    if not raw or len(raw)>MAX_BYTES:
-        raise ValueError('Choose an image smaller than 10 MB.')
+    if not raw or len(raw)>max_bytes:
+        raise ValueError(f'Choose an image no larger than {max_bytes / (1024 * 1024):g} MB.')
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', Image.DecompressionBombWarning)
