@@ -2,7 +2,7 @@
 // only to the same still-untitled project. Typed names always win.
 function normalizeProjectNamingSettings(value={}){
  const raw=value.autoNaming,job=raw&&/^[\w-]{1,100}$/.test(raw.requestId||'')?{requestId:raw.requestId,nodeId:String(raw.nodeId||'').slice(0,100),status:['awaiting','queued','processing','paused','complete','cancelled'].includes(raw.status)?raw.status:'awaiting',error:String(raw.error||'').slice(0,300)}:null;
- return {autoNameProject:value.autoNameProject===true,autoNameManual:value.autoNameManual===true,autoNameDone:value.autoNameDone===true,...(job?{autoNaming:job}:{})};
+ return {autoNameProject:value.autoNameProject!==false,autoNameManual:value.autoNameManual===true,autoNameDone:value.autoNameDone===true,...(job?{autoNaming:job}:{})};
 }
 function projectNamingEligible(project=state){return project.settings?.autoNameProject===true&&!project.settings.autoNameManual&&!project.settings.autoNameDone&&['','Untitled timeline','Untitled project'].includes(project.title);}
 function projectNamingSource(project=state){return project.nodes.find(n=>['image','video'].includes(n.kind)||(n.attachments||[]).some(a=>!a.generated));}
