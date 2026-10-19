@@ -21,6 +21,12 @@ test('late results cannot rename switched projects or a title typed during infer
   release({requestId:'name-abc',status:'complete',title:'Wrong name'});await pending;assert.notEqual(f.c.state.title,'Wrong name');
  }
 });
+test('automatic naming defaults on for new and legacy missing preferences but respects explicit opt-out',()=>{
+ const f=fixture();
+ assert.equal(f.run('normalizeProjectNamingSettings({}).autoNameProject'),true);
+ assert.equal(f.run('normalizeProjectNamingSettings({autoNameProject:false}).autoNameProject'),false);
+ assert.equal(f.run('normalizeProjectNamingSettings({autoNameProject:true}).autoNameProject'),true);
+});
 test('awaiting preparation and persisted settings survive validation',async()=>{
  const f=fixture();f.c.state.nodes[0].pcVideo={status:'working'};await f.run('refreshProjectNaming()');assert.equal(f.c.state.settings.autoNaming.status,'awaiting');assert.equal(f.c.state.title,'Untitled timeline');
  const normalized=f.run('normalizeProjectNamingSettings(state.settings)');assert.equal(normalized.autoNameProject,true);assert.equal(normalized.autoNaming.nodeId,'first');
