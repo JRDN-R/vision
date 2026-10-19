@@ -97,5 +97,5 @@
 }
 @media(prefers-reduced-motion:reduce){.workspace-menu,.compact-navigation .venture-sidebar,.workspace-menu .workspace-brand-head,.history-open .venture-sidebar .workspace-brand-head{animation:none!important;transition:none}}
 
-/* Shared logo is a hidden source asset, never an on-screen header element. */
-svg.vision-header-head[hidden]{display:none!important}
+/* The shared head lives inside a non-rendering template, not over the hamburger. */
+#visionBrandSource{display:none!important}
