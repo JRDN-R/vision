@@ -7,6 +7,8 @@ on:
       - 'web/**'
       - 'vision-pc/standalone*'
       - 'tests/standalone*'
+      - 'tests/compact-navigation.py'
+      - 'tests/project-naming.test.cjs'
       - 'tests/test_standalone.py'
       - '.github/workflows/build-portable.yml'
   workflow_dispatch:
