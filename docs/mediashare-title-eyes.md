@@ -27,7 +27,7 @@ publishes the slide to the existing MediaShare Firestore `drops` collection and
 continues OCR even if the browser closes. Closing the page **before the upload
 is received** cannot finish sending bytes that never reached the server.
 
-New drops use one JPEG, PNG, WebP, or still GIF slide, up to 10 MiB / 32 MP.
+New drops use one JPEG, PNG, WebP, or still GIF slide, up to 50 MiB / 32 MP (standalone title-eyes retains its 10 MiB limit).
 The first selected file is used; old multi-image history remains viewable.
 Images use the exact title-eyes normalization (JPEG, maximum 1600 px edge).
 Saving optional Text does not wait for OCR. **New drop** starts a separate slide;
@@ -49,11 +49,12 @@ as already published to YouTube or Planning Center.
 
 ## Schedule and OBS
 
-Warm standby remains Sunday/Wednesday, using the church PC local clock. MediaShare
-also accepts uploads on other days: it loads the same model on demand, including
-during a livestream, processes pending slides and unloads when the queue is empty.
-These queue entries survive the day boundary and server restart (seven-day OCR expiry). The standalone title-eyes page retains its
-existing off-day restriction.
+Warm standby remains Sunday/Wednesday, using the church PC local clock. On all
+other days, both MediaShare and standalone title-eyes accept uploads: the worker
+loads the same model on demand, including during a livestream, processes pending
+slides and unloads when the queue is empty. Pending titles are not cancelled
+when Sunday/Wednesday ends. Queue entries survive a server restart (MediaShare
+jobs have a seven-day OCR expiry; standalone title-eyes jobs expire sooner).
 
 The title worker now permits OBS to remain open. It retains CPU-only inference,
 four threads, below-normal process priority, a 4 GiB resident-memory limit and at
