@@ -85,6 +85,34 @@ class TitleEyesTests(unittest.TestCase):
             self.fake(json.dumps({'title':None,'uncertain':uncertain}));self.work()
             value=self.store.public(self.store.row(job))
             self.assertEqual(value['status'],'complete');self.assertIsNone(value['title']);self.assertEqual(value['uncertain'],uncertain)
+    def test_visible_text_gate_rejects_artwork_captions_without_losing_stylized_text(self):
+        from title_eyes import PROMPT
+        self.assertIn('Set hasVisibleText=false ONLY',PROMPT)
+        self.assertIn('unfamiliar-font',PROMPT)
+        self.assertIn('non-Latin scripts',PROMPT)
+        self.assertIn('do not call a wordless polygonal image "Low Poly"',PROMPT)
+
+        # Even if the tiny visual model supplied a style caption, its explicit
+        # zero-glyph observation must result in an empty, certain title.
+        wordless=parse_title('{"hasVisibleText":false,"title":"Low Poly","uncertain":true}')
+        self.assertEqual(wordless,{'title':None,'rawTitle':None,'uncertain':False})
+        self.assertEqual(parse_title('{"hasVisibleText":false,"title":null,"uncertain":false}'),wordless)
+
+        # Text can be visible without a headline, or visible but unreadable.
+        self.assertIsNone(parse_title('{"hasVisibleText":true,"title":"","uncertain":false}')['title'])
+        unclear=parse_title('{"hasVisibleText":true,"title":null,"uncertain":true}')
+        self.assertEqual(unclear['uncertain'],True)
+
+        # Typography and script must not be categorically filtered out.
+        for lettering in ('HERE COMES ESAU','When Methuselah Is Gone','ΕΛΠΙΔΑ','እምነት'):
+            result=parse_title(json.dumps({'hasVisibleText':True,'title':lettering,'uncertain':False}))
+            self.assertEqual(result['rawTitle'],lettering)
+            self.assertIsNotNone(result['title'])
+
+        # Bad detection flags fail validation rather than silently suppressing text.
+        with self.assertRaises(ValueError):
+            parse_title('{"hasVisibleText":"false","title":"REAL TITLE","uncertain":false}')
+
     def test_malformed_output_fails_and_cancellation_does_not_resurrect(self):
         job=self.submit().json['id'];self.fake('This is a picture of a title.');self.work()
         self.assertEqual(self.store.row(job)['status'],'error');self.assertIsNone(self.store.row(job)['image'])
