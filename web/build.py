@@ -140,10 +140,6 @@ def build():
     source = source.replace('{{VISION_STYLES}}', css)
     font = base64.b64encode((WEB / 'vendor/LilitaOne-Regular.ttf').read_bytes()).decode('ascii')
     source = source.replace('{{VISION_LILITA_FONT}}', 'data:font/ttf;base64,' + font)
-    # Reuse the original transparent head without changing its image pixels.
-    # An SVG viewport trims its transparent margins only for header layout.
-    logo = base64.b64encode((ROOT / 'logo or node.PNG').read_bytes()).decode('ascii')
-    source = source.replace('{{VISION_HEADER_LOGO}}', 'data:image/png;base64,' + logo)
     version = (WEB / 'version.txt').read_text(encoding='utf-8').strip()
     if not re.fullmatch(r'\d+(?:\.[0-9]){3}', version):
         raise ValueError('Expected four numeric version positions (single digits after major)')
@@ -155,8 +151,8 @@ def build():
         previous = [int(part) for part in previous_version[1].split('.')]
         parts = select_release(parts, previous, previous_source[1] != source_id)
     release = '.'.join(str(part) for part in parts)
-    if source.count('{{VISION_VERSION}}') != 2:
-        raise ValueError('Expected the release ID in the header and info dialog')
+    if source.count('{{VISION_VERSION}}') != 1:
+        raise ValueError('Expected the release ID in the info dialog')
     source = source.replace('{{VISION_VERSION}}', release)
     source = source.replace('</head>', f'<meta name="vision-version" content="{release}">\n'
                             f'<meta name="vision-source-id" content="{source_id}">\n</head>', 1)

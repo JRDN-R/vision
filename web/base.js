@@ -4,7 +4,7 @@
 const APP_SOURCE='<!doctype html>\n'+document.documentElement.outerHTML;
 const $=id=>document.getElementById(id), R=window.FrameRenderer, board=$('board'), world=$('world');
 const DEFAULT_PROMPT="Carry out the requested task using the supplied content and module instructions. If no specific task is stated, give a concise account of what the content shows and how its parts relate. Focus on the subject itself. Do not discuss the delivery package, file structure, processing, or absent material. Do not add unsolicited advice, diagnoses, risks, or next steps. Ground factual statements in what is provided, and briefly qualify an inference only when it matters to the requested answer. Respect any requested format, length, and tone.";
-const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local',includeSoundEvents:false,processingVersion:1,screenshotDetail:'balanced',describeFrames:true,autoNameProject:false});
+const defaults=()=>({fontSize:32,padding:36,minCaption:100,align:'left',outputWidth:2400,screenshotMode:'individual',boardBackground:'drift',boardPalette:'sage',transcriptionProvider:'local',includeSoundEvents:false,processingVersion:1,screenshotDetail:'balanced',describeFrames:true,autoNameProject:true});
 let state={title:'Untitled timeline',mainPrompt:DEFAULT_PROMPT,nodes:[],edges:[],settings:defaults(),view:{x:120,y:90,scale:1}}, selected=null, selectedMark=null, selectedEdge=null, tool='select', dirty=false, action=null, pending=null, space=false, busy=false, ioBusy=false;updateRefreshNotice();Promise.resolve().then(()=>scheduleTranscriptionQueue());
 let history=[],future=[],toastTimer,activityNoticeTimer=null,activityNoticeContext=null,dragDepth=0,lastPointer=null,renderTickets=new Map();
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -37,10 +37,23 @@ const appHeader=$('appHeader'),headerReveal=$('headerReveal'),viewportMeta=docum
 const normalViewport=viewportMeta.content;
 let headerTimer=null;
 function headerEditing(){return appHeader.contains(document.activeElement)&&document.activeElement.matches('input,textarea,select');}
-function hideMobileHeader(){clearTimeout(headerTimer);if(!mobileQuery.matches)return;document.documentElement.classList.remove('header-open');appHeader.inert=true;headerReveal.setAttribute('aria-expanded','false');headerReveal.setAttribute('aria-label','Show top toolbar');}
+function hideMobileHeader(){clearTimeout(headerTimer);if(!mobileQuery.matches)return;document.documentElement.classList.remove('header-open');appHeader.inert=true;headerReveal.setAttribute('aria-expanded','false');headerReveal.setAttribute('aria-label','Show top toolbar');headerReveal.title='Show top toolbar';}
 function queueHeaderHide(){clearTimeout(headerTimer);}
-function showMobileHeader(){if(!mobileQuery.matches)return;document.documentElement.classList.add('header-open');appHeader.inert=false;headerReveal.setAttribute('aria-expanded','true');headerReveal.setAttribute('aria-label','Hide top toolbar');queueHeaderHide();}
-function syncMobileMode(){document.documentElement.classList.toggle('mobile-mode',mobileQuery.matches);viewportMeta.content=mobileQuery.matches?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;clearTimeout(headerTimer);document.documentElement.classList.toggle('header-open',mobileQuery.matches);appHeader.inert=false;headerReveal.setAttribute('aria-expanded',String(mobileQuery.matches));headerReveal.setAttribute('aria-label','Hide top toolbar');}
+function showMobileHeader(){if(!mobileQuery.matches)return;document.documentElement.classList.add('header-open');appHeader.inert=false;headerReveal.setAttribute('aria-expanded','true');headerReveal.setAttribute('aria-label','Hide top toolbar');headerReveal.title='Hide top toolbar';queueHeaderHide();}
+function syncMobileMode(){
+ const wasMobile=document.documentElement.classList.contains('mobile-mode'),mobile=mobileQuery.matches;
+ // The toolbar starts folded on mobile, but an explicitly opened toolbar
+ // remains visible until the user closes it or interacts with the board.
+ const expanded=mobile&&wasMobile&&document.documentElement.classList.contains('header-open');
+ document.documentElement.classList.toggle('mobile-mode',mobile);
+ viewportMeta.content=mobile?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;
+ clearTimeout(headerTimer);
+ document.documentElement.classList.toggle('header-open',expanded);
+ appHeader.inert=mobile&&!expanded;
+ headerReveal.setAttribute('aria-expanded',String(expanded));
+ headerReveal.setAttribute('aria-label',expanded?'Hide top toolbar':'Show top toolbar');
+ headerReveal.title=expanded?'Hide top toolbar':'Show top toolbar';
+}
 headerReveal.onclick=()=>document.documentElement.classList.contains('header-open')?hideMobileHeader():showMobileHeader();
 appHeader.addEventListener('pointerdown',()=>clearTimeout(headerTimer));appHeader.addEventListener('pointerup',queueHeaderHide);
 appHeader.addEventListener('focusin',()=>clearTimeout(headerTimer));appHeader.addEventListener('focusout',()=>setTimeout(queueHeaderHide,0));

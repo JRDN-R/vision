@@ -37,7 +37,7 @@ def run():
         browser = pw.chromium.launch(headless=True, **options)
         for width in (320, 390, 430, 760, 1280):
             context = browser.new_context(viewport={'width': width, 'height': 844}, has_touch=width<=760)
-            context.route('**/*', lambda r: r.fulfill(body=SHELL, content_type='text/html') if r.request.url==URL else r.abort())
+            context.route('**/*', lambda r: r.fulfill(body=SHELL, content_type='text/html') if r.request.url.split('?',1)[0]==URL else r.abort())
             page = context.new_page(); errors=[]
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(URL); page.wait_for_timeout(450)
@@ -49,20 +49,29 @@ def run():
             outside(page,'#workspaceNews'); page.locator('#workspaceNews').wait_for(state='hidden')
             toggle=page.locator('#workspaceMenuButton'); anchor=toggle.bounding_box()
             chevron=page.locator('#workspaceSwitchButton'); start=chevron.bounding_box()
-            header=page.locator('#appHeader').bounding_box()
-            assert header['height']==(65 if width<=760 else 76), header
+            header_height=page.locator('#appHeader').evaluate('(el)=>el.getBoundingClientRect().height')
+            assert header_height==(65 if width<=760 else 76), header_height
             if width<=760:
-                assert page.evaluate('navTest.header().open')
+                assert not page.evaluate('navTest.header().open'), 'Mobile header should start folded'
+                assert page.evaluate('navTest.header().inert'), 'Folded header should not capture taps'
+                page.locator('#headerReveal').click()
+                assert page.evaluate('navTest.header().open'), 'Center handle did not open header'
                 page.wait_for_timeout(4700 if width==390 else 100)
-                assert page.evaluate('navTest.header().open'), 'Idle time hid header'
+                assert page.evaluate('navTest.header().open'), 'Expanded header did not remain open'
+                page.locator('#headerReveal').click()
+                assert not page.evaluate('navTest.header().open'), 'Center handle did not collapse header'
+                page.locator('#headerReveal').click()
+                assert page.evaluate('navTest.header().open'), 'Center handle did not reopen header'
                 assert start['width']==44 and start['height']==44
-                assert page.locator('#projectTitle').bounding_box()['width']>=25
+                assert page.locator('#projectTitle').bounding_box()['width']>=160
+                assert page.locator('#appHeader .brand').count()==0
+                assert page.locator('#workspaceMenu .workspace-brand-version').count()==1
                 if width==390: page.screenshot(path=str(SHOTS/'compact-header.png'))
                 page.mouse.click(width/2,400)
                 assert not page.evaluate('navTest.header().open')
                 assert chevron.bounding_box()==start and toggle.bounding_box()==anchor
                 page.locator('#headerReveal').click();assert page.evaluate('navTest.header().open')
-                page.locator('#appHeader .brand').dispatch_event('pointerdown', {'pointerId':7,'pointerType':'touch','clientX':80,'clientY':42,'bubbles':True})
+                page.locator('#appHeader .project-top').dispatch_event('pointerdown', {'pointerId':7,'pointerType':'touch','clientX':80,'clientY':42,'bubbles':True})
                 page.dispatch_event('body','pointermove',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
                 assert not page.evaluate('navTest.header().open'), 'Upward swipe failed'
                 page.locator('#headerReveal').click()
@@ -71,6 +80,8 @@ def run():
                 assert chevron.evaluate('el=>el.parentElement.id==="appHeader"')
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
+            assert page.locator('#workspaceMenu .workspace-brand-version').inner_text()=='v'+page.evaluate('navTest.receipt().split(":").pop()')
+            assert page.locator('#workspaceMenu .workspace-brand-head').bounding_box()['height']>25
             for ident in ('accountButton','newBtn','openBtn','saveBtn','runProjectBtn','exportBtn'):
                 assert page.locator('#workspaceMenu #'+ident).is_visible()
                 assert page.locator('#'+ident+' .workspace-nav-label').inner_text()
@@ -123,7 +134,7 @@ def run():
             outside(page,'#exportDialog');assert page.locator('#exportDialog').is_visible()
             page.evaluate('navTest.protectExport(false)');outside(page,'#exportDialog');assert page.locator('#exportDialog').is_hidden()
             # Native dialog drags crossing the edge cannot close a menu.
-            page.locator('#workspaceHeaderNews').click()
+            toggle.click();page.locator('#workspaceMenuNews').click()
             page.locator('#workspaceNewsTitle').hover();page.mouse.down();page.mouse.move(2,2);page.mouse.up()
             assert page.locator('#workspaceNews').is_visible();page.keyboard.press('Escape')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
