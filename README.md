@@ -262,6 +262,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Upd
 
 ## Development
 
+### Standalone HTML with HTTPS execution
+
+The separate `Vision-Standalone.html` build embeds the complete Vision/Venture
+interface and opens it through a small, hash-verified FUPCJ HTTPS launch page.
+Firebase remains online for authentication. The browser transfers the embedded
+app locally between tabs, giving API calls the server's origin without fetching
+the app from GitHub or a CDN. The matching server update is required.
+See [standalone setup, service limits, and verification](docs/standalone-html.md).
+
 Editable application code and document structure are in `web/`. `Vision.html` also holds the bundled media
 runtimes and artwork; `web/build.py` preserves those assets while replacing the
 application code and styles. Run:
