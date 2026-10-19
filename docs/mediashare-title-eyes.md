@@ -72,6 +72,16 @@ verify `/api/title-eyes/standby` in an authenticated Vision session reports
 `loaded: true` and `phase: "Ready"`. Public `/api/status` confirms reachability
 only; it cannot prove that a model is loaded.
 
+Each authenticated MediaShare drop response also includes a bounded `worker`
+snapshot: `loaded`, `ready`, `scheduled`, `temporaryWarmup`,
+`temporaryWarmupEndsLocal`, `phase`, and `loadsSinceRestart`. `ready` requires a
+live process and the `Ready` phase; merely starting a process is not readiness.
+The existing drop polling refreshes this status without exposing Vision's
+administrative routes or model paths. This lets MediaShare distinguish a loaded
+model from scheduled intent, and compare reload counts while troubleshooting.
+It does not report inference percentage. The browser's 0–100% progress remains
+explicitly estimated during analysis and reaches 100% only after completion.
+
 Warm standby remains Sunday/Wednesday, using the church PC local clock. On all
 other days, both MediaShare and standalone title-eyes accept uploads: the worker
 loads the same model on demand, including during a livestream, processes pending

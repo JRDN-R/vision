@@ -53,6 +53,28 @@ class MediaShareTests(unittest.TestCase):
             rejected=self.request('post','drops',data={'requestId':'large-slide-2','image':(io.BytesIO(raw),'slide.png')})
         self.assertEqual(rejected.status_code,400,rejected.json)
 
+    def test_drop_reports_actual_worker_readiness_and_temporary_schedule(self):
+        self.store.now=lambda:datetime(2026,10,19,19)
+        row=self.upload().json
+        self.assertFalse(row['worker']['loaded']);self.assertFalse(row['worker']['ready'])
+        self.assertTrue(row['worker']['scheduled']);self.assertTrue(row['worker']['temporaryWarmup'])
+        self.assertEqual(row['worker']['temporaryWarmupEndsLocal'],'2026-10-21T00:00:00')
+        self.fake('{"title":"HELLO","uncertain":false}');self.work();self.sync()
+        worker=self.request('get','drops/'+row['id']).json['worker']
+        self.assertTrue(worker['loaded']);self.assertTrue(worker['ready'])
+        self.assertEqual(worker['loadsSinceRestart'],1)
+        self.assertEqual(set(worker),{'loaded','ready','scheduled','temporaryWarmup','temporaryWarmupEndsLocal','phase','loadsSinceRestart'})
+        # A live process still initializing must not be advertised as ready.
+        self.store.standby.phase='Loading model'
+        worker=self.request('get','drops/'+row['id']).json['worker']
+        self.assertTrue(worker['loaded']);self.assertFalse(worker['ready'])
+        # A process that exited cannot be ready even if its last phase was Ready.
+        self.store.standby.phase='Ready'
+        with patch.object(self.store.standby.runtime,'process',create=True) as process:
+            process.poll.return_value=1
+            worker=self.request('get','drops/'+row['id']).json['worker']
+            self.assertFalse(worker['loaded']);self.assertFalse(worker['ready'])
+
     def test_browser_exit_and_restart_do_not_stop_title_or_publication(self):
         response=self.upload();self.assertEqual(response.status_code,202,response.json);row=response.json
         self.assertEqual(self.upload().json['id'],row['id'])

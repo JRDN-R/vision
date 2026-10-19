@@ -130,10 +130,13 @@ class MediaShare:
 
     def public(self,row):
         job=self.titles.row(row['job'])
+        standby=self.titles.standby.status()
+        worker={key:standby[key] for key in ('loaded','scheduled','temporaryWarmup','temporaryWarmupEndsLocal','phase','loadsSinceRestart')}
+        worker['ready']=standby['loaded'] and standby['phase']=='Ready'
         return dict(id=row['id'],revision=row['revision'],imageKey=row['image_key'],imageRevision=row['image_revision'],
             title=row['title'],titleStatus=row['title_status'],titleRevision=row['title_revision'],uncertain=bool(row['uncertain']),
             phase=(job or {}).get('phase',''),text=row['text'],published=row['published']>=row['revision'],
-            publishError=row['publish_error'])
+            publishError=row['publish_error'],worker=worker)
 
     def signal(self):
         with self.changed:self.sequence=secrets.token_hex(8);self.changed.notify_all()
