@@ -76,7 +76,7 @@
 @media(max-width:760px),(hover:none) and (pointer:coarse){
  :root{--workspace-menu-width:min(310px,85vw);--workspace-menu-left:max(10px,env(safe-area-inset-left,0px))}
  .workspace-menu-button{top:calc(10px + env(safe-area-inset-top,0px));background:transparent}
- .compact-navigation.mobile-mode #appHeader{top:0;height:calc(65px + env(safe-area-inset-top,0px));min-height:calc(65px + env(safe-area-inset-top,0px));padding:calc(6px + env(safe-area-inset-top,0px)) calc(96px + max(12px,env(safe-area-inset-right,0px))) 6px calc(56px + max(10px,env(safe-area-inset-left,0px)));gap:8px;box-shadow:none;touch-action:pan-x}
+ .compact-navigation.mobile-mode #appHeader{top:0;height:calc(65px + env(safe-area-inset-top,0px));min-height:calc(65px + env(safe-area-inset-top,0px));padding:calc(6px + env(safe-area-inset-top,0px)) calc(86px + max(12px,env(safe-area-inset-right,0px))) 6px calc(54px + max(8px,env(safe-area-inset-left,0px)));gap:8px;box-shadow:none;touch-action:pan-x}
  .compact-navigation.mobile-mode #appHeader .project-top{padding-left:0;min-width:0}
  .compact-navigation.mobile-mode #appHeader .project-top input{font-size:16px}
  .compact-navigation.mobile-mode #headerReveal{left:50%;top:env(safe-area-inset-top,0px);width:56px;height:14px;min-height:14px;transform:translateX(-50%);padding:5px 8px;border:0;border-radius:0 0 9px 9px;background:#191d20;z-index:46}
