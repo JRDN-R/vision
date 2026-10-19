@@ -202,7 +202,8 @@ def api_error(error):
 @app.errorhandler(HTTPException)
 def http_error(error):
     if error.code == 413:
-        message = ('Slide image exceeds 10 MB.' if request.path.startswith('/api/title-eyes/')
+        message = ('Slide image exceeds 50 MB.' if request.path.startswith('/api/media-share/')
+                   else 'Slide image exceeds 10 MB.' if request.path.startswith('/api/title-eyes/')
                    else 'Dictation recording exceeds 12 MB.' if request.path.startswith('/api/venture/dictation')
                    else 'Profile image exceeds 6 MB.' if request.path=='/api/venture/profile'
                    else 'Document uploads exceed 50 MB.' if '/documents' in request.path
