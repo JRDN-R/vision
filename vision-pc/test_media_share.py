@@ -6,6 +6,8 @@ import unittest
 from PIL import Image
 import server
 from firebase_auth import InvalidIdentity
+from media_share import MAX_UPLOAD_BYTES
+from title_eyes import MAX_BYTES, prepare_image
 import test_title_eyes as title_tests
 
 class MediaShareTests(unittest.TestCase):
@@ -34,6 +36,23 @@ class MediaShareTests(unittest.TestCase):
         # A media identity is never accepted by Vision's normal verifier.
         with patch.object(server.media_share.identity,'verify',return_value={'sub':'uploader'}):
             self.assertIn(self.client.get('/api/title-eyes/standby',headers={'Authorization':'Bearer test','Origin':'https://firstupc.github.io'}).status_code,(401,403))
+    def test_50mb_media_limit_preserves_10mb_title_eyes_limit(self):
+        self.assertEqual(MAX_UPLOAD_BYTES, 50 * 1024 * 1024)
+        self.assertEqual(MAX_BYTES, 10 * 1024 * 1024)
+        out=io.BytesIO();Image.new('RGB',(160,90),'navy').save(out,'PNG')
+        raw=out.getvalue()
+        image=raw+b'\0'*(MAX_BYTES+1-len(raw))
+        with self.assertRaisesRegex(ValueError,'10 MB'):
+            prepare_image(image)
+        # MediaShare's route-specific cap must override the server-wide default.
+        with patch.dict(server.app.config, {'MAX_CONTENT_LENGTH': 5*1024*1024}):
+            result=self.request('post','drops',data={'requestId':'large-slide-1','image':(io.BytesIO(image),'slide.png')})
+        self.assertEqual(result.status_code,202,result.json)
+        # Test the same size check with a reduced cap, without allocating 50 MB.
+        with patch('media_share.MAX_UPLOAD_BYTES',len(raw)-1):
+            rejected=self.request('post','drops',data={'requestId':'large-slide-2','image':(io.BytesIO(raw),'slide.png')})
+        self.assertEqual(rejected.status_code,400,rejected.json)
+
     def test_browser_exit_and_restart_do_not_stop_title_or_publication(self):
         response=self.upload();self.assertEqual(response.status_code,202,response.json);row=response.json
         self.assertEqual(self.upload().json['id'],row['id'])
