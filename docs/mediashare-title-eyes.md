@@ -33,6 +33,8 @@ Images use the exact title-eyes normalization (JPEG, maximum 1600 px edge).
 Saving optional Text does not wait for OCR. **New drop** starts a separate slide;
 choosing a photo while editing a saved drop replaces that drop's slide.
 
+The title worker first checks for **actual visible writing** anywhere in the slide, including tiny, decorative, rotated, partly obscured, and non-Latin characters. It must not convert a wordless image's subject or artistic style into a title. An explicit zero-character finding forces a blank Auto Title even if the model also invents a descriptive phrase. Difficult-to-read text is not treated as absent; a genuinely unreadable or ambiguous headline remains marked for review. The server publishes the image normally without sending a fabricated title to downstream destinations.
+
 Auto Title sits between the preview and Text. It is read-only until the model
 finishes. The pencil then opens editing and becomes **Save**. Corrections are
 saved explicitly and preserve the editor's casing. An old poll result, old OCR
