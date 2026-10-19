@@ -13,10 +13,18 @@ from local_visual_runtime import VisualRuntime, manifest_path, regular
 from owned_assets import exclusive_file
 
 DAYS = (2, 6)  # Python weekdays: Wednesday and Sunday.
+# One-time exception in the church PC's Eastern local clock. These absolute
+# dates expire automatically; they do not make every Monday/Tuesday warm.
+TEMPORARY_START = datetime(2026, 10, 19)
+TEMPORARY_END = datetime(2026, 10, 21)
+
+
+def temporary_warmup(now):
+    return TEMPORARY_START.date() <= now.date() < TEMPORARY_END.date()
 
 
 def scheduled(now):
-    return now.weekday() in DAYS
+    return now.weekday() in DAYS or temporary_warmup(now)
 
 
 def next_start(now):
@@ -222,6 +230,8 @@ class Standby:
         loaded = runtime is not None and (process is None or process.poll() is None)
         return dict(scheduled=scheduled(now), weekdays=['Sunday','Wednesday'],
                     clock='server-local', serverLocalTime=now.isoformat(), nextStartLocal=next_start(now),
+                    temporaryWarmup=temporary_warmup(now),
+                    temporaryWarmupEndsLocal=TEMPORARY_END.isoformat() if temporary_warmup(now) else None,
                     loaded=loaded, phase=self.off_reason() or self.phase,
                     residentBytes=getattr(runtime,'resident_bytes',None) if loaded else 0,
                     memoryLimitBytes=4*1024**3, loadsSinceRestart=self.loads)

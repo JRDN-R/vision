@@ -157,6 +157,11 @@ class UltraStandby:
             return 'Available on demand on Sunday and Wednesday'
         if maintenance_active(self.directory):
             return 'Waiting for model maintenance'
+        # The date-limited title preload needs the same exclusive model slot.
+        # Active answers still finish; only idle Ultra gives up its lease.
+        from title_eyes_standby import temporary_warmup
+        if self.local.settings.get('visualEnabled') and temporary_warmup(self.now()):
+            return 'Yielding to temporary MediaShare warm standby'
         if self.titles_pending():
             return 'Yielding to MediaShare/title processing'
         with self.local.db() as db:
