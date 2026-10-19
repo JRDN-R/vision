@@ -140,6 +140,8 @@ def build():
     source = source.replace('{{VISION_STYLES}}', css)
     font = base64.b64encode((WEB / 'vendor/LilitaOne-Regular.ttf').read_bytes()).decode('ascii')
     source = source.replace('{{VISION_LILITA_FONT}}', 'data:font/ttf;base64,' + font)
+    logo = base64.b64encode((ROOT / 'logo or node.PNG').read_bytes()).decode('ascii')
+    source = source.replace('{{VISION_HEADER_LOGO}}', 'data:image/png;base64,' + logo)
     version = (WEB / 'version.txt').read_text(encoding='utf-8').strip()
     if not re.fullmatch(r'\d+(?:\.[0-9]){3}', version):
         raise ValueError('Expected four numeric version positions (single digits after major)')
