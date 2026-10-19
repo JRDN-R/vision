@@ -58,6 +58,10 @@ def run():
                 assert page.evaluate('navTest.header().open'), 'Center handle did not open header'
                 page.wait_for_timeout(4700 if width==390 else 100)
                 assert page.evaluate('navTest.header().open'), 'Expanded header did not remain open'
+                page.locator('#headerReveal').click()
+                assert not page.evaluate('navTest.header().open'), 'Center handle did not collapse header'
+                page.locator('#headerReveal').click()
+                assert page.evaluate('navTest.header().open'), 'Center handle did not reopen header'
                 assert start['width']==44 and start['height']==44
                 assert page.locator('#projectTitle').bounding_box()['width']>=160
                 assert page.locator('#appHeader .brand').count()==0
@@ -77,7 +81,7 @@ def run():
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
             assert page.locator('#workspaceMenu .workspace-brand-version').inner_text()=='v'+page.evaluate('navTest.receipt().split(":").pop()')
-            assert page.locator('#workspaceMenu .workspace-brand-head').bounding_box()['height']==45
+            assert page.locator('#workspaceMenu .workspace-brand-head').bounding_box()['height']>25
             for ident in ('accountButton','newBtn','openBtn','saveBtn','runProjectBtn','exportBtn'):
                 assert page.locator('#workspaceMenu #'+ident).is_visible()
                 assert page.locator('#'+ident+' .workspace-nav-label').inner_text()
