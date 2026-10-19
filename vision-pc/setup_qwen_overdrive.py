@@ -118,7 +118,8 @@ def main():
     directory = Path(data.get("dataDir") or "data")
     if not directory.is_absolute():
         directory = config_file.parent / directory
-    with exclusive_file(directory / "local-inference.lock"):
+    from local_standby import maintenance_window
+    with maintenance_window(directory):
         tune(settings, args.context)
 
 

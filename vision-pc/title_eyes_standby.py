@@ -1,7 +1,7 @@
 """Title-eyes-only warm standby. The controller owns the shared model lock.
 
 No model downloads or additional processes are launched alongside another local
-AI worker. All other visual/answering runtimes keep their existing lifecycle.
+AI worker. Ultra standby shares this lease and yields to pending title jobs.
 """
 from datetime import datetime, timedelta
 import json
@@ -130,6 +130,9 @@ class Standby:
     def off_reason(self):
         if self.service.stop.is_set():
             return 'Server stopping'
+        from local_standby import maintenance_active
+        if not self.active and maintenance_active(self.service.app.config['DATA_DIR']):
+            return 'Waiting for model maintenance'
         settings = self.service.sessions.local.settings
         if not settings.get('enabled') or not settings.get('visualEnabled'):
             return 'Local visual worker is disabled'

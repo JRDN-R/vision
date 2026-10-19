@@ -1,8 +1,9 @@
 """Side-by-side Qwen selection. Browser input is a boolean, never a model path.
 
 The original model/default is unchanged. Heretic needs an explicit operator
-installation and a receipt for the exact CPU profile. Every inference still
-performs the full pinned model/runtime verification in LlamaRuntime.verify.
+installation and a receipt for the exact CPU profile. Every new process performs
+full pinned verification; Ultra standby revalidates its receipt and file stamps
+before reusing the verified process.
 """
 import json
 from pathlib import Path

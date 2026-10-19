@@ -1050,4 +1050,5 @@ class Sessions:
         self.recover()
         self.context.start()
         self.stop.clear()
+        self.local.standby.start()
         threading.Thread(target=self.loop, name='vision-responses', daemon=True).start()

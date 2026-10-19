@@ -140,7 +140,8 @@ def main():
     if not data.is_absolute():
         data = path.parent / data
     # Same lock as every local answering/visual job. Never overlap models.
-    with exclusive_file(checked_path(data) / 'local-inference.lock'):
+    from local_standby import maintenance_window
+    with maintenance_window(checked_path(data)):
         receipt = receipt_path(profile)
         if args.action == 'disable':
             receipt.unlink(missing_ok=True)

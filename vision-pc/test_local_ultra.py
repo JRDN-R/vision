@@ -196,6 +196,40 @@ class UltraIntegrationTests(unittest.TestCase):
                 yield {'timings':{'prompt_per_second':100,'predicted_per_second':2}}
         self.local.runtime_factory=Capture
 
+    def test_standby_reuse_through_durable_worker_and_authenticated_status(self):
+        from datetime import datetime
+        from test_local_standby import FakeRuntime as WarmFixture
+        class Warm(WarmFixture, existing.FakeRuntime):
+            pass
+        pool = self.local.standby
+        factory, clock = pool.runtime_factory, pool.now
+        try:
+            self.local.runtime_factory = local_runtime.LlamaRuntime
+            pool.runtime_factory = Warm
+            pool.now = lambda: datetime(2026, 10, 19, 12)
+            pool.tick()
+            resident = pool.runtime
+            self.assertIsNotNone(resident)
+            for number in range(2):
+                sent = self.send(model=ultra.MODEL, request_id='warm-turn-'+str(number),
+                                 qwenUltra={'reasoningMode':'standard','longResponses':False})
+                self.assertEqual(sent.status_code, 202, sent.json)
+                self.assertTrue(self.s.work_once())
+                saved = self.s.snapshot(sent.json['runId'])
+                self.assertEqual(saved['status'], 'completed', saved)
+                self.assertIs(pool.runtime, resident)
+            self.assertEqual(pool.loads, 1)
+            path = '/api/venture/ultra/standby'
+            self.assertEqual(self.client.get(path).status_code, 401)
+            status = self.client.get(path, headers=self.a).json
+            self.assertTrue(status['loaded'])
+            self.assertEqual(status['contextTokens'], self.receipt['maxContextTokens'])
+            self.assertEqual(status['loadsSinceRestart'], 1)
+            self.assertNotIn('bore', json.dumps(status))
+        finally:
+            pool.close()
+            pool.runtime_factory, pool.now = factory, clock
+
     def test_distinct_catalog_no_key_no_billing_and_immutable_queued_settings(self):
         catalog=self.client.get('/api/venture/models',headers=self.a).json['models']
         self.assertEqual([m['id'] for m in catalog[:2]],['qwen3.8-local',ultra.MODEL])

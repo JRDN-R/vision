@@ -1,8 +1,8 @@
 """Private managed llama.cpp process. No remote endpoints or arbitrary tools.
 
-One process is started under the application-wide OS lock per answering job.
-It is terminated and reaped before that lock is released, including cancellation.
-This conservative first profile pays model-load cost on each turn.
+Processes run under the application-wide OS lock and are reaped before that
+lock is released. The Ultra standby subclass can retain a verified process
+between compatible jobs while holding the same lock.
 """
 from contextlib import contextmanager
 import hashlib
@@ -88,6 +88,8 @@ class LlamaRuntime:
         self.done = threading.Event()
         self.stop_reason = None
         self.peak_rss = 0
+        self.resident_bytes = 0
+        self.cpu_origin = 0
         self.minimum_available_ram = None
         self.cpu_seconds = 0
         self.http = requests.Session()
@@ -140,7 +142,8 @@ class LlamaRuntime:
                 raise LocalFailure('A runtime library failed its integrity check.')
         if {str(p.relative_to(root)).replace('\\','/') for p in root.rglob('*') if p.is_file()} != set(expected):
             raise LocalFailure('Unexpected files in the private runtime directory.')
-        # The original model and FUPCJ runtime are still verified on EVERY turn.
+        # Each new process verifies the original model and FUPCJ runtime.
+        # Ultra reuse also checks its receipt, file identities and inventory.
         # RPC uses a separate, operator-installed and SHA-pinned Windows build.
         remote = self.settings.get('overdriveRPC')
         if remote:
@@ -188,9 +191,10 @@ class LlamaRuntime:
         while not self.done.wait(.25):
             try:
                 process = psutil.Process(self.process.pid)
-                self.peak_rss = max(self.peak_rss, process.memory_info().rss)
+                self.resident_bytes = process.memory_info().rss
+                self.peak_rss = max(self.peak_rss, self.resident_bytes)
                 cpu = process.cpu_times()
-                self.cpu_seconds = cpu.user + cpu.system
+                self.cpu_seconds = max(0, cpu.user + cpu.system - self.cpu_origin)
                 available = psutil.virtual_memory().available
                 self.minimum_available_ram = min(available, self.minimum_available_ram if self.minimum_available_ram is not None else available)
                 if self.peak_rss > float(self.settings.get('maxResidentGiB', 16)) * 1024**3:
@@ -201,11 +205,14 @@ class LlamaRuntime:
                 return
             except psutil.Error:
                 self.stop_reason = 'Local resource monitoring became unavailable.'
-            if time.monotonic() > deadline:
+            if self.processing_expired(deadline):
                 self.stop_reason = 'Qwen reached the local processing time limit. Narrow the question or retry later.'
             if self.cancelled() or self.stop_reason:
                 self.stop_child(self.process)
                 return
+
+    def processing_expired(self, deadline):
+        return time.monotonic() > deadline
 
     def __enter__(self):
         if os.name != 'nt':

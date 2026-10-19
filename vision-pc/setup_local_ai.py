@@ -31,7 +31,8 @@ def main():
                 profile={k:settings.get(k) for k in ('gpuLayers','contextTokens','threads','maxOutputTokens')},
                 pixelInputValidated=False,defaultActivationReady=False,checks={})
     stage=lambda text: print(text,flush=True)
-    with exclusive_file(data/'local-inference.lock'):
+    from local_standby import maintenance_window
+    with maintenance_window(data):
         runtime=LlamaRuntime(settings,lambda:False,stage)
         executable,_=runtime.verify()
         manifest=json.loads(Path(settings['manifestPath']).read_text(encoding='utf-8'))
