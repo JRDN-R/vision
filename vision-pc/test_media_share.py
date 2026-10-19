@@ -96,7 +96,7 @@ class MediaShareTests(unittest.TestCase):
         self.assertNotEqual(replaced.json['imageKey'],edited['imageKey']);self.assertIsNone(replaced.json['title'])
         self.sync();self.assertIsNone(self.request('get',url).json['title'])
     def test_off_day_loads_on_demand_unloads_and_publish_retries(self):
-        self.store.now=lambda:datetime(2026,10,19,12)
+        self.store.now=lambda:datetime(2026,10,26,12)
         self.assertFalse(self.work());self.assertIsNone(self.store.standby.runtime)
         row=self.upload().json;self.sync()
         self.fake('{"title":"WEDNESDAY","uncertain":false}');self.work()
@@ -108,7 +108,7 @@ class MediaShareTests(unittest.TestCase):
         with server.connect_db() as db:db.execute('UPDATE media_share_drops SET retry_at=0')
         self.sync();self.assertTrue(self.request('get','drops/'+row['id']).json['published'])
     def test_off_day_failed_model_stops_instead_of_repeating_forever(self):
-        self.store.now=lambda:datetime(2026,10,19,12)
+        self.store.now=lambda:datetime(2026,10,26,12)
         row=self.upload().json
         self.fake('not valid title JSON');self.work();self.sync()
         self.assertEqual(self.request('get','drops/'+row['id']).json['titleStatus'],'error')

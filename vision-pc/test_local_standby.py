@@ -161,6 +161,37 @@ class StandbyTests(unittest.TestCase):
         self.pool.tick()
         self.assertEqual(self.pool.loads, 2)
 
+    def test_temporary_title_standby_releases_idle_ultra_but_allows_answers(self):
+        self.local.settings['visualEnabled'] = True
+        self.pool.now = lambda: datetime(2026,10,16,12)
+        self.pool.tick()
+        original = self.pool.runtime
+        self.pool.now = lambda: datetime(2026,10,19)
+        self.pool.tick()
+        self.assertTrue(original.closed)
+        self.assertIsNone(self.pool.runtime)
+        self.assertIn('temporary MediaShare', self.pool.phase)
+        self.assert_unlocked()
+        # The exception controls idle residency, not accepted Venture answers.
+        with self.pool.work_lease(self.candidate()):
+            with self.pool.answering(self.profile, lambda:False, lambda _:None) as answer:
+                self.assertFalse(self.pool.cancelled())
+                self.pool.now = lambda:datetime(2026,10,20)
+                self.assertFalse(self.pool.cancelled())
+        self.assertTrue(answer.closed)
+        self.assert_unlocked()
+        self.pool.tick();self.assertIsNone(self.pool.runtime)
+        self.pool.now = lambda:datetime(2026,10,21)
+        self.pool.tick();self.assertIsNone(self.pool.runtime)
+        self.pool.now = lambda:datetime(2026,10,22)
+        self.pool.tick();self.assertTrue(self.pool.status()['loaded'])
+        self.assertEqual(self.pool.loads,3)
+
+    def test_temporary_title_priority_requires_enabled_visual_worker(self):
+        self.local.settings['visualEnabled'] = False
+        self.pool.tick()
+        self.assertTrue(self.pool.status()['loaded'])
+
     def test_off_day_on_demand_and_midnight_finish(self):
         self.pool.now = lambda: datetime(2026, 10, 21)
         self.pool.tick()

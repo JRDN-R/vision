@@ -51,6 +51,27 @@ as already published to YouTube or Planning Center.
 
 ## Schedule and OBS
 
+**Temporary October 19–20, 2026 override:** after this server update is installed,
+the title model preloads without waiting for a slide and remains warm on Monday
+and Tuesday, using the church PC's Eastern local clock. At 00:00 Wednesday,
+October 21, the exception expires and the regular all-day Wednesday schedule
+continues with the same loaded process. Thursday returns to on-demand titles;
+future Mondays/Tuesdays are unchanged. The authenticated title standby status
+includes `temporaryWarmup` and `temporaryWarmupEndsLocal` alongside `loaded` and
+`phase`, so scheduled intent can be distinguished from actual readiness.
+
+During this exception, idle Venture Ultra yields the shared inference lease to
+the enabled title worker. Active Venture answers still finish, and other accepted
+local jobs retain their existing scheduling. The title worker resumes standby
+when that work releases the slot. Memory limits, maintenance, and shutdown rules
+still apply. This does not run both models in RAM simultaneously.
+
+GitHub publishing alone does not change the running Windows processor. Install
+the change with the normal `Setup-Vision-PC.ps1 -Action Update` workflow, then
+verify `/api/title-eyes/standby` in an authenticated Vision session reports
+`loaded: true` and `phase: "Ready"`. Public `/api/status` confirms reachability
+only; it cannot prove that a model is loaded.
+
 Warm standby remains Sunday/Wednesday, using the church PC local clock. On all
 other days, both MediaShare and standalone title-eyes accept uploads: the worker
 loads the same model on demand, including during a livestream, processes pending

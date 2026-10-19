@@ -152,18 +152,47 @@ class StandbyScheduleTests(unittest.TestCase):
     tearDown=TitleEyesTests.tearDown
     submit=TitleEyesTests.submit
     work=TitleEyesTests.work
+    def test_temporary_window_is_only_october_19_and_20_2026(self):
+        from title_eyes_standby import scheduled, temporary_warmup
+        for now,expected in [(datetime(2026,10,18,23,59,59),False),
+                             (datetime(2026,10,19),True),
+                             (datetime(2026,10,20,23,59,59),True),
+                             (datetime(2026,10,21),False),
+                             (datetime(2026,10,26),False),
+                             (datetime(2027,10,19),False)]:
+            self.assertEqual(temporary_warmup(now),expected)
+        self.assertTrue(scheduled(datetime(2026,10,21,23,59,59)))
+        self.assertFalse(scheduled(datetime(2026,10,22)))
+
+    def test_temporary_preload_continues_through_wednesday_without_reload(self):
+        events=self.counting_runtime()
+        for day in (19,20,21):
+            self.store.now=lambda day=day:datetime(2026,10,day,0)
+            self.assertFalse(self.work())
+            value=self.client.get('/api/title-eyes/standby',headers=self.headers).json
+            self.assertTrue(value['scheduled']);self.assertTrue(value['loaded'])
+            self.assertEqual(value['phase'],'Ready')
+            self.assertEqual(value['temporaryWarmup'],day<21)
+            self.assertEqual(value['temporaryWarmupEndsLocal'],'2026-10-21T00:00:00' if day<21 else None)
+            self.assertEqual(events.count('load'),1)
+            self.assertNotIn('stop',events)
+        self.store.now=lambda:datetime(2026,10,22)
+        self.assertFalse(self.work());self.assertEqual(events.count('stop'),1)
+        self.store.now=lambda:datetime(2026,10,26)
+        self.assertFalse(self.work());self.assertEqual(events.count('load'),1)
+
     def test_exact_weekdays_and_midnight(self):
         from title_eyes_standby import scheduled, next_start
         from datetime import timedelta
-        monday=datetime(2026,10,19)
+        monday=datetime(2026,10,26)
         self.assertEqual([scheduled(monday+timedelta(days=n)) for n in range(7)], [False,False,True,False,False,False,True])
-        self.assertTrue(scheduled(datetime(2026,10,18,23,59,59)))
-        self.assertFalse(scheduled(datetime(2026,10,19,0,0,0)))
-        self.assertEqual(next_start(monday),'2026-10-21T00:00:00')
+        self.assertTrue(scheduled(datetime(2026,10,25,23,59,59)))
+        self.assertFalse(scheduled(datetime(2026,10,26,0,0,0)))
+        self.assertEqual(next_start(monday),'2026-10-28T00:00:00')
         self.assertEqual(next_start(datetime(2026,10,21,23,59)),'2026-10-25T00:00:00')
 
     def test_off_days_accept_titles_but_do_not_preload_without_work(self):
-        self.store.now=lambda:datetime(2026,10,19,12)
+        self.store.now=lambda:datetime(2026,10,26,12)
         events=self.counting_runtime()
         self.assertFalse(self.work())
         self.assertEqual(events,[])
@@ -216,9 +245,10 @@ class StandbyScheduleTests(unittest.TestCase):
             with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):pass
 
     def test_idle_standby_unloads_at_midnight_then_cold_starts_new_work(self):
+        self.store.now=lambda:datetime(2026,10,25,23,59)
         events=self.counting_runtime();self.work()
         self.assertEqual(events.count('load'),1)
-        self.store.now=lambda:datetime(2026,10,19,0)
+        self.store.now=lambda:datetime(2026,10,26,0)
         self.assertFalse(self.work())
         self.assertEqual(events.count('stop'),1)
         from owned_assets import exclusive_file
@@ -228,14 +258,15 @@ class StandbyScheduleTests(unittest.TestCase):
         self.assertEqual(self.store.row(job)['status'],'complete')
         self.assertEqual(events.count('load'),2)
         self.assertEqual(events.count('stop'),2)
-        self.store.now=lambda:datetime(2026,10,21,0)
+        self.store.now=lambda:datetime(2026,10,28,0)
         self.assertFalse(self.work())
         self.assertEqual(events.count('load'),3)
 
     def test_queued_request_is_not_cancelled_at_warm_day_boundary(self):
+        self.store.now=lambda:datetime(2026,10,25,23,59)
         events=self.counting_runtime();self.work()
         job=self.submit().json['id']
-        self.store.now=lambda:datetime(2026,10,19,0)
+        self.store.now=lambda:datetime(2026,10,26,0)
         self.assertTrue(self.work())
         self.assertEqual(self.store.row(job)['status'],'complete')
         self.assertIsNone(self.store.row(job)['image'])
