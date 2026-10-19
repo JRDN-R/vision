@@ -2,9 +2,12 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker]
+    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019]
     paths:
       - 'web/**'
+      - 'vision-pc/standalone*'
+      - 'tests/standalone*'
+      - 'tests/test_standalone.py'
       - '.github/workflows/build-portable.yml'
   workflow_dispatch:
 
@@ -29,6 +32,19 @@ jobs:
         run: bash web/vendor/build-firebase.sh
       - name: Rebuild the portable app from source
         run: python3 web/build.py
+      - name: Build and verify standalone HTTPS edition
+        run: |
+          python3 web/build_standalone.py --no-rebuild
+          node --test tests/standalone.test.cjs
+          python3 tests/standalone-bundle.py
+          python3 -m pip install "Flask>=3.1,<4"
+          python3 tests/test_standalone.py
+      - name: Upload standalone desktop HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vision-Standalone
+          path: Vision-Standalone.html
+          retention-days: 30
       - name: Verify Venture page routing and animation
         run: |
           node --test tests/workspace-route.test.cjs
@@ -70,7 +86,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Vision.html index.html venture/index.html venture/manifest.webmanifest portable-manifest.json web/vendor
+          git add Vision.html index.html venture/index.html venture/manifest.webmanifest portable-manifest.json vision-pc/standalone-manifest.json web/vendor
           if ! git diff --cached --quiet; then
             git commit -m 'Build portable Vision from current sources'
             git push origin "HEAD:$GITHUB_REF_NAME"

@@ -41,6 +41,14 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(response.headers['Access-Control-Allow-Private-Network'], 'true')
         self.assertFalse(self.client.get('/api/health', headers=self.headers).json['publicAccess'])
 
+    def test_standalone_bootstrap_does_not_make_apis_public(self):
+        self.assertEqual(self.client.get('/standalone/').status_code, 200)
+        self.assertEqual(self.client.head('/standalone/').status_code, 200)
+        self.assertEqual(self.client.post('/standalone/').status_code, 401)
+        self.assertEqual(self.client.get('/api/health').status_code, 401)
+        self.assertEqual(self.client.get('/api/projects').status_code, 401)
+        self.assertEqual(self.client.get('/standalone/config.json').status_code, 401)
+
     def test_public_access_keeps_bearer_authentication(self):
         config = self.root / 'config.json'
         settings = json.loads(config.read_text())

@@ -39,8 +39,10 @@ from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 from vortex import VortexJobs
 from account_administration import AccountAdministration
 from owned_assets import OwnedAssets
+import standalone
 
 app = Flask(__name__)
+standalone.register(app)
 app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
 OPENAI = 'https://api.openai.com/v1'
 WAKE = threading.Event()
@@ -226,6 +228,10 @@ def unexpected_error(error):
 @app.before_request
 def authorize():
     g.request_started = time.monotonic()
+    # Public application bootstrap only. The browser verifies the installed
+    # release hash before executing local HTML; every API keeps its normal auth.
+    if request.path == standalone.PUBLIC_PATH and request.method in ('GET', 'HEAD'):
+        return
     if request.path in CHURCH_PUBLIC_PATHS or request.path == '/firstupcjax/logo.svg':
         return
     if request.path == CHURCH_MCP_PATH:
