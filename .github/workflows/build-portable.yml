@@ -2,7 +2,7 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
+    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019, fix/vision-shared-head-template-20261019]
     paths:
       - 'web/**'
       - 'vision-pc/standalone*'
