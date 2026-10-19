@@ -252,6 +252,7 @@ class LocalVisual:
                             # pixel request, even if an old cache entry exists.
                             if found is None or (not runtime and not self.capability(profile)['available']):
                                 if runtime is None:
+                                    self.local.standby.drop_runtime('Yielding to visual evidence processing')
                                     runtime = stack.enter_context(self.runtime_factory(profile, cancelled, stage))
                                 stage('Inspecting pixels: ' + source['name'][:80] + ' / ' + view['crop'])
                                 found = runtime.inspect(data_url(view['raw']), focus)

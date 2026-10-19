@@ -34,6 +34,8 @@ class LocalInference:
         self.preferences = LocalPreferences(self)
         self.calibration = UltraCalibration(self)
         self.runtime_factory = LlamaRuntime
+        from local_standby import UltraStandby
+        self.standby = UltraStandby(self)
         from local_visual import LocalVisual
         self.visual = LocalVisual(self)
         self.register_routes()
@@ -47,6 +49,9 @@ class LocalInference:
         return max(4096, min(16384, int(self.settings.get('contextTokens', 4096))))
 
     def initialize(self, settings):
+        self.standby.close()
+        self.standby.retry_at = 0
+        self.standby.loads = 0
         self.settings = settings if isinstance(settings, dict) else {}
         self.visual.confirmed = None
         self.visual.confirmed_variants.clear()
@@ -76,6 +81,7 @@ class LocalInference:
             except (OSError, ValueError, KeyError, TypeError):
                 heretic.update(available=False, status='needs-enable')
         ultra = local_ultra.status(self.settings)
+        ultra['standby'] = self.standby.status()
         if ultra['enabled']:
             try:
                 ultra['capabilities']['vision'] = self.visual.capability(local_ultra.select_profile(self.settings))['available']
@@ -223,7 +229,7 @@ class LocalInference:
 
     def work_once(self, candidate):
         try:
-            with exclusive_file(self.app.config['DATA_DIR'] / 'local-inference.lock'):
+            with self.standby.work_lease(candidate):
                 return self._work_locked(candidate)
         except BlockingIOError:
             return False
@@ -282,7 +288,7 @@ class LocalInference:
             with ExitStack() as started:
                 used_profile = runtime_profile
                 try:
-                    runtime = started.enter_context(self.runtime_factory(used_profile, cancelled, stage))
+                    runtime = started.enter_context(self.standby.answering(used_profile, cancelled, stage))
                 except (LocalFailure, OSError, requests.RequestException):
                     # Only retry when the remote worker is verifiably offline
                     # BEFORE ANY GENERATION. A genuine model/runtime error,
@@ -293,7 +299,7 @@ class LocalInference:
                         raise
                     stage('Mac disconnected during model startup; using FUPCJ')
                     used_profile = dict(profile, benchmark=True)
-                    runtime = started.enter_context(self.runtime_factory(used_profile, cancelled, stage))
+                    runtime = started.enter_context(self.standby.answering(used_profile, cancelled, stage))
                 loaded_at = time.monotonic()
                 active_runtime = getattr(runtime, 'settings', used_profile)
                 compute_route = 'mac-rpc' if active_runtime.get('overdriveRPC') else 'fupcj'
@@ -463,6 +469,11 @@ class LocalInference:
         return True
 
     def register_routes(self):
+        @self.app.get('/api/venture/ultra/standby')
+        def ultra_standby():
+            self.sessions.venture.account()
+            return jsonify(self.standby.status())
+
         @self.app.route('/api/venture/ultra/notice', methods=['GET', 'POST'])
         def ultra_notice():
             uid = self.sessions.venture.account()

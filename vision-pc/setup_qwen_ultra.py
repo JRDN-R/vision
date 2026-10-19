@@ -246,7 +246,8 @@ def main():
     target.mkdir(parents=True,exist_ok=True)
     data = Path(config.get('dataDir') or 'data')
     if not data.is_absolute():data = path.parent/data
-    with exclusive_file(checked_path(data)/'local-inference.lock'):
+    from local_standby import maintenance_window
+    with maintenance_window(checked_path(data)):
         receipt = target/'ready.json'
         if args.action == 'disable':
             receipt.unlink(missing_ok=True)

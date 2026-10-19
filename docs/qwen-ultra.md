@@ -5,6 +5,63 @@ Qwen3.8 Local and its optional 9B Heretic variant, histories, attachments and
 account preferences. Its gold label and logo reuse both existing Qwen animation
 clips, with a gold shimmer and reduced-motion fallback.
 
+## Weekly warm standby
+
+After updating the Windows processor, installed and tuned Ultra stays loaded
+on **Monday, Tuesday, Thursday, Friday and Saturday** when memory is available.
+**Sunday and Wednesday are on demand**: requests still work, and Ultra unloads
+afterward. Both schedules use the Windows server's local clock; keep that PC's
+time zone set to Eastern Time for the Jacksonville schedule, including DST.
+The server must remain running and the PC awake for standby to be available.
+
+Standby selects the **highest verified context** and the measured `auto`
+performance profile. It never raises the context beyond the readiness receipt.
+Compatible Venture requests reuse the loaded process. Different context,
+performance or model selections cause a reload using the accepted request's
+settings. Sampling/thinking controls are applied separately to each request.
+Selecting Local for a request releases Ultra; after Local finishes, Ultra
+standby returns automatically. Account model selections are not changed.
+
+MediaShare/title jobs get the next free model lease. Idle Ultra unloads before
+they load the lightweight visual model, then returns after the title queue
+drains. An active Venture answer finishes first, unless the user cancels it or
+an existing resource/deadline safeguard stops it. Existing MediaShare Sunday/
+Wednesday standby stays in effect. Video, naming and Venture visual evidence
+also release Ultra before loading another model. The single OS inference lock
+is held continuously while any process is resident, including idle standby.
+Mac Overdrive retains its per-request routing and fallback behavior; distributed
+processes are not kept resident.
+
+The **30 GiB Ultra RSS ceiling**, **at least 10 GiB system reserve**, and existing
+per-job processing limit remain in force. Idle time does not consume a later
+request's processing budget. The full model/runtime hashes are checked at load;
+receipt, file identities, timestamps and runtime inventory are checked before
+reuse. Errors/cancellation discard that process. Idle memory guards run all day.
+Failed preloads back off for a minute and never download models automatically.
+
+Authenticated `GET /api/venture/ultra/standby` reports the schedule, current
+phase, loaded state, actual resident bytes, loaded context and load count.
+The model catalog also includes this under Ultra's `standby` field. These
+measurements come from the Windows runtime, not model file-size estimates.
+Set `localAI.ultraStandby` to `false` in the server configuration and restart
+to disable only preloading; on-demand Ultra remains available.
+
+To update and validate the largest context that fits, run the existing installed
+helper in **Administrator PowerShell** while no jobs or livestream are active:
+
+```powershell
+& "$env:ProgramData\VisionPC\Qwen-Ultra.ps1" -Action Install -MaxContext
+```
+
+`Install` first fetches one current server commit and restarts the processor,
+then checks the existing model and runs maximum-context validation. The helpers
+ask idle standbys to yield for maintenance and wait up to ten seconds for the
+inference lease. They exit if active work still owns it, without killing that
+work. Standby resumes when maintenance releases its locks. A failed larger
+context retains the last passing result. Choose **Maximum verified** in Venture
+if an older explicit numeric context was saved. Updating code alone enables
+standby at the current verified size; it does not run hours of tuning silently.
+
 ## Install on the Windows processor
 
 Download `vision-pc/Qwen-Ultra.ps1` from this repository. In Administrator
