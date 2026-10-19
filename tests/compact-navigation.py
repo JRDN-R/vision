@@ -41,6 +41,11 @@ def run():
             page = context.new_page(); errors=[]
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(URL); page.wait_for_timeout(450)
+            # Shared head is exclusively a template asset, never a painted
+            # sibling of the fixed hamburger (regression: overlapping face).
+            assert page.locator('#visionBrandSource').count()==1
+            assert page.locator('body > svg.vision-header-head').count()==0
+            assert page.evaluate("!!document.getElementById('visionBrandSource').content.querySelector('svg.vision-header-head image')")
             assert page.locator('#workspaceNews').is_hidden(), 'Must not show before sign-in'
             page.evaluate('navSignIn()'); page.locator('#workspaceNews').wait_for(state='visible')
             assert page.locator('#workspaceNews li').count()>=1
@@ -48,6 +53,8 @@ def run():
             if width==390: page.screenshot(path=str(SHOTS/'compact-whats-new.png'))
             outside(page,'#workspaceNews'); page.locator('#workspaceNews').wait_for(state='hidden')
             toggle=page.locator('#workspaceMenuButton'); anchor=toggle.bounding_box()
+            assert page.locator('.venture-brand-fallback').count()==0, 'Missing original head artwork'
+            assert page.locator('body > svg.vision-header-head').count()==0
             chevron=page.locator('#workspaceSwitchButton'); start=chevron.bounding_box()
             header_height=page.locator('#appHeader').evaluate('(el)=>el.getBoundingClientRect().height')
             assert header_height==(65 if width<=760 else 76), header_height
@@ -81,7 +88,12 @@ def run():
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
             assert page.locator('#workspaceMenu .workspace-brand-version').inner_text()=='v'+page.evaluate('navTest.receipt().split(":").pop()')
-            assert page.locator('#workspaceMenu .workspace-brand-head').bounding_box()['height']>25
+            # Use CSS dimensions instead of temporary bounding boxes while the
+            # original head's entrance animation is still scaling the wrapper.
+            head=page.locator('#workspaceMenu .workspace-brand-head svg.venture-monocle')
+            assert head.count()==1, 'Vision menu must display the original head, not V'
+            metrics=head.evaluate("(el)=>{const s=getComputedStyle(el),p=getComputedStyle(el.parentElement),v=getComputedStyle(el.parentElement.querySelector('.workspace-brand-version'));return [s.width,s.height,p.width,p.height,v.top]}")
+            assert metrics==['33px','45px','33px','45px','43px'],metrics
             for ident in ('accountButton','newBtn','openBtn','saveBtn','runProjectBtn','exportBtn'):
                 assert page.locator('#workspaceMenu #'+ident).is_visible()
                 assert page.locator('#'+ident+' .workspace-nav-label').inner_text()
@@ -107,6 +119,8 @@ def run():
             toggle.click();page.wait_for_timeout(240)
             assert abs(page.locator('#ventureSidebar').bounding_box()['width']-menu_width)<1,(width,menu_width,page.locator('#ventureSidebar').bounding_box())
             assert chevron.is_visible() and chevron.get_attribute('aria-label')=='Return to Vision'
+            assert page.locator('#ventureSidebar .workspace-brand-head svg.venture-monocle').count()==1
+            assert page.locator('#visionVenture .venture-brand-fallback').count()==0
             if width<=760:assert chevron.bounding_box()==start
             else:assert chevron.evaluate('el=>!!el.closest(".venture-header")')
             if width==390:page.screenshot(path=str(SHOTS/'compact-venture-menu.png'))

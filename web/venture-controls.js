@@ -6,7 +6,8 @@ let ventureRecording = null;
 let ventureAvatarObjectURL = null;
 
 function ventureBrandIcon() {
- const source = document.querySelector('.vision-header-head');
+ // Artwork lives in a <template> so it can never paint over the navigation button.
+ const source = document.getElementById('visionBrandSource')?.content.querySelector('svg.vision-header-head');
  if (!source) return '<span class="venture-brand-fallback" aria-hidden="true">V</span>';
  const svg = source.cloneNode(true);
  svg.removeAttribute('hidden'); svg.removeAttribute('id'); svg.removeAttribute('role'); svg.removeAttribute('aria-label');
