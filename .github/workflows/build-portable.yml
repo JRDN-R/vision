@@ -2,7 +2,7 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019]
+    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
     paths:
       - 'web/**'
       - 'vision-pc/standalone*'
@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 web/build_standalone.py --no-rebuild
           node --test tests/standalone.test.cjs
+          node --test tests/project-naming.test.cjs
           python3 tests/standalone-bundle.py
           python3 -m pip install "Flask>=3.1,<4"
           python3 tests/test_standalone.py
@@ -52,6 +53,7 @@ jobs:
           /tmp/vision-route-tests/bin/pip install playwright==1.51.0
           /tmp/vision-route-tests/bin/python -m playwright install --with-deps chromium
           /tmp/vision-route-tests/bin/python tests/workspace-route-browser.py
+          /tmp/vision-route-tests/bin/python tests/compact-navigation.py
       - name: Package reproducible source
         run: tar --exclude=.git -czf /tmp/vision-source.tar.gz .
       - name: Upload portable build
