@@ -6,7 +6,10 @@ const NAVIGATION_RELEASE = /* VISION_RELEASE_NOTES */ {};
 const navigation = {menu:false, uid:'', newsTimer:null, receipts:new Set(), dialogPress:null};
 const navigationSpark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/><path d="M20 2v4m-2-2h4"/></svg>';
 const navigationVortexLogo = /* VISION_VORTEX_MENU_ICON */ './vortex_menu_icon.png';
-function navigationBrand(name){return '<span class="workspace-brand-head" aria-hidden="true">'+ventureBrandIcon()+'</span><span class="workspace-brand-name">'+name+'</span>';}
+function navigationBrand(name){
+ const version=name==='Vision'?'<small class="workspace-brand-version" title="Vision version">v'+navigationVersion()+'</small>':'';
+ return '<span class="workspace-brand-head" aria-hidden="true">'+ventureBrandIcon()+version+'</span><span class="workspace-brand-name">'+name+'</span>';
+}
 function navigationVersion(){return document.querySelector('meta[name="vision-version"]')?.content||'';}
 function navigationReceipt(){return 'vision-release-seen-v1:'+encodeURIComponent(ventureScope())+':'+navigationVersion();}
 function navigationSeen(){const key=navigationReceipt();if(navigation.receipts.has(key))return true;try{return localStorage.getItem(key)==='seen';}catch{return false;}}
@@ -109,7 +112,7 @@ function navigationInstall(){
  const button=document.createElement('button');button.id='workspaceMenuButton';button.type='button';button.className='workspace-menu-button';button.hidden=true;button.innerHTML='<span id="workspaceMenuGlyph" aria-hidden="true"></span>';button.onclick=navigationToggleMenu;
  const menu=document.createElement('aside');menu.id='workspaceMenu';menu.className='workspace-menu';menu.hidden=true;menu.inert=true;menu.setAttribute('aria-label','Vision menu');
  menu.tabIndex=-1;
- menu.innerHTML='<div class="workspace-menu-heading workspace-brand">'+navigationBrand('Vision')+'</div><nav class="workspace-menu-actions" aria-label="Project actions"></nav><div class="workspace-menu-footer"><span class="workspace-menu-version"></span></div>';
+ menu.innerHTML='<div class="workspace-menu-heading workspace-brand">'+navigationBrand('Vision')+'</div><nav class="workspace-menu-actions" aria-label="Project actions"></nav><div class="workspace-menu-footer"></div>';
  menu.querySelector('nav').append(document.querySelector('#appHeader .top-actions'));
  const scrim=document.createElement('button');scrim.type='button';scrim.id='workspaceMenuScrim';scrim.className='workspace-menu-scrim';scrim.hidden=true;scrim.setAttribute('aria-label','Close Vision menu');scrim.tabIndex=-1;scrim.onclick=()=>navigationCloseMenu();
  document.body.append(scrim,menu,button);
@@ -128,14 +131,10 @@ function navigationInstall(){
  extra('Help','file',()=>$('helpDialog').showModal());
  menu.querySelector('.top-actions').append(navigationVortexLink('workspaceVortexLink'));
  $('ventureSidebar').querySelector('.venture-sidebar-foot').before(navigationVortexLink('ventureVortexLink'));
- menu.querySelector('.workspace-menu-version').textContent='Vision v'+navigationVersion();
  menu.querySelector('.workspace-menu-footer').append(navigationFooterActions('workspaceMenuNews','workspaceMenuSignOut'));
  menu.addEventListener('click',event=>{if(!event.target.closest('.top-actions button'))return;queueMicrotask(()=>{if(!document.querySelector('dialog[open]'))navigationCloseMenu(false);});});
- const brand=document.querySelector('#appHeader .brand');
- // Processing activity remains in the menu and queue badge; the brand now
- // contains its own release-notes button.
- brand.removeAttribute('role');brand.removeAttribute('tabindex');brand.removeAttribute('aria-label');brand.removeAttribute('title');brand.onclick=null;brand.onkeydown=null;
- const version=brand.querySelector('.vision-version'),row=document.createElement('div');row.className='workspace-header-version';version.before(row);row.append(version,navigationNewsButton('workspaceHeaderNews',true));
+ // Vision branding and release notes now live in the menu, leaving the top
+ // toolbar entirely for the current project title and save status.
  const footer=document.createElement('div');footer.className='workspace-menu-footer';const release=document.createElement('span');release.className='workspace-menu-version';release.textContent='Vision v'+navigationVersion();footer.append(release,navigationFooterActions('ventureMenuNews','ventureMenuSignOut'));$('ventureSidebar').append(footer);
  const signOut=document.createElement('dialog');signOut.id='workspaceSignOutDialog';signOut.className='workspace-sign-out-dialog';signOut.setAttribute('aria-labelledby','workspaceSignOutTitle');signOut.setAttribute('aria-describedby','workspaceSignOutQuestion');
  signOut.innerHTML='<h2 id="workspaceSignOutTitle">Sign out?</h2><p id="workspaceSignOutQuestion">Are you sure?</p><div class="workspace-sign-out-actions"><button id="workspaceSignOutNo" type="button" autofocus>No</button><button id="workspaceSignOutYes" type="button" class="primary">Yes</button></div>';
