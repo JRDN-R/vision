@@ -77,7 +77,7 @@ def run():
                 page.locator('#headerReveal').click()
             else:
                 assert chevron.is_visible() and start['width']==44 and start['height']==44
-                assert chevron.evaluate('el=>el.parentElement.id==="appHeader"')
+                assert chevron.evaluate('el=>el.parentElement===document.body')
             toggle.click();page.locator('#workspaceMenu').wait_for(state='visible');page.wait_for_timeout(240)
             menu_width=page.locator('#workspaceMenu').bounding_box()['width']
             assert page.locator('#workspaceMenu .workspace-brand-version').inner_text()=='v'+page.evaluate('navTest.receipt().split(":").pop()')
@@ -127,7 +127,7 @@ def run():
             page.mouse.click(width/2,760);assert page.locator('#ventureSettings').is_hidden()
             chevron.click()
             if width<=760:assert chevron.bounding_box()==start
-            else:assert chevron.evaluate('el=>el.parentElement.id==="appHeader"')
+            else:assert chevron.evaluate('el=>el.parentElement===document.body')
             assert not page.evaluate('document.querySelector("main.app").inert')
             # Shared dialog dismissal honors the existing export busy guard.
             page.evaluate('document.querySelector("#exportDialog").showModal();navTest.protectExport(true)')
