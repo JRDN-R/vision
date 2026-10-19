@@ -36,7 +36,7 @@
  // Preserve the requested app if the loader needs its direct-file fallback.
  document.querySelector('#fallback a').href='../Vision.html?view=venture'+location.hash;
  try{
-  const response=await fetch('../Vision.html?v=54eca48da9f3',{credentials:'same-origin'});
+  const response=await fetch('../Vision.html?v=9d18dcebd43f',{credentials:'same-origin'});
   if(!response.ok)throw new Error('App unavailable');
   // Venture owns its run status; suppress Vision's floating activity pill only
   // while Venture is visible, even with an older cached portable bundle.
