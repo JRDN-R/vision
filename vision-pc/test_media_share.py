@@ -62,6 +62,28 @@ class MediaShareTests(unittest.TestCase):
         got=self.request('get','drops/'+row['id']).json
         self.assertEqual(got['title'],'The Cost of a Wedding');self.assertTrue(got['published'])
         with server.connect_db() as db:self.assertIsNone(db.execute('SELECT image FROM media_share_drops').fetchone()[0])
+    def test_text_free_artwork_publishes_a_blank_auto_title(self):
+        row=self.upload('text-free-artwork').json
+        # Simulate a hallucinated scene label alongside a zero-text finding.
+        self.fake('{"hasVisibleText":false,"title":"Low Poly","uncertain":false}')
+        self.work()
+        published=self.sync()
+        result=self.request('get','drops/'+row['id']).json
+        self.assertEqual(result['titleStatus'],'complete')
+        self.assertIsNone(result['title'])
+        self.assertFalse(result['uncertain'])
+        self.assertTrue(result['published'])
+        self.assertIsNone(published.call_args.args[0]['title'])
+
+    def test_decorative_but_visible_letters_retain_the_title(self):
+        row=self.upload('decorative-title').json
+        self.fake('{"hasVisibleText":true,"title":"HERE COMES ESAU","uncertain":false}')
+        self.work()
+        published=self.sync()
+        result=self.request('get','drops/'+row['id']).json
+        self.assertEqual(result['title'],'Here Comes Esau')
+        self.assertEqual(published.call_args.args[0]['title'],result['title'])
+
     def test_title_lock_manual_revision_and_replacement(self):
         row=self.upload().json;url='drops/'+row['id']
         self.assertEqual(self.request('patch',url,json={'revision':row['revision'],'title':'Early'}).status_code,409)
