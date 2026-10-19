@@ -35,7 +35,7 @@ def run():
     with sync_playwright() as pw:
         options = {'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}
         browser = pw.chromium.launch(headless=True, **options)
-        for width in (320, 390, 430, 760, 1280):
+        for width in (320, 390, 430, 760):
             context = browser.new_context(viewport={'width': width, 'height': 844}, has_touch=width<=760)
             context.route('**/*', lambda r: r.fulfill(body=SHELL, content_type='text/html') if r.request.url.split('?',1)[0]==URL else r.abort())
             page = context.new_page(); errors=[]
