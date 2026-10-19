@@ -97,13 +97,14 @@ class TitleEyesTests(unittest.TestCase):
                 with store.db() as db:db.execute('DELETE FROM title_eyes_jobs WHERE id=?',(job,))
                 return '{"title":"Hello","uncertain":false}'
         store.runtime_factory=Runtime;self.work();self.assertIsNone(store.row(job))
-    def test_shared_model_lock_and_obs_defer(self):
+    def test_shared_model_lock_and_live_obs_title_mode(self):
         from owned_assets import exclusive_file
         job=self.submit().json['id']
         with exclusive_file(server.app.config['DATA_DIR']/'local-inference.lock'):
             self.assertFalse(self.work());self.assertEqual(self.store.row(job)['status'],'queued')
         with patch('psutil.process_iter',return_value=[SimpleNamespace(info={'name':'obs64.exe'})]),patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
-            self.assertFalse(self.store.work_once());self.assertIn('OBS',self.store.row(job)['phase'])
+            self.fake('{"title":"LIVE TITLE","uncertain":false}')
+            self.assertTrue(self.store.work_once());self.assertEqual(self.store.row(job)['status'],'complete')
         self.client.delete('/api/title-eyes/jobs/'+job,headers=self.headers)
         self.assertFalse(self.work())
     def test_image_sanitizing_and_expiry(self):

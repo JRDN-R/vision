@@ -25,10 +25,11 @@ class IdentityUnavailable(Exception):
 
 
 class FirebaseIdentity:
-    def __init__(self, project_id):
+    def __init__(self, project_id, providers=('google.com', 'password')):
         if not isinstance(project_id, str) or not re.fullmatch(r'[a-z][a-z0-9-]{4,28}[a-z0-9]', project_id):
             raise ValueError('Choose a valid Firebase project ID.')
         self.project_id = project_id
+        self.providers = tuple(providers)
         self._keys, self._expires = {}, 0
         self._lock = threading.Lock()
 
@@ -87,7 +88,7 @@ class FirebaseIdentity:
             if not isinstance(uid, str) or not 1 <= len(uid) <= 128:
                 raise InvalidIdentity()
             firebase = claims.get('firebase')
-            if not isinstance(firebase, dict) or firebase.get('sign_in_provider') not in ('google.com', 'password'):
+            if not isinstance(firebase, dict) or firebase.get('sign_in_provider') not in self.providers:
                 raise InvalidIdentity()
             return claims
         except jwt.PyJWTError:

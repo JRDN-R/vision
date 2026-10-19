@@ -29,6 +29,7 @@ from transcription import LocalTranscription
 from uploaded_media import BODY_LIMIT as VIDEO_BODY_LIMIT, UploadedMedia
 from frame_analysis import FrameAnalysis, processing_options
 from title_eyes import TitleEyes
+from media_share import MediaShare, ORIGIN as MEDIA_SHARE_ORIGIN
 from documents import DocumentJobs
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
@@ -117,6 +118,7 @@ def configure(config_path, migrate_gemini=False):
     uploaded_media.initialize()
     frame_analysis.initialize()
     title_eyes.initialize()
+    media_share.initialize()
     documents.initialize(config)
     vortex.initialize()
     sessions.venture.documents = documents
@@ -228,6 +230,10 @@ def authorize():
     if request.path == CHURCH_MCP_PATH:
         if request.method == 'OPTIONS': return Response(status=204)
         return church_mcp.oauth.authenticate()
+    if request.path.startswith('/api/media-share/'):
+        media_share.authenticate()
+        if request.method == 'OPTIONS':return Response(status=204)
+        return
     origin = request.headers.get('Origin')
     if origin and not app.config.get('PUBLIC_ACCESS', False) and origin not in ORIGINS:
         raise APIError('This page is not an allowed Vision origin.', 403)
@@ -332,7 +338,12 @@ def cors(response):
                                               time.monotonic() - g.request_started)
     origin = request.headers.get('Origin')
     public_access = app.config.get('PUBLIC_ACCESS', False)
-    if public_access or origin in ORIGINS:
+    if request.path.startswith('/api/media-share/') and origin == MEDIA_SHARE_ORIGIN:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Vary'] = 'Origin'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PATCH, DELETE, OPTIONS'
+    elif public_access or origin in ORIGINS:
         response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
         response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key, Range'
@@ -789,6 +800,7 @@ uploaded_media = UploadedMedia(app, connect_db, APIError, sessions)
 frame_analysis = FrameAnalysis(app, connect_db, APIError, sessions)
 app.config["FRAME_ANALYSIS"] = frame_analysis
 title_eyes = TitleEyes(app, connect_db, APIError, sessions)
+media_share = MediaShare(app, connect_db, APIError, title_eyes)
 documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
@@ -841,6 +853,7 @@ def main():
         uploaded_media.start()
         frame_analysis.start()
         title_eyes.start()
+        media_share.start()
         documents.start()
         vortex.start()
         church_admin.start()
@@ -871,6 +884,8 @@ def main():
             documents.wake.set()
             uploaded_media.stop.set()
             frame_analysis.stop.set()
+            media_share.stop.set()
+            media_share.wake.set()
             title_eyes.stop.set()
             title_eyes.wake.set()
             uploaded_media.wake.set()
