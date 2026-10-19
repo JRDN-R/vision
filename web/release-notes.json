@@ -1,8 +1,8 @@
 {
-  "title": "Video preview loading correction",
+  "title": "A cleaner Vision header",
   "items": [
-    "Corrected a page security policy that blocked Vision\u2019s own video and audio previews.",
-    "The existing lightweight previews can be played without uploading or processing the originals again.",
-    "Refresh Vision after the website update publishes. This correction requires no FUPCJ Server update."
+    "Vision’s mobile title toolbar now starts folded. Tap the small center handle to expand or collapse it; it stays open while you work in the title.",
+    "The project name uses the space previously occupied by the logo. Find the logo and version together at the top of the Vision menu.",
+    "Automatic project naming is enabled for new projects by default. Manually typed names and projects with naming disabled remain unchanged."
   ]
 }
