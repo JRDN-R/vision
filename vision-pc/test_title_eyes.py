@@ -262,6 +262,65 @@ class StandbyScheduleTests(unittest.TestCase):
         self.assertFalse(self.work())
         self.assertEqual(events.count('load'),3)
 
+    def test_obs_preloads_off_schedule_and_reuses_without_inference(self):
+        self.store.now=lambda:datetime(2026,10,26,12)
+        events=self.counting_runtime()
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            for _ in range(4):self.assertFalse(self.work())
+            value=self.client.get('/api/title-eyes/standby',headers=self.headers).json
+            self.assertTrue(value['obsActive']);self.assertTrue(value['loaded'])
+            self.assertEqual(value['timezone'],'America/New_York')
+            self.assertEqual(value['warmReason'],'OBS is open')
+            self.assertFalse(value['scheduled'])
+            self.assertEqual(events.count('load'),1);self.assertNotIn('inspect',events)
+            self.submit('obs-title-one');self.assertTrue(self.work())
+            self.assertEqual(events.count('load'),1);self.assertEqual(events.count('inspect'),1)
+            self.assertNotIn('stop',events)
+            # A pending background job does not repeatedly evict/reload it.
+            with self.store.db() as db:
+                db.execute("UPDATE title_eyes_jobs SET status='complete'")
+                db.execute("INSERT INTO project_naming(project_id,request_id,status,created_at) VALUES('obs-pending','obs-pending','queued',0)")
+            self.assertFalse(self.store.standby.competing_work())
+            self.work();self.assertEqual(events.count('load'),1)
+        with patch('title_eyes_standby.obs_active',return_value=False):
+            self.work();self.assertEqual(events.count('stop'),1)
+
+    def test_obs_survives_scheduled_boundary_and_server_restart(self):
+        events=self.counting_runtime()
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            self.store.now=lambda:datetime(2026,10,25,23,59)
+            self.work()
+            self.store.now=lambda:datetime(2026,10,26,0)
+            self.work();self.assertEqual(events.count('load'),1)
+            self.store.initialize();self.work()
+            self.assertEqual(events.count('stop'),1);self.assertEqual(events.count('load'),2)
+            self.assertEqual(self.store.standby.phase,'Ready')
+
+    def test_obs_does_not_override_memory_safety_and_recovers(self):
+        events=self.counting_runtime()
+        self.store.now=lambda:datetime(2026,10,26,12)
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            with patch('title_eyes_standby.resource_pause',return_value='Waiting for available memory'):
+                self.work();self.assertEqual(events,[])
+            self.work();self.assertEqual(events.count('load'),1)
+
+    def test_spawned_process_is_not_reported_ready_before_loading_finishes(self):
+        observations=[]
+        standby=self.store.standby
+        class LoadingRuntime:
+            process=SimpleNamespace(poll=lambda:None)
+            def __init__(self,settings,cancelled,stage):self.stage=stage
+            def __enter__(self):
+                self.stage('Loading title model')
+                observations.append(standby.status()['loaded'])
+                return self
+            def __exit__(self,*args):pass
+        self.store.runtime_factory=LoadingRuntime
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            self.work()
+            self.assertEqual(observations,[False])
+            self.assertTrue(standby.status()['loaded'])
+
     def test_queued_request_is_not_cancelled_at_warm_day_boundary(self):
         self.store.now=lambda:datetime(2026,10,25,23,59)
         events=self.counting_runtime();self.work()

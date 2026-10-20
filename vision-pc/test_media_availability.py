@@ -1,0 +1,70 @@
+"""Offline availability-date persistence, migration, and Firestore contract."""
+import io
+from unittest.mock import patch
+import unittest
+
+from PIL import Image
+import server
+from media_share import available_starting_date
+import test_media_share
+
+
+class MediaAvailabilityTests(unittest.TestCase):
+    setUp = test_media_share.MediaShareTests.setUp
+    tearDown = test_media_share.MediaShareTests.tearDown
+    request = test_media_share.MediaShareTests.request
+
+    def upload(self, rid='availability-test', available=None, prior=None):
+        image=io.BytesIO()
+        Image.new('RGB',(160,90),'navy').save(image,'PNG')
+        data={'requestId':rid,'image':(io.BytesIO(image.getvalue()),'slide.png')}
+        if available is not None:data['availableStartingDate']=available
+        if prior:data['revision']=str(prior['revision'])
+        return self.request('post','drops'+('/'+prior['id'] if prior else ''),data=data)
+
+    def test_optional_date_persists_across_restart_and_publication(self):
+        response=self.upload(available='2026-11-03')
+        self.assertEqual(response.status_code,202,response.json)
+        row=response.json
+        self.assertEqual(row['availableStartingDate'],'2026-11-03')
+        server.media_share.initialize()
+        restored=self.request('get','drops/'+row['id']).json
+        self.assertEqual(restored['availableStartingDate'],'2026-11-03')
+        with patch.object(server.media_share.publisher,'write') as write:
+            server.media_share.publisher.publish(server.media_share.row(row['id']))
+        self.assertEqual(write.call_args.args[1]['availableStartingDate'],'2026-11-03')
+
+    def test_clear_and_replacement_preserve_explicit_semantics(self):
+        original=self.upload(available='2026-11-03').json
+        replaced=self.upload('replace-available',prior=original).json
+        self.assertEqual(replaced['availableStartingDate'],'2026-11-03')
+        cleared=self.request('patch','drops/'+replaced['id'],json={
+            'revision':replaced['revision'],'availableStartingDate':''})
+        self.assertEqual(cleared.status_code,200,cleared.json)
+        self.assertEqual(cleared.json['availableStartingDate'],'')
+        unrestricted=self.upload('no-date-selected').json
+        self.assertEqual(unrestricted['availableStartingDate'],'')
+
+    def test_invalid_dates_fail_without_committing_other_edits(self):
+        row=self.upload().json
+        for invalid in ['2026-02-30','2026-1-02','2026-11-03T00:00:00Z',1,False,[],{}]:
+            response=self.request('patch','drops/'+row['id'],json={
+                'revision':row['revision'],'availableStartingDate':invalid,'text':'must roll back'})
+            self.assertEqual(response.status_code,400,(invalid,response.json))
+            current=self.request('get','drops/'+row['id']).json
+            self.assertEqual(current['text'],'')
+            self.assertEqual(current['revision'],row['revision'])
+        self.assertEqual(self.upload('bad-date-upload',available='2026-02-30').status_code,400)
+
+    def test_existing_schema_migration_defaults_to_unrestricted(self):
+        row=self.upload().json
+        with server.connect_db() as db:
+            db.execute('ALTER TABLE media_share_drops DROP COLUMN available_starting_date')
+        server.media_share.initialize()
+        restored=self.request('get','drops/'+row['id']).json
+        self.assertEqual(restored['availableStartingDate'],'')
+        self.assertEqual(available_starting_date(None),'')
+        self.assertEqual(available_starting_date('2028-02-29'),'2028-02-29')
+
+
+if __name__=='__main__':unittest.main()

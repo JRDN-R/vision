@@ -187,6 +187,28 @@ class StandbyTests(unittest.TestCase):
         self.pool.tick();self.assertTrue(self.pool.status()['loaded'])
         self.assertEqual(self.pool.loads,3)
 
+    def test_obs_priority_yields_idle_ultra_but_finishes_active_answer(self):
+        self.local.settings['visualEnabled']=True
+        self.pool.now=lambda:datetime(2026,10,26,12)
+        with patch('title_eyes_standby.obs_active',return_value=False):
+            self.pool.tick()
+            original=self.pool.runtime
+            with self.pool.work_lease(self.candidate()):
+                with self.pool.answering(self.profile,lambda:False,lambda _:None):
+                    with patch('title_eyes_standby.obs_active',return_value=True):
+                        self.assertFalse(self.pool.cancelled())
+                        self.assertFalse(original.closed)
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            self.pool.tick();self.assertTrue(original.closed)
+            self.assertIsNone(self.pool.runtime)
+            self.assertIn('OBS',self.pool.phase)
+            with self.assertRaises(BlockingIOError):
+                with self.pool.work_lease(self.candidate()):
+                    self.fail('New local work must wait for OBS readiness')
+            self.assert_unlocked()
+        with patch('title_eyes_standby.obs_active',return_value=False):
+            self.pool.tick();self.assertIsNotNone(self.pool.runtime)
+
     def test_temporary_title_priority_requires_enabled_visual_worker(self):
         self.local.settings['visualEnabled'] = False
         self.pool.tick()

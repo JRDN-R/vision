@@ -232,6 +232,11 @@ class LocalInference:
             with self.standby.work_lease(candidate):
                 return self._work_locked(candidate)
         except BlockingIOError:
+            if self.standby.obs_title_priority():
+                phase='Waiting for OBS to close · MediaShare model stays ready'
+                with self.db() as db:
+                    db.execute("UPDATE project_runs SET phase=? WHERE id=? AND status='queued' AND phase!=?",
+                               (phase,candidate['id'],phase))
             return False
 
     def _work_locked(self, candidate):
