@@ -1,57 +1,91 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {webcrypto,createHash}=require('node:crypto');
-const server='https://desktop-vjt2br2.tail385c9d.ts.net',nonce='a'.repeat(48);
+const server='https://desktop-vjt2br2.tail385c9d.ts.net';
 const sample='<!doctype html><html><body>Vision — ✓</body></html>';
 const release={server,size:Buffer.byteLength(sample),sha256:createHash('sha256').update(sample).digest('hex')};
-function bridge({cached,withOpener=true}={}){
- const events={},sent=[],written=[],element={textContent:''},sender={postMessage:(...v)=>sent.push(v)};
- const c={crypto:webcrypto,TextEncoder,Uint8Array,Array,Error,location:{origin:server,hash:withOpener?'#'+nonce:'',search:'?view=venture'},history:{replaceState(){}},document:{getElementById:()=>element,open(){},write:v=>written.push(v),close(){}},setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){}};
- if(cached!==undefined)c.indexedDB={open(){
-  const request={result:{close(){},transaction(){const tx={objectStore(){return {get(){const get={result:cached};queueMicrotask(()=>{get.onsuccess();tx.oncomplete();});return get;}};}};return tx;}}};
-  queueMicrotask(()=>request.onsuccess());return request;
+const packaged=(source=sample)=>'<script id="vision-payload" type="application/octet-stream">'+Buffer.from(source).toString('base64')+'</script>';
+async function until(condition){for(let i=0;i<200;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,2));}assert.fail('launch did not settle');}
+function bridge({cached,storage='available',origin=server,trusted=release}={}){
+ const events={},written=[],status={textContent:''},input={disabled:true,value:'',files:[],addEventListener:(type,fn)=>events[type]=fn};
+ const saved=new Map(cached===undefined?[]:[[trusted.sha256,cached]]);
+ const c={crypto:webcrypto,TextEncoder,TextDecoder,Uint8Array,Array,Error,Math,atob:s=>Buffer.from(s,'base64').toString('binary'),location:{origin,search:'?view=venture'},history:{replaceState(...args){c.address=args[2];}},document:{getElementById:id=>id==='status'?status:input,open(){},write:v=>written.push(v),close(){}},setTimeout:(fn,ms)=>setTimeout(fn,Math.min(ms,25)),clearTimeout};
+ c.window=c;c.opener=null;
+ if(storage==='denied')Object.defineProperty(c,'indexedDB',{get(){throw new Error('SecurityError');}});
+ else if(storage!=='missing')c.indexedDB={open(){
+  const request={result:{close(){},transaction(_,mode){
+   const tx={objectStore(){return {
+    get(key){const get={result:saved.get(key)};queueMicrotask(()=>{get.onsuccess();tx.oncomplete();});return get;},
+    clear(){},put(html,key){queueMicrotask(()=>{if(storage==='quota')tx.onabort();else{saved.clear();saved.set(key,html);tx.oncomplete();}});}
+   };}};return tx;
+  }}};
+  if(storage!=='stalled')queueMicrotask(()=>request.onsuccess());return request;
  }};
- c.window=c;c.opener=withOpener?sender:null;c.addEventListener=(type,fn)=>events[type]=fn;c.removeEventListener=()=>{};
- const script=fs.readFileSync('vision-pc/standalone-bridge.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1].replace('__VISION_TRUSTED_RELEASE__',JSON.stringify(release));
+ const script=fs.readFileSync('vision-pc/standalone-bridge.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1].replace('__VISION_TRUSTED_RELEASE__',JSON.stringify(trusted));
  vm.createContext(c);vm.runInContext(script,c);
- const send=(data={},source=sender,origin='null')=>events.message({source,origin,data:{type:'vision-standalone-load',nonce,html:sample,...data}});
- return {c,sent,written,sender,send};
+ async function choose(text=packaged(),extra={}){
+  input.files=[{size:Buffer.byteLength(text),text:async()=>text,...extra}];return events.change();
+ }
+ return {c,status,input,saved,events,written,choose};
 }
-test('HTTPS bootstrap accepts only the nonce-bound opener and exact UTF-8 build',async()=>{
- const b=bridge();await b.send({},{});assert.equal(b.written.length,0);
- await b.send({nonce:'b'.repeat(48)});assert.equal(b.written.length,0);
- await b.send();assert.deepEqual(b.written,[sample]);assert.equal(b.c.VisionStandaloneSource,sample);
- assert.equal(b.c.opener,null);assert.equal(b.c.VisionStandaloneLaunch.origin,'null');
- await b.send();assert.equal(b.written.length,1,'no second injection');
+test('isolated HTTPS tab opens a selected file with no opener or cross-window handshake',async()=>{
+ const b=bridge();await until(()=>!b.input.disabled);
+ assert.match(b.status.textContent,/Choose Vision-Standalone/);
+ await b.choose();assert.deepEqual(b.written,[sample]);assert.equal(b.c.VisionStandaloneSource,sample);
+ assert.equal(b.saved.get(release.sha256),sample);assert.equal(b.c.address,'/standalone/?view=venture');
+ assert.equal(b.c.opener,null);await b.choose();assert.equal(b.written.length,1);
 });
-test('edited, stale, oversized, and wrong-type HTML never executes at the server origin',async()=>{
- for(const html of [sample.replace('Vision','Vxsion'),sample+' ',42,sample.slice(0,-1)]){
-  const b=bridge();await b.send({html});assert.equal(b.written.length,0);
-  assert.equal(b.sent.at(-1)[0].type,'vision-standalone-error');
+test('the actual large standalone download opens through the file-selection handler', {skip:!fs.existsSync('Vision-Standalone.html')}, async()=>{
+ const trusted=JSON.parse(fs.readFileSync('vision-pc/standalone-manifest.json','utf8'));
+ const b=bridge({trusted,storage:'missing'});await until(()=>!b.input.disabled);
+ await b.choose(fs.readFileSync('Vision-Standalone.html','utf8'));
+ assert.equal(b.written.length,1);assert.equal(Buffer.byteLength(b.written[0]),trusted.size);
+ assert.equal(createHash('sha256').update(b.written[0]).digest('hex'),trusted.sha256);
+});
+test('selected outer HTML is never executed; only the exact pinned payload runs',async()=>{
+ const b=bridge();await until(()=>!b.input.disabled);
+ await b.choose('<script>throw new Error("untrusted outer code")</script><img src="https://evil.example/">'+packaged());
+ assert.deepEqual(b.written,[sample]);
+});
+test('changed, stale, oversized, and non-app files can be rejected then retried',async()=>{
+ for(const html of [packaged(sample.replace('Vision','Vxsion')),packaged(sample+' '),packaged(sample.slice(0,-1)),'<h1>Another HTML</h1>']){
+  const b=bridge();await until(()=>!b.input.disabled);await b.choose(html);
+  assert.equal(b.written.length,0);assert.equal(b.input.disabled,false);assert.equal(b.input.value,'');
+  assert.match(b.status.textContent,/matching|downloaded/);await b.choose();assert.deepEqual(b.written,[sample]);
+ }
+ const b=bridge();await until(()=>!b.input.disabled);let read=false;
+ await b.choose(packaged(),{size:1e9,text:async()=>{read=true;return packaged();}});
+ assert.equal(read,false);assert.equal(b.written.length,0);assert.equal(b.input.disabled,false);
+});
+test('file-read failures and cancel allow another selection',async()=>{
+ const b=bridge();await until(()=>!b.input.disabled);await b.events.change();assert.equal(b.written.length,0);
+ await b.choose(packaged(),{text:async()=>{throw new Error('read failed');}});
+ assert.equal(b.input.disabled,false);assert.match(b.status.textContent,/could not be opened/);
+ await b.choose();assert.deepEqual(b.written,[sample]);
+});
+test('missing, denied, stalled, or full storage never prevents opening a valid file',async()=>{
+ for(const storage of ['missing','denied','stalled','quota']){
+  const b=bridge({storage});await until(()=>!b.input.disabled);await b.choose();assert.deepEqual(b.written,[sample],storage);
  }
 });
-test('reopening HTTPS uses cached bytes only after checking the installed release hash again',async()=>{
- for(const cached of [sample,sample.replace('Vision','Vxsion')]){
-  const b=bridge({cached,withOpener:false});
-  await new Promise(resolve=>setTimeout(resolve,20));
-  assert.equal(b.written.length,cached===sample?1:0);
-  assert.equal(b.c.VisionStandaloneLaunch,undefined,'no launcher receipt on a refresh');
+test('refresh rechecks cached bytes and corrupt cache returns to the file chooser',async()=>{
+ const valid=bridge({cached:sample});await until(()=>valid.written.length===1);assert.deepEqual(valid.written,[sample]);
+ for(const cached of [sample.replace('Vision','Vxsion'),42,sample+' ']){
+  const b=bridge({cached});await until(()=>!b.input.disabled);assert.equal(b.written.length,0);
+  assert.match(b.status.textContent,/saved copy/);await b.choose();assert.deepEqual(b.written,[sample]);
  }
 });
-test('desktop launcher loads no external assets and sends bytes only to the expected HTTPS tab',()=>{
- const events={},sent=[],button={disabled:false,addEventListener:(type,fn)=>events.click=fn},status={textContent:''};
- const popup={closed:false,postMessage:(...v)=>sent.push(v)},opened=[];
- const c={crypto:webcrypto,Uint8Array,TextDecoder,Array,atob:s=>Buffer.from(s,'base64').toString('binary'),setTimeout:()=>1,clearTimeout(){},setInterval:()=>1,clearInterval(){},document:{getElementById:id=>id==='open'?button:id==='status'?status:{textContent:Buffer.from(sample).toString('base64')}}};
- c.window=c;c.open=(...v)=>{opened.push(v);return popup;};c.addEventListener=(type,fn)=>events[type]=fn;
+test('the bootstrap refuses to run on another origin',async()=>{
+ const b=bridge({origin:'https://other.example'});assert.equal(b.input.disabled,true);
+ assert.equal(b.events.change,undefined);assert.equal(b.written.length,0);
+});
+test('desktop launch is a repeatable native link with no receipt or disabled state',()=>{
+ const html=fs.readFileSync('web/standalone/launcher.html','utf8');
+ assert.match(html,/<a id="open" href="https:\/\/desktop-vjt2br2\.tail385c9d\.ts\.net\/standalone\/" target="_blank" rel="noopener noreferrer">Open Vision<\/a>/);
+ const events={},link={addEventListener:(type,fn)=>events[type]=fn},status={textContent:''};
+ const c={document:{getElementById:id=>id==='open'?link:status}};
  vm.createContext(c);vm.runInContext(fs.readFileSync('web/standalone/launcher.js','utf8'),c);
- assert.equal(opened.length,0,'only a user click opens the server');events.click();
- const token=new URL(opened[0][0]).hash.slice(1);assert.match(token,/^[a-f0-9]{48}$/);
- const packet={type:'vision-standalone-ready',nonce:token};
- events.message({origin:'https://evil.example',source:popup,data:packet});assert.equal(sent.length,0);
- events.message({origin:server,source:{},data:packet});assert.equal(sent.length,0);
- events.message({origin:server,source:popup,data:{...packet,nonce:'wrong'}});assert.equal(sent.length,0);
- events.message({origin:server,source:popup,data:packet});assert.equal(sent[0][0].html,sample);assert.equal(sent[0][1],server);
- events.message({origin:server,source:popup,data:packet});assert.equal(sent.length,1);
- events.message({origin:server,source:popup,data:{type:'vision-standalone-opened',nonce:token}});assert.equal(button.disabled,false);assert.match(status.textContent,/Vision is open/);
+ for(let i=0;i<3;i++){events.click();assert.equal(link.disabled,undefined);assert.match(status.textContent,/choose this Vision-Standalone/);}
+ assert.doesNotMatch(status.textContent,/Vision is open/);
 });
 test('one-file routing keeps Vision and Venture on the same HTTPS entry',()=>{
  const events={},c={URL,URLSearchParams,Set,CustomEvent:class{constructor(type,o){this.type=type;this.detail=o.detail;}},location:new URL(server+'/standalone/'),document:{documentElement:{dataset:{}}}};

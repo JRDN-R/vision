@@ -12,7 +12,7 @@ downloadDesktopApp=function(){
  $('downloadAppDialog').close();toast('Standalone HTML downloaded.');
 };
 $('confirmDownloadApp').onclick=downloadDesktopApp;
-$('downloadAppDialog').querySelector('.intro').textContent='One HTML contains the interface, fonts, artwork, Firebase SDK and media runtimes. Open it and press Open Vision. FUPCJ Server provides the secure launch connection; Firebase provides sign-in.';
+$('downloadAppDialog').querySelector('.intro').textContent='One HTML contains the interface, fonts, artwork, Firebase SDK and media runtimes. Open it, press Open Vision, then choose that HTML file on the server page if asked. FUPCJ Server provides the secure connection; Firebase provides sign-in.';
 
 // Direct Drive picking and YouTube search need additional Google services. The
 // standalone edition accepts device files and pasted video links through FUPCJ.
@@ -32,11 +32,3 @@ $('consoleMic').onclick=consoleStartDictation;
 for(const link of document.querySelectorAll('a[href]')){
  try{const url=new URL(link.href,location.href);if(/\/(?:vortex|admins)\/$/.test(url.pathname)||/\/activity\.html$/.test(url.pathname))link.style.setProperty('display','none','important');}catch{}
 }
-
-// Send only a readiness receipt, never an identity token or project, to the
-// local launcher. The nonce and source window are checked on both sides.
-window.addEventListener('load',()=>{
- const launch=window.VisionStandaloneLaunch;if(!launch)return;
- try{launch.sender.postMessage({type:'vision-standalone-opened',nonce:launch.nonce},launch.origin==='null'?'*':launch.origin);}catch{}
- delete window.VisionStandaloneLaunch;
-},{once:true});
