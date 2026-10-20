@@ -1,8 +1,8 @@
 """Build the desktop HTML and the matching server-side trust manifest.
 
 All application assets come from the normal portable builder. The small HTTPS
-launch page receives this exact app through postMessage, not an HTTP upload.
-Its SHA-256 allowlist prevents arbitrary local HTML running at the server origin.
+launch page reads this file through a file chooser without a cross-window
+handoff. Its SHA-256 allowlist prevents arbitrary HTML running at the server origin.
 """
 import argparse
 import base64

@@ -1,18 +1,20 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Opening Vision</title><link rel="icon" href="data:,">
-<style>body{background:#101613;color:#eef4ec;font:16px/1.6 system-ui,sans-serif;max-width:600px;margin:15vh auto;padding:24px}h1{font-size:28px}p{color:#bac6bc}</style></head><body><h1>Opening Vision</h1><p id="status" role="status">Waiting for your standalone file…</p>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Open Vision</title><link rel="icon" href="data:,">
+<style>*{box-sizing:border-box}body{margin:0;background:#101613;color:#eef4ec;font:16px/1.6 system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:28px}main{max-width:580px;width:100%;padding:40px;border:1px solid #344438;border-radius:24px;background:#172019}small{color:#b5e6a0;letter-spacing:.12em;font-size:12px}h1{font-size:38px;line-height:1.1;margin:14px 0 22px}p{color:#bac6bc}label{display:block;font-weight:650;margin:24px 0 8px}input{font:inherit;width:100%;color:#bac6bc}input::file-selector-button{font:inherit;font-weight:650;border:0;border-radius:12px;padding:14px 18px;margin:0 12px 8px 0;background:#b5e6a0;color:#152015;cursor:pointer}input:focus-visible{outline:3px solid white;outline-offset:4px}input:disabled{opacity:.6}#status{min-height:3.2em;color:#eef4ec}.note{font-size:13px;margin-bottom:0}@media(max-width:480px){main{padding:26px}h1{font-size:32px}}</style></head>
+<body><main><small>YOUR SECURE WORKSPACE</small><h1>Open Vision</h1><p>Choose your downloaded <strong>Vision-Standalone.html</strong> to open the app on FUPCJ Server’s secure connection.</p><label for="standalone-file">Your standalone HTML</label><input id="standalone-file" type="file" accept=".html,text/html" aria-describedby="status" disabled><p id="status" role="status" aria-live="polite">Checking for a saved app…</p><p class="note">Choose the application file, not a project export. Sign in after Vision opens. When browser storage is available, later visits open the saved app automatically.</p><noscript>Enable JavaScript on this page to run Vision.</noscript></main>
 <script>
 (() => {
  'use strict';
- const release=__VISION_TRUSTED_RELEASE__,nonce=location.hash.slice(1),sender=window.opener;
- const status=document.getElementById('status');let accepted=false,timer;
+ const release=__VISION_TRUSTED_RELEASE__;
+ const status=document.getElementById('status'),input=document.getElementById('standalone-file');
+ let loading=false,launched=false;
  if(location.origin!==release.server){status.textContent='Open your Vision-Standalone.html file and press Open Vision.';return;}
  function cache(html){
-  if(!window.indexedDB)return Promise.resolve(null);
   return new Promise(resolve=>{
    let db,settled=false,value=null;
    const finish=()=>{if(settled)return;settled=true;clearTimeout(deadline);try{db?.close();}catch{}resolve(value);};
    const deadline=setTimeout(finish,3000);
    try{
+    if(!window.indexedDB){finish();return;}
     const open=indexedDB.open('vision-standalone-runtime',1);
     open.onupgradeneeded=()=>open.result.createObjectStore('runtime');open.onerror=open.onblocked=finish;
     open.onsuccess=()=>{
@@ -26,36 +28,55 @@
    }catch{finish();}
   });
  }
- function fail(){status.textContent='This file does not match the installed standalone release. Update FUPCJ Server using the matching release and retry.';try{sender.postMessage({type:'vision-standalone-error',nonce},'*');}catch{}}
- async function openVerified(html,event){
-   // Only this exact release may execute at the server origin. Never treat a
-   // postMessage from a local file (or any other page) as trusted application code.
-   if(typeof html!=='string'||html.length>release.size)throw new Error('size');
-   const bytes=new TextEncoder().encode(html);
-   if(bytes.byteLength!==release.size)throw new Error('size');
-   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
-   if(digest!==release.sha256)throw new Error('digest');
-   status.textContent='Starting Vision…';
-   if(event)await cache(html);
-   window.VisionStandaloneSource=html;
-   if(event)window.VisionStandaloneLaunch={sender,origin:event.origin,nonce};
-   history.replaceState(null,'','/standalone/'+(event?'':location.search));
-   window.opener=null;
-   document.open();document.write(html);document.close();
+ function ready(message){loading=false;input.disabled=false;input.value='';status.textContent=message;}
+ function extract(text){
+  // Read only the inert base64 payload. Never parse or execute the selected
+  // outer HTML, which may contain untrusted markup, scripts, or resource URLs.
+  const match=/<script id="vision-payload" type="application\/octet-stream">([A-Za-z0-9+/=\s]+)<\/script>/.exec(text);
+  if(!match)throw new Error('format');
+  const encoded=match[1].replace(/\s/g,'');
+  if(encoded.length!==4*Math.ceil(release.size/3))throw new Error('release');
+  try{
+   const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+   return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  }catch{throw new Error('format');}
  }
- async function receive(event){
-  const data=event.data;
-  if(accepted||event.source!==sender||data?.type!=='vision-standalone-load'||data.nonce!==nonce)return;
-  accepted=true;clearInterval(timer);window.removeEventListener('message',receive);
-  try{await openVerified(data.html,event);}catch{fail();}
+ async function openVerified(html,remember){
+  // Only the exact installed release may execute at the server origin.
+  if(typeof html!=='string'||html.length>release.size)throw new Error('release');
+  const bytes=new TextEncoder().encode(html);
+  if(bytes.byteLength!==release.size)throw new Error('release');
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  if(digest!==release.sha256)throw new Error('release');
+  if(remember)await cache(html); // Optional storage failures must not block opening.
+  if(launched)return;
+  launched=true;status.textContent='Starting Vision…';
+  window.VisionStandaloneSource=html;
+  history.replaceState(null,'','/standalone/'+location.search);
+  window.opener=null;
+  document.open();document.write(html);document.close();
  }
- if(!sender||! /^[a-f0-9]{48}$/.test(nonce)){
-  void cache().then(html=>{if(!html){status.textContent='Open your Vision-Standalone.html file and press Open Vision.';return;}return openVerified(html);}).catch(()=>{status.textContent='The saved app does not match this server release. Open the matching standalone HTML again.';});
-  return;
- }
- window.addEventListener('message',receive);
- const ready=()=>sender.postMessage({type:'vision-standalone-ready',nonce},'*');
- ready();timer=setInterval(ready,500);
- setTimeout(()=>{if(!accepted){clearInterval(timer);status.textContent='The local file did not respond. Return to it and press Open Vision again.';}},45000);
+ input.addEventListener('change',async()=>{
+  const file=input.files?.[0];
+  if(!file||loading||launched)return;
+  loading=true;input.disabled=true;status.textContent='Checking your standalone file…';
+  try{
+   if(file.size>4*Math.ceil(release.size/3)+256*1024)throw new Error('release');
+   await openVerified(extract(await file.text()),true);
+  }catch(error){
+   if(error?.message==='release')ready('This HTML does not match the installed standalone release. Use the matching download and server update, then choose the file again.');
+   else if(error?.message==='format')ready('Choose the downloaded Vision-Standalone.html file. A project export or another HTML file cannot open Vision.');
+   else ready('The file could not be opened. Choose it again, or download a fresh matching standalone HTML.');
+  }
+ });
+ // A new tab (including a remotely isolated browser) needs no opener, nonce,
+ // postMessage, or reply to the local launcher. Refresh uses verified cache only.
+ void cache().then(async html=>{
+  if(loading||launched)return;
+  if(!html){ready('Choose Vision-Standalone.html to begin. You can close the original tab.');return;}
+  loading=true;
+  try{await openVerified(html,false);}
+  catch{ready('The saved copy does not match this server release. Choose the matching Vision-Standalone.html file.');}
+ });
 })();
 </script></body></html>

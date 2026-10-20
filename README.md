@@ -266,9 +266,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $VisionSetup -Action Upd
 
 The separate `Vision-Standalone.html` build embeds the complete Vision/Venture
 interface and opens it through a small, hash-verified FUPCJ HTTPS launch page.
-Firebase remains online for authentication. The browser transfers the embedded
-app locally between tabs, giving API calls the server's origin without fetching
-the app from GitHub or a CDN. The matching server update is required.
+Firebase remains online for authentication. Choose the downloaded HTML on the
+HTTPS page once; a verified browser copy supports later visits. API calls use
+the server's origin without fetching the app from GitHub or a CDN, and launch
+does not depend on messages between local and isolated browser tabs.
+The matching server update is required.
 See [standalone setup, service limits, and verification](docs/standalone-html.md).
 
 Editable application code and document structure are in `web/`. `Vision.html` also holds the bundled media

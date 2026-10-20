@@ -4,17 +4,24 @@
 fonts, images, animations, Firebase SDK, and media runtimes. It makes no CDN
 requests to load those assets and does not check GitHub for updates.
 
-Open the HTML on your computer and press **Open Vision**. A small launch page
-opens at FUPCJ Server's `/standalone/` HTTPS address. The two browser tabs pass
-the embedded app through `postMessage` entirely inside the browser. The launch
-page checks its exact UTF-8 byte count and SHA-256 against the installed release
-before rendering it. It accepts one message from its opener with a random nonce;
-the desktop launcher also checks the source window and exact server origin.
-Arbitrary or edited HTML is never executed at the server origin. No project,
-password, or Firebase token is sent to the launcher or embedded in downloads.
-After verification, the browser keeps an optional local copy of the app for
-refreshing or reopening the HTTPS tab. The same release hash is checked again
-on every load. If browser storage is unavailable, reopen the original HTML.
+Open the HTML on your computer and press **Open Vision**. On FUPCJ Server's
+`/standalone/` HTTPS page, choose that same **Vision-Standalone.html** file.
+The original tab can be closed immediately. The HTTPS page reads the inert
+base64 application payload, checks its exact UTF-8 byte count and SHA-256 against
+the installed release, and only then renders it. It never executes the selected
+file's outer HTML. Arbitrary or edited application code is rejected.
+
+This launch uses a normal link and a standard file chooser. It does not depend on
+`window.opener`, cross-window messages, popup receipts, or a timer in a background
+tab. Workplace remote browser isolation may separate local and HTTPS tabs; the
+file chooser works within the HTTPS browser session. Workplace access, sign-in,
+and file-transfer policies still apply. No server upload endpoint was added.
+
+When browser storage is available, the page keeps a verified application copy
+for later visits and refreshes. The release hash is checked again on every load.
+Missing, stale, corrupted, or unavailable storage returns to the file chooser;
+storage failures never prevent opening a valid selected file. The app download
+contains no projects, passwords, or Firebase tokens.
 
 The running app now has FUPCJ Server's HTTPS origin. Authenticated API requests
 are same-origin, so they do not require the cross-origin `OPTIONS` request that
@@ -74,8 +81,9 @@ builder creates the large desktop HTML and its small server trust manifest.
 CI uploads the HTML as `Vision-Standalone` and commits the matching manifest
 alongside the normal portable build. Generated desktop HTML is not tracked.
 
-Checks exercise altered-payload rejection, nonce/window/origin checks, duplicate
-messages, Unicode bytes, workspace routing, download reconstruction, the actual
-embedded runtimes and asset URLs, executable JavaScript syntax, and server route
-behavior. Live Firebase sign-in, the installed Windows server, and the workplace
-proxy still require an end-to-end check in the user's environment.
+Checks exercise launching without an opener, repeated link clicks, malformed and
+altered-file rejection, storage failure/recovery, Unicode bytes, workspace routing,
+download reconstruction, embedded runtimes and asset URLs, executable JavaScript
+syntax, and server route behavior. Live Firebase sign-in, the installed Windows
+server, and the workplace proxy still require an end-to-end check in the user's
+environment.
