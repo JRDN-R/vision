@@ -21,6 +21,8 @@ with sync_playwright() as p:
   assert switch.get_attribute('aria-label')=='Open Venture'
   assert switch.locator('[data-direction="right"]').is_visible()
   start=switch.bounding_box();assert start['width']==44 and start['height']==44
+  assert switch.evaluate('el=>el.parentElement===document.body')
+  assert switch.evaluate('el=>getComputedStyle(el).position')=='fixed'
   if width<=760:
    assert switch.evaluate('el=>el.parentElement===document.body')
    panel=page.locator('#sidebarToggle');assert panel.is_visible();panel.click();assert panel.get_attribute('aria-expanded')=='true';panel.click()
@@ -28,11 +30,11 @@ with sync_playwright() as p:
    page.locator('#headerReveal').click();page.wait_for_timeout(250)
    assert switch.bounding_box()==start
   else:
-   assert switch.evaluate('el=>el.parentElement.id==="appHeader"')
+   assert switch.evaluate('el=>el.parentElement===document.body')
    assert page.locator('.workspace-switch-slot').is_hidden()
    assert start['x']>=0 and start['x']+start['width']<=width, start
-   print(f'{width}px: desktop header {page.locator("#appHeader").bounding_box()}, switch {start}')
-   page.screenshot(path=str(shots/f'inline-switch-vision-{width}.png'))
+   print(f'{width}px: fixed desktop switch {start}')
+   page.screenshot(path=str(shots/f'fixed-switch-vision-{width}.png'))
   switch.click();page.wait_for_timeout(900)
   assert switch.is_visible() and switch.get_attribute('aria-label')=='Return to Vision'
   assert switch.locator('[data-direction="left"]').is_visible()
@@ -45,15 +47,17 @@ with sync_playwright() as p:
     assert r['x']+r['width']<=start['x']+1 or r['x']>=start['x']+start['width']-1,(ident,r,start)
    page.screenshot(path=str(shots/f'fixed-switch-venture-{width}.png'))
   else:
-   assert switch.evaluate('el=>!!el.closest(".venture-header")')
-   current=switch.bounding_box();avatar=page.locator('#ventureAvatar').bounding_box()
-   assert current['x']>=avatar['x']+avatar['width']-1,(current,avatar)
-   page.screenshot(path=str(shots/f'inline-switch-venture-{width}.png'))
+   assert switch.evaluate('el=>el.parentElement===document.body')
+   assert switch.bounding_box()==start,'Desktop switch moved between workspaces'
+   for ident in ('ventureNewCompact','workspaceSourcesButton','ventureAvatar'):
+    r=page.locator('#'+ident).bounding_box();assert r and r['x']>=0
+    assert r['x']+r['width']<=start['x']+1 or r['x']>=start['x']+start['width']-1,(ident,r,start)
+   page.screenshot(path=str(shots/f'fixed-switch-venture-{width}.png'))
   switch.click();page.wait_for_timeout(300)
   assert switch.is_visible() and switch.get_attribute('aria-label')=='Open Venture'
   assert page.evaluate('!document.querySelector("main.app").inert')
-  if width<=760:assert switch.bounding_box()==start
-  else:assert switch.evaluate('el=>el.parentElement.id==="appHeader"')
+  assert switch.bounding_box()==start
+  assert switch.evaluate('el=>el.parentElement===document.body')
   assert not errs,errs
   print(width,'px: responsive placement, preserved animations and round trip passed');page.close()
  b.close()

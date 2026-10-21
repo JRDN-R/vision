@@ -68,17 +68,14 @@ jobs:
       - name: Workspace recovery unit and browser checks
         run: |
           set -o pipefail
-          python tests/workspace-unit.py 2>&1 | tee tests/venture-logs/workspace-unit.txt
-          python tests/workspace-browser.py 2>&1 | tee tests/venture-logs/workspace-browser.txt
-          python tests/workspace-chevron.py 2>&1 | tee tests/venture-logs/workspace-chevron.txt
-          python tests/workspace-switch-layout.py 2>&1 | tee tests/venture-logs/workspace-switch-layout.txt
-          python tests/compact-navigation.py 2>&1 | tee tests/venture-logs/compact-navigation.txt
-          python tests/floating-navigation.py 2>&1 | tee tests/venture-logs/floating-navigation.txt
-          python tests/menu-signout.py 2>&1 | tee tests/venture-logs/menu-signout.txt
-          python tests/toolbelt-browser.py 2>&1 | tee tests/venture-logs/toolbelt.txt
-          python tests/shared-account.py 2>&1 | tee tests/venture-logs/shared-account.txt
-          python tests/google-login-browser.py 2>&1 | tee tests/venture-logs/google-login.txt
-          python tests/dictation-export.py 2>&1 | tee tests/venture-logs/dictation-export.txt
+          failed=0
+          # Run every independent regression so an early failure cannot hide the rest.
+          for test in workspace-unit workspace-browser workspace-chevron workspace-switch-layout compact-navigation floating-navigation menu-signout toolbelt-browser shared-account google-login-browser dictation-export; do
+            if ! python "tests/$test.py" 2>&1 | tee "tests/venture-logs/$test.txt"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
       - name: Hosted microphone and server integration
         run: |
           set -o pipefail
