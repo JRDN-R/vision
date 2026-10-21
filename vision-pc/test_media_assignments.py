@@ -32,21 +32,24 @@ class MediaAssignmentTests(unittest.TestCase):
     def get_claims(self,service='youtube:video1'):
         return self.request('get','assignments?serviceId='+service)
 
-    def test_old_unused_and_eastern_date_boundary(self):
+    def test_exact_service_day_and_eastern_date_boundary(self):
         row=self.upload().json
         with server.connect_db() as db:
             db.execute('UPDATE media_share_drops SET created=?,available_starting_date=? WHERE id=?',
                        (1,'2026-10-21',row['id']))
         self.assignments.now=lambda:datetime(2026,10,21,3,59,tzinfo=timezone.utc)
-        self.assertEqual(self.reserve(row).status_code,409)
+        self.assertEqual(self.reserve_at(row,'2026-10-21T19:30:00-04:00').status_code,409)
         self.assignments.now=lambda:datetime(2026,10,21,4,0,tzinfo=timezone.utc)
-        response=self.reserve(row)
+        response=self.reserve_at(row,'2026-10-21T19:30:00-04:00')
         self.assertEqual(response.status_code,200,response.json)
         self.assertEqual(response.json['assignment']['state'],'reserved')
-        # The same date stays eligible later; it is not an expiry.
+        # Only undated older uploads remain unrestricted fallbacks.
         later=self.upload('older-no-restrict').json
         with server.connect_db() as db:
             db.execute("UPDATE media_share_drops SET created=1,available_starting_date='2020-01-01' WHERE id=?",(later['id'],))
+        self.assertEqual(self.reserve_at(later,'2026-10-21T19:30:00-04:00','youtube:video2').status_code,409)
+        with server.connect_db() as db:
+            db.execute("UPDATE media_share_drops SET available_starting_date='' WHERE id=?",(later['id'],))
         self.assertEqual(self.reserve(later,'youtube:video2').status_code,200)
 
     def test_overlap_allows_exactly_one_service_and_retries_keep_claim(self):
@@ -195,13 +198,66 @@ class MediaAssignmentTests(unittest.TestCase):
         self.assertEqual(self.get_claims().json['assignments'][0]['serviceStart'],'2026-10-25T18:00:00-04:00')
         self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00','youtube:other').status_code,409)
 
-    def test_opposite_period_excluded_for_whole_sunday_but_not_expired_next_day(self):
+    def test_opposite_period_and_other_service_dates_are_excluded(self):
         row=self.sunday_row('am')
         self.assignments.now=lambda:datetime(2026,10,26,1,tzinfo=timezone.utc)  # Sunday evening Eastern.
         self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00').status_code,409)
         self.assignments.now=lambda:datetime(2026,10,26,14,tzinfo=timezone.utc)
         accepted=self.reserve_at(row,'2026-10-26T18:00:00-04:00')
+        self.assertEqual(accepted.status_code,409,accepted.json)
+
+    def test_date_only_target_requires_service_context_and_rejects_other_days(self):
+        row=self.upload().json
+        with server.connect_db() as db:
+            db.execute("UPDATE media_share_drops SET available_starting_date='2026-10-19' WHERE id=?",(row['id'],))
+        self.assertEqual(self.reserve(row).status_code,409)
+        self.assertEqual(self.reserve_at(row,'2026-10-21T19:30:00-04:00').status_code,409)
+        # A retry for the original service day remains valid even after midnight.
+        accepted=self.reserve_at(row,'2026-10-19T19:30:00-04:00')
         self.assertEqual(accepted.status_code,200,accepted.json)
+        self.assertEqual(self.reserve_at(row,'2026-10-19T23:30:00Z').status_code,200)
+
+    def test_legacy_wrong_day_claim_stays_in_history_but_cannot_be_reserved_again(self):
+        row=self.upload().json
+        self.reserve_at(row,'2026-10-21T19:30:00-04:00')
+        with server.connect_db() as db:
+            snapshot=json.loads(db.execute('SELECT snapshot FROM media_share_assignments').fetchone()[0])
+            snapshot['availableStartingDate']='2026-10-19'
+            db.execute('UPDATE media_share_assignments SET snapshot=?',(json.dumps(snapshot),))
+            db.execute("UPDATE media_share_drops SET available_starting_date='2026-10-19' WHERE id=?",(row['id'],))
+        self.assertEqual(self.reserve_at(row,'2026-10-21T19:30:00-04:00').status_code,409)
+        self.assertEqual(len(self.get_claims().json['assignments']),1)
+        self.assertEqual(self.reserve_at(row,'2026-10-19T19:30:00-04:00','youtube:other').status_code,409)
+
+    def test_manual_override_allows_other_date_but_never_other_service(self):
+        row=self.sunday_row('pm')
+        payload={**self.claim(row),'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'}
+        self.assignments.now=lambda:datetime(2026,10,21,20,tzinfo=timezone.utc)
+        response=self.request('post','assignments/reserve',json=payload)
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.json['assignment']['selectionMode'],'manual')
+        server.media_share.initialize()
+        self.assertEqual(self.get_claims().json['assignments'][0]['selectionMode'],'manual')
+        self.assertEqual(self.request('post','assignments/reserve',json=payload).status_code,200)
+        self.assertEqual(self.request('post','assignments/reserve',json={**payload,'serviceId':'youtube:other'}).status_code,409)
+        self.assertEqual(self.request('post','assignments/reserve',json={**payload,'selectionMode':'auto'}).status_code,409)
+
+    def test_picker_availability_is_read_only_and_hides_other_service_identity(self):
+        row=self.upload().json
+        self.reserve(row)
+        response=self.request('post','assignments/availability',json={'serviceId':'youtube:other',
+            'imageKeys':[row['imageKey'],'unused-key']})
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.json['availability'],[
+            {'imageKey':row['imageKey'],'selectable':False,'state':'reserved'},
+            {'imageKey':'unused-key','selectable':True,'state':'unused'}])
+        own=self.request('post','assignments/availability',json={'serviceId':'youtube:video1','imageKeys':[row['imageKey']]})
+        self.assertTrue(own.json['availability'][0]['selectable'])
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM media_share_assignments').fetchone()[0],1)
+        for invalid in [[], {'serviceId':'youtube:other','imageKeys':['x']*201},
+                        {'serviceId':'youtube:other','imageKeys':[1]}]:
+            self.assertEqual(self.request('post','assignments/availability',json=invalid).status_code,400)
 
     def test_future_day_and_service_date_restrictions_are_independent(self):
         row=self.sunday_row()

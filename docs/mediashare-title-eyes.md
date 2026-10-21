@@ -1,4 +1,4 @@
-# MediaShare and Livestream Manager 1.3.0
+# MediaShare and Livestream Manager 1.4.1
 
 This coordinated update keeps the existing title-eyes model, persistent OCR
 queue, scheduled-service engine, caption setup, and per-destination metadata
@@ -9,7 +9,7 @@ OBS-driven model readiness, and an unscheduled-service configuration path.
 
 1. Merge the Vision server change, then update FUPCJ Server with the existing
    `Setup-Vision-PC.ps1 -Action Update` workflow outside a broadcast.
-2. With OBS closed, install the companion Livestream Manager 1.3.0 source ZIP
+2. With OBS closed, install the companion Livestream Manager 1.4.1 source ZIP
    using `INSTALL-FIRSTUPCJAX.cmd`. The installer builds the Windows executable,
    preserves ProgramData settings/history, and updates the stable Lua script.
 3. Merge/deploy the companion `FirstUPC/media` change after the server and
@@ -18,15 +18,40 @@ OBS-driven model readiness, and an unscheduled-service configuration path.
 4. Verify a non-broadcast configuration and authenticated readiness status on
    the church PC. Repository publication alone does not update that PC.
 
+## Live manual selection (Manager 1.4.1)
+
+**Choose slide** beside **Check now** opens a searchable, paged image chooser for
+the active service. Previews are loaded on demand. The read-only authenticated
+`POST /api/media-share/assignments/availability` endpoint reports whether each
+image can be selected by this service, without exposing other service identities.
+It does not reserve or consume slides; reservation rechecks ownership atomically.
+
+Manual reservations send `selectionMode: manual` and the exact service time.
+This explicit choice can override the date and AM/PM restriction, including a
+future date, but cannot take content owned by another service. The reservation
+mode persists in SQLite. A per-service Manager selection persists through restart
+and pins the exact image; its own delayed title continues updating. Selecting an
+image already displayed by this same service reapplies it and its title, since
+historical success receipts do not describe the currently displayed image.
+
+**Check now** clears the pin, restarts even a completed pinned watcher, and
+returns to automatic exact-date/newest-undated selection. Choice request IDs and
+existing watcher tokens stop superseded workers before destination writes. An
+already in-flight external write can finish before the new selection takes over;
+the worker lease serializes the following application. Selection does not stop
+OBS or create a new broadcast/episode. Planning Center remains opt-in per service.
+
 ## Slide receipt, eligibility, and ownership
 
 MediaShare sends the image, `availableStartingDate`, and `targetServicePeriod`
 in one multipart request
 on selection. Waiting until **received and saved** confirms SQLite receipt;
 Firestore publication and OCR continue independently if the browser closes.
-The optional calendar control is labeled **Optional — Available Starting Date**.
-Its date is a do-not-use-before date in `America/New_York`. A blank/missing date
-means unrestricted; reaching the date does not expire the slide.
+The optional calendar control is labeled **Optional — Service Date**. A selected
+date targets only that service day in `America/New_York`, including dates already
+stored on older slides. The wire key `availableStartingDate` is retained for
+compatibility but no longer means later days may use the slide. A blank/missing
+date means unrestricted; clearing a date explicitly makes a slide general.
 
 Choosing a Sunday exposes one AM/PM choice. `targetServicePeriod` stores `am`,
 `pm`, or an empty string; a nonempty value requires a Sunday date. Existing
@@ -38,15 +63,20 @@ Firestore publication as one revision.
 The Manager first prefers unused slides matching the selected service's Eastern
 date and AM/PM period, choosing the newest matching upload. Date-only slides
 still match their date. If no match exists it uses the newest eligible unused
-fallback. A Sunday AM slide cannot be selected for that Sunday's PM service,
-or vice versa; after that calendar date, an unused slide remains eligible as a
-fallback. A future date still cannot be used early during preparation.
+undated upload. Slides for other calendar days or the other Sunday period never
+enter that fallback pool. A future date still cannot be used early during
+preparation. Upload time, not title completion/edit time, decides newest. A
+pending selected image is applied immediately and only its own delayed text is
+used. No eligible slide produces an explicit waiting status, not another day's
+content. Wrong-day saved claims remain in history but cannot pin a resumed
+service or replay a delayed title; the Manager selects the correct replacement.
 
 Reservation requests include `serviceStart`, an ISO timestamp with an explicit
 offset. The server normalizes it to America/New_York, enforces the service/date
 restriction from authoritative drop metadata, and stores it with the claim.
-Targeted slides require this context, so old Managers cannot accidentally
-consume the other Sunday period. Repeated claims retain their original image
+All dated slides require this context, so old Managers cannot accidentally
+consume another date or the other Sunday period. Reservation retries validate
+the saved date too; lookup/receipts retain historical ownership for recovery. Repeated claims retain their original image
 and service association; a retry supplying a different start time is rejected.
 
 The Manager selects the newest eligible unused slide without a same-day or
