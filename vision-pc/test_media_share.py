@@ -53,6 +53,27 @@ class MediaShareTests(unittest.TestCase):
             rejected=self.request('post','drops',data={'requestId':'large-slide-2','image':(io.BytesIO(raw),'slide.png')})
         self.assertEqual(rejected.status_code,400,rejected.json)
 
+    def test_drop_reports_real_readiness_without_private_model_details(self):
+        self.store.now=lambda:datetime(2026,10,22,19)
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            row=self.upload().json
+            self.assertFalse(row['worker']['ready'])
+            self.assertTrue(row['worker']['obsActive'])
+            self.assertEqual(row['worker']['timezone'],'America/New_York')
+            self.fake('{"title":"HELLO","uncertain":false}');self.work();self.sync()
+            worker=self.request('get','drops/'+row['id']).json['worker']
+            self.assertTrue(worker['loaded']);self.assertTrue(worker['ready'])
+            self.assertEqual(worker['loadsSinceRestart'],1)
+            self.assertEqual(set(worker),{'loaded','ready','scheduled','temporaryWarmup',
+                'temporaryWarmupEndsLocal','phase','loadsSinceRestart','obsActive','warmReason','timezone'})
+            self.store.standby.phase='Loading model'
+            worker=self.request('get','drops/'+row['id']).json['worker']
+            self.assertFalse(worker['loaded']);self.assertFalse(worker['ready'])
+            self.store.standby.phase='Ready'
+            with patch.object(self.store.standby.runtime,'process',create=True) as process:
+                process.poll.return_value=1
+                self.assertFalse(self.request('get','drops/'+row['id']).json['worker']['ready'])
+
     def test_browser_exit_and_restart_do_not_stop_title_or_publication(self):
         response=self.upload();self.assertEqual(response.status_code,202,response.json);row=response.json
         self.assertEqual(self.upload().json['id'],row['id'])

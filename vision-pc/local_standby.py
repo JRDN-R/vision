@@ -148,6 +148,11 @@ class UltraStandby:
         with self.local.db() as db:
             return bool(db.execute("SELECT 1 FROM title_eyes_jobs WHERE status IN ('queued','processing') LIMIT 1").fetchone())
 
+    def obs_title_priority(self):
+        from title_eyes_standby import obs_active
+        return bool(self.local.settings.get('enabled') and
+                    self.local.settings.get('visualEnabled') and obs_active())
+
     def idle_reason(self):
         if self.local.sessions.stop.is_set():
             return 'Server stopping'
@@ -157,6 +162,8 @@ class UltraStandby:
             return 'Available on demand on Sunday and Wednesday'
         if maintenance_active(self.directory):
             return 'Waiting for model maintenance'
+        if self.obs_title_priority():
+            return 'Waiting for OBS to close · MediaShare model stays ready'
         # The date-limited title preload needs the same exclusive model slot.
         # Active answers still finish; only idle Ultra gives up its lease.
         from title_eyes_standby import temporary_warmup
@@ -247,6 +254,9 @@ class UltraStandby:
         if not self.lock.acquire(blocking=False):
             raise BlockingIOError('Ultra standby is yielding')
         try:
+            if self.obs_title_priority():
+                self.close('Waiting for OBS to close · MediaShare model stays ready')
+                raise BlockingIOError('MediaShare readiness owns the model slot while OBS is open')
             if maintenance_active(self.directory) or self.titles_pending():
                 self.close('Yielding to titles or maintenance')
                 raise BlockingIOError('Priority work is waiting')
@@ -259,8 +269,9 @@ class UltraStandby:
         finally:
             self.active = False
             try:
-                if self.runtime is None or self.idle_reason() or not self.runtime.reusable():
-                    self.close('Waiting to restore Ultra standby')
+                reason = self.idle_reason()
+                if self.runtime is None or reason or not self.runtime.reusable():
+                    self.close(reason or 'Waiting to restore Ultra standby')
             finally:
                 self.lock.release()
 

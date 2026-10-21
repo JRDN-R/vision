@@ -11,7 +11,7 @@ import warnings
 from flask import g, jsonify, request
 from local_runtime import LocalFailure
 from local_visual_runtime import IncompleteVisualInspection
-from title_eyes_standby import Standby, StandbyRuntime as VisualRuntime, scheduled, resource_pause
+from title_eyes_standby import Standby, StandbyRuntime as VisualRuntime, church_now, resource_pause
 from media import data_url
 
 def title_resource_pause():
@@ -116,7 +116,7 @@ class TitleEyes:
         self.stop,self.wake=threading.Event(),threading.Event()
         self.lock=threading.RLock()
         self.runtime_factory=VisualRuntime
-        self.now=datetime.now
+        self.now=church_now
         self.standby=Standby(self)
         self.register_routes()
 
@@ -216,9 +216,8 @@ class TitleEyes:
 
     def work_once(self):
         self.sweep()
-        if not scheduled(self.now()) and not self.pending_titles():
-            # On non-standby days, run only for accepted work. An idle model
-            # must not occupy RAM or the shared inference lock.
+        if not self.standby.warm_required() and not self.pending_titles():
+            # OBS residency takes precedence over the normal idle schedule.
             self.standby.close('Available on demand · loads when a slide arrives')
             return False
         with self.db() as db:
@@ -278,7 +277,7 @@ class TitleEyes:
                 if finish:finish()
             # Keep one model across queued slides, but unload promptly after
             # the last cold-start job, including across a warm-day midnight.
-            if not scheduled(self.now()) and not self.pending_titles():
+            if not self.standby.warm_required() and not self.pending_titles():
                 self.standby.close('Available on demand · loads when a slide arrives')
         return bool(row)
 

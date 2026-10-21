@@ -4,7 +4,7 @@ Only fupc-media Firebase tokens reach these routes. MediaShare is an existing
 shared anonymous-auth workspace, not an extension of Vision account access.
 """
 import base64
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 import re
 import secrets
@@ -16,6 +16,7 @@ import requests
 from flask import g, jsonify, request
 from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from title_eyes import ACTIVE, prepare_image
+from media_share_assignments import Assignments
 
 PROJECT = 'fupc-media'
 API_KEY = 'AIzaSyCZXC3ALGAKcv8eJRMaO_rX-_u5d5FBZ24'  # Public Firebase client identifier.
@@ -23,6 +24,16 @@ ORIGIN = 'https://firstupc.github.io'
 BASE = f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/drops/'
 RETENTION = 30 * 86400
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # MediaShare only; direct TitleEyes uploads retain their limit.
+
+
+def available_starting_date(value):
+    """An optional Eastern calendar date, never an expiration or UTC instant."""
+    if value is None or value == '':return ''
+    if not isinstance(value,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
+        raise ValueError('Available Starting Date must be a calendar date (YYYY-MM-DD).')
+    try:date.fromisoformat(value)
+    except ValueError:raise ValueError('Available Starting Date must be a valid calendar date.') from None
+    return value
 
 
 def field(value):
@@ -84,7 +95,8 @@ class Publisher:
             createdAt=datetime.fromtimestamp(row['created'],timezone.utc).isoformat(),
             imageRevision=row['image_revision'],revision=row['revision'],autoTitle=row['title'],
             titleStatus=row['title_status'],titleRevision=row['title_revision'],
-            titleImageKey=row['image_key'],titleUncertain=bool(row['uncertain']))
+            titleImageKey=row['image_key'],titleUncertain=bool(row['uncertain']),
+            availableStartingDate=row.get('available_starting_date',''))
         self.write(row['id'],metadata)
 
 
@@ -95,7 +107,9 @@ class MediaShare:
         self.lock=threading.RLock();self.changed=threading.Condition();self.sequence=secrets.token_hex(8)
         self.waiters=threading.BoundedSemaphore(3)
         self.stop=threading.Event();self.wake=threading.Event()
+        self.assignments=Assignments(self)
         self.register()
+        self.assignments.register()
 
     def initialize(self):
         self.stop.clear()
@@ -111,6 +125,10 @@ class MediaShare:
                 uncertain INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, updated REAL NOT NULL,
                 published INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
                 retry_at REAL NOT NULL DEFAULT 0, publish_error TEXT NOT NULL DEFAULT '', UNIQUE(uid,request_id))''')
+            columns={row['name'] for row in db.execute('PRAGMA table_info(media_share_drops)')}
+            if 'available_starting_date' not in columns:
+                db.execute("ALTER TABLE media_share_drops ADD COLUMN available_starting_date TEXT NOT NULL DEFAULT ''")
+        self.assignments.initialize()
 
     def authenticate(self):
         origin=request.headers.get('Origin')
@@ -130,10 +148,14 @@ class MediaShare:
 
     def public(self,row):
         job=self.titles.row(row['job'])
+        standby=self.titles.standby.status()
+        worker={key:standby[key] for key in ('loaded','scheduled','temporaryWarmup',
+            'temporaryWarmupEndsLocal','phase','loadsSinceRestart','obsActive','warmReason','timezone')}
+        worker['ready']=bool(worker['loaded'] and worker['phase']=='Ready')
         return dict(id=row['id'],revision=row['revision'],imageKey=row['image_key'],imageRevision=row['image_revision'],
             title=row['title'],titleStatus=row['title_status'],titleRevision=row['title_revision'],uncertain=bool(row['uncertain']),
             phase=(job or {}).get('phase',''),text=row['text'],published=row['published']>=row['revision'],
-            publishError=row['publish_error'])
+            publishError=row['publish_error'],availableStartingDate=row.get('available_starting_date',''),worker=worker)
 
     def signal(self):
         with self.changed:self.sequence=secrets.token_hex(8);self.changed.notify_all()
@@ -184,6 +206,10 @@ class MediaShare:
                         if 'text' in value:
                             if not isinstance(value['text'],str) or len(value['text'])>20000:raise self.Error('Text is too long.')
                             db.execute('UPDATE media_share_drops SET text=? WHERE id=?',(value['text'],ident))
+                        if 'availableStartingDate' in value:
+                            try:available=available_starting_date(value['availableStartingDate'])
+                            except ValueError as e:raise self.Error(str(e)) from None
+                            db.execute('UPDATE media_share_drops SET available_starting_date=? WHERE id=?',(available,ident))
                         db.execute('UPDATE media_share_drops SET revision=revision+1,updated=?,retry_at=0 WHERE id=?',(time.time(),ident))
             self.signal()
             return jsonify(deleted=True) if request.method=='DELETE' else jsonify(self.public(self.row(ident)))
@@ -218,6 +244,8 @@ class MediaShare:
                 raise self.Error('MediaShare server storage is full. Remove older drops or try later.',429)
             prior=self.row(ident) if ident else None
             if prior and str(prior['revision'])!=request.form.get('revision'):raise self.Error('The slide changed. Refresh before replacing it.',409)
+            try:available=available_starting_date(request.form.get('availableStartingDate',prior['available_starting_date'] if prior else ''))
+            except ValueError as e:raise self.Error(str(e)) from None
             ident=ident or secrets.token_hex(16);key=secrets.token_hex(16);job=secrets.token_hex(12);now=time.time()
             chunks=(len('data:image/jpeg;base64,')+4*((len(picture)+2)//3)+699999)//700000
             if prior:
@@ -225,11 +253,11 @@ class MediaShare:
                 db.execute('DELETE FROM title_eyes_jobs WHERE id=?',(prior['job'],))
                 db.execute('''UPDATE media_share_drops SET uid=?,request_id=?,image_key=?,image=?,chunks=?,name=?,job=?,
                     image_revision=image_revision+1,revision=revision+1,title=NULL,title_status='queued',title_revision=0,
-                    uncertain=0,created=?,updated=?,retry_at=0 WHERE id=?''',
-                    (g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,ident))
+                    uncertain=0,created=?,updated=?,retry_at=0,available_starting_date=? WHERE id=?''',
+                    (g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available,ident))
             else:
-                db.execute('INSERT INTO media_share_drops(id,uid,request_id,image_key,image,chunks,name,job,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                           (ident,g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now))
+                db.execute('INSERT INTO media_share_drops(id,uid,request_id,image_key,image,chunks,name,job,created,updated,available_starting_date) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                           (ident,g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available))
             db.execute('INSERT INTO title_eyes_jobs(id,uid,request_id,status,phase,image,created,expires) VALUES(?,?,?,?,?,?,?,?)',
                        (job,g.uid,rid,'queued','Waiting for title worker',picture,now,now+7*86400))
         self.titles.wake.set();self.signal()
@@ -254,7 +282,11 @@ class MediaShare:
             # published, so readers can still use the previous committed image.
             with self.db() as db:
                 waiting=db.execute('SELECT 1 FROM media_share_drops WHERE published<revision LIMIT 1').fetchone()
-                garbage=db.execute('SELECT * FROM media_share_garbage LIMIT 1').fetchone()
+                # A service may still need its original image after a failed
+                # destination update or a manager restart. Claimed chunks are
+                # durable history; replacement/deletion never releases them.
+                garbage=db.execute('''SELECT * FROM media_share_garbage g WHERE NOT EXISTS (
+                    SELECT 1 FROM media_share_assignments a WHERE a.image_key=g.key) LIMIT 1''').fetchone()
             if garbage and not waiting:
                 try:
                     for i in range(garbage['chunks']):self.publisher.write(f"chunk_{garbage['key']}_{i}")

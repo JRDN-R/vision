@@ -6,7 +6,9 @@ AI worker. Ultra standby shares this lease and yields to pending title jobs.
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
+import threading
 import time
+from zoneinfo import ZoneInfo
 
 from local_runtime import LocalFailure
 from local_visual_runtime import VisualRuntime, manifest_path, regular
@@ -17,6 +19,70 @@ DAYS = (2, 6)  # Python weekdays: Wednesday and Sunday.
 # dates expire automatically; they do not make every Monday/Tuesday warm.
 TEMPORARY_START = datetime(2026, 10, 19)
 TEMPORARY_END = datetime(2026, 10, 21)
+TIMEZONE = 'America/New_York'
+OBS_NAMES = frozenset(('obs', 'obs.exe', 'obs64', 'obs64.exe', 'obs32.exe'))
+
+
+def church_now():
+    return datetime.now(ZoneInfo(TIMEZONE))
+
+
+def observe_obs():
+    """Observe the co-located OBS process, independently of its network session.
+
+    None means process enumeration is temporarily unavailable. Never infer that
+    OBS closed merely because an inaccessible process could not be identified.
+    """
+    import psutil
+    unknown = False
+    try:
+        for process in psutil.process_iter(['name'], ad_value=None):
+            try:
+                name = process.info.get('name')
+                if name is None:
+                    unknown = True
+                elif name.lower() in OBS_NAMES:
+                    return True
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                unknown = True
+    except (OSError, psutil.Error):
+        return None
+    return None if unknown else False
+
+
+class ObsActivity:
+    """One inexpensive process scan per five seconds, shared by model owners."""
+    def __init__(self, probe=observe_obs, clock=time.monotonic):
+        self.probe, self.clock = probe, clock
+        self.lock = threading.Lock()
+        self.checked_at = None
+        self.last_seen = None
+        self.present = False
+
+    def active(self):
+        with self.lock:
+            now = self.clock()
+            if self.checked_at is not None and now - self.checked_at < 5:
+                return self.present
+            observed = self.probe()
+            self.checked_at = now
+            if observed is True:
+                self.last_seen = now
+                self.present = True
+            elif observed is False:
+                self.present = False
+            else:
+                # Retain through short permission/enumeration failures without
+                # permanently claiming RAM after OBS has actually gone away.
+                self.present = self.last_seen is not None and now - self.last_seen <= 120
+            return self.present
+
+
+_obs_activity = ObsActivity()
+
+
+def obs_active():
+    return _obs_activity.active()
 
 
 def temporary_warmup(now):
@@ -38,7 +104,7 @@ def resource_pause(allow_obs=False):
     import psutil
     if psutil.virtual_memory().available < 10 * 1024**3:
         return 'Waiting for available memory'
-    if not allow_obs and any((p.info.get('name') or '').lower() in ('obs', 'obs.exe', 'obs64', 'obs64.exe', 'obs32.exe')
+    if not allow_obs and any((p.info.get('name') or '').lower() in OBS_NAMES
            for p in psutil.process_iter(['name'])):
         return 'Waiting for OBS to close'
     return None
@@ -146,11 +212,18 @@ class Standby:
             return 'Local visual worker is disabled'
         # The schedule controls preloading, not requests. Any title job can
         # cold-start the model outside warm-standby days.
-        if not scheduled(self.service.now()) and not self.service.pending_titles():
+        if not self.warm_required() and not self.service.pending_titles():
             return 'Available on demand · loads when a slide arrives'
         return None
 
+    def warm_required(self):
+        return obs_active() or scheduled(self.service.now())
+
     def competing_work(self):
+        # Live readiness owns the existing single-model slot. Do not unload on
+        # every queue check because a video/local job cannot run during OBS.
+        if obs_active():
+            return False
         with self.service.db() as db:
             # Accepted live-slide work gets the next free lock. A deferred
             # video job (for example while OBS is open) must not starve it.
@@ -164,8 +237,8 @@ class Standby:
 
     def cancelled(self):
         # Called during startup and from the runtime monitor. The model also
-        # yields while idle so it never holds the global lock all day over a
-        # pending Venture/video task. Active slides finish before yielding.
+        # yields while idle outside OBS so normal local work can acquire the
+        # global lock. Active slides finish before yielding.
         return bool(self.off_reason() or resource_pause(allow_obs=True) or (not self.active and self.competing_work()))
 
     def close(self, phase='Off'):
@@ -225,11 +298,18 @@ class Standby:
 
     def status(self):
         now = self.service.now()
+        obs = obs_active()
         runtime = self.runtime
         process = getattr(runtime, 'process', None)
-        loaded = runtime is not None and (process is None or process.poll() is None)
+        # A spawned process may still be verifying/loading weights. Report
+        # readiness only after __enter__/retain have successfully completed.
+        loaded = (runtime is not None and self.phase == 'Ready'
+                  and (process is None or process.poll() is None)
+                  and not getattr(runtime, 'stop_reason', None))
         return dict(scheduled=scheduled(now), weekdays=['Sunday','Wednesday'],
-                    clock='server-local', serverLocalTime=now.isoformat(), nextStartLocal=next_start(now),
+                    clock=TIMEZONE, timezone=TIMEZONE, serverLocalTime=now.isoformat(), nextStartLocal=next_start(now),
+                    obsActive=obs, obsDetection='local-process',
+                    warmReason='OBS is open' if obs else ('Scheduled standby' if scheduled(now) else 'On demand'),
                     temporaryWarmup=temporary_warmup(now),
                     temporaryWarmupEndsLocal=TEMPORARY_END.isoformat() if temporary_warmup(now) else None,
                     loaded=loaded, phase=self.off_reason() or self.phase,

@@ -178,6 +178,19 @@ class LocalInferenceTests(unittest.TestCase):
         self.assertEqual(self.s.row(rid)['text'],'Partial output')
         self.assertFalse(self.s.work_once())
 
+    def test_obs_readiness_explains_waiting_local_work_and_resumes(self):
+        rid=self.send().json['runId']
+        self.local.settings['visualEnabled']=True
+        with patch('title_eyes_standby.obs_active',return_value=True):
+            self.assertFalse(self.local.work_once(self.s.row(rid)))
+            self.assertEqual(self.s.row(rid)['status'],'queued')
+            self.assertIn('Waiting for OBS to close',self.s.row(rid)['phase'])
+            self.assertEqual(FakeRuntime.requests,[])
+        self.local.settings['visualEnabled']=False
+        with patch('title_eyes_standby.obs_active',return_value=False):
+            self.s.work_once()
+        self.assertEqual(self.s.row(rid)['status'],'completed')
+
     def test_generation_budget_and_stream_failure_remain_incomplete(self):
         class Exhausted(FakeRuntime):
             def generate(self,*args):

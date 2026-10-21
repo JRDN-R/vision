@@ -6,3 +6,4 @@ yt-dlp[default]>=2025.11.12
 Pillow>=11,<13
 psutil>=7.2,<8
 firebase-admin>=6.6,<8
+tzdata>=2025.2
