@@ -18,18 +18,24 @@ OBS-driven model readiness, and an unscheduled-service configuration path.
 4. Verify a non-broadcast configuration and authenticated readiness status on
    the church PC. Repository publication alone does not update that PC.
 
-## Live manual selection (Manager 1.4.1)
+Both server and Manager 1.4.2 must be installed for deliberate reuse. Their
+SQLite schema migrations retain all existing assignment records and receipts.
+A new service with no eligible slide leaves its YouTube thumbnail unchanged;
+an existing service continues polling its own assigned slide for delayed text.
+
+## Live manual selection (Manager 1.4.2)
 
 **Choose slide** beside **Check now** opens a searchable, paged image chooser for
 the active service. Previews are loaded on demand. The read-only authenticated
 `POST /api/media-share/assignments/availability` endpoint reports whether each
 image can be selected by this service, without exposing other service identities.
-It does not reserve or consume slides; reservation rechecks ownership atomically.
+It does not reserve or consume slides. `selectable` describes automatic ownership eligibility; `manualSelectable` explicitly advertises deliberate reuse support. Older Managers still see their conservative ownership result.
 
 Manual reservations send `selectionMode: manual` and the exact service time.
 This explicit choice can override the date and AM/PM restriction, including a
-future date, but cannot take content owned by another service. The reservation
-mode persists in SQLite. A per-service Manager selection persists through restart
+future date, and permits deliberate reuse by another service. Each service gets
+its own assignment and image/title receipts; no existing claim is transferred.
+The reservation mode persists in SQLite. A per-service Manager selection persists through restart
 and pins the exact image; its own delayed title continues updating. Selecting an
 image already displayed by this same service reapplies it and its title, since
 historical success receipts do not describe the currently displayed image.
@@ -60,10 +66,15 @@ clearing it also clears the hidden period. The date and period are included in
 upload recovery, SQLite persistence, replacement, public drop responses, and
 Firestore publication as one revision.
 
-The Manager first prefers unused slides matching the selected service's Eastern
+The Manager first prefers slides matching the selected service's Eastern
 date and AM/PM period, choosing the newest matching upload. Date-only slides
-still match their date. If no match exists it uses the newest eligible unused
-undated upload. Slides for other calendar days or the other Sunday period never
+still match their date. If no match exists it considers the newest undated
+upload. Ranking precedes usage filtering: an already reserved/used winner does
+not expose older uploads as automatic fallbacks. A durable Manager watermark
+remembers the newest observed undated upload, including after deletion/restart;
+a server watermark seeded from assignment history also rejects older undated
+reservations from other Managers. Exact-date targets remain independent of this
+undated watermark. Manual choice permits reuse, including older unused slides. Slides for other calendar days or the other Sunday period never
 enter that fallback pool. A future date still cannot be used early during
 preparation. Upload time, not title completion/edit time, decides newest. A
 pending selected image is applied immediately and only its own delayed text is
@@ -79,10 +90,11 @@ consume another date or the other Sunday period. Reservation retries validate
 the saved date too; lookup/receipts retain historical ownership for recovery. Repeated claims retain their original image
 and service association; a retry supplying a different start time is rejected.
 
-The Manager selects the newest eligible unused slide without a same-day or
-90-minute age cutoff. Server reservations verify authoritative metadata,
-including legacy Firestore-only drops. SQLite transactions and a unique image
-key prevent two services from claiming one image. Reservations survive failed
+The Manager has no same-day or 90-minute age cutoff for the newest undated
+slide; it never walks backward through earlier undated uploads. Server reservations verify authoritative metadata,
+including legacy Firestore-only drops. SQLite transactions block automatic
+cross-service reuse; the composite image/service key makes deliberate manual
+reuse idempotent without transferring ownership or progress. Reservations survive failed
 uploads, restarts, image deletion, and normal upload-metadata retention. They
 are not silently released when a request has an ambiguous outcome. Claimed
 Firestore image chunks are retained for retry even after replacement or deletion

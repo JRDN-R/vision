@@ -34,11 +34,12 @@ class Assignments:
 
     def initialize(self):
         with self.media.db() as db:
+            db.execute('BEGIN IMMEDIATE')
             db.execute('''CREATE TABLE IF NOT EXISTS media_share_assignments (
-                image_key TEXT PRIMARY KEY, service_id TEXT NOT NULL, drop_id TEXT NOT NULL,
+                image_key TEXT NOT NULL, service_id TEXT NOT NULL, drop_id TEXT NOT NULL,
                 state TEXT NOT NULL DEFAULT 'reserved', snapshot TEXT NOT NULL,
                 destinations TEXT NOT NULL DEFAULT '[]', receipts TEXT NOT NULL DEFAULT '{}',
-                created REAL NOT NULL, updated REAL NOT NULL)''')
+                created REAL NOT NULL, updated REAL NOT NULL, PRIMARY KEY(image_key,service_id))''')
             columns={row['name'] for row in db.execute('PRAGMA table_info(media_share_assignments)')}
             if 'receipts' not in columns:
                 db.execute("ALTER TABLE media_share_assignments ADD COLUMN receipts TEXT NOT NULL DEFAULT '{}'")
@@ -46,6 +47,20 @@ class Assignments:
                 db.execute("ALTER TABLE media_share_assignments ADD COLUMN service_start TEXT NOT NULL DEFAULT ''")
             if 'selection_mode' not in columns:
                 db.execute("ALTER TABLE media_share_assignments ADD COLUMN selection_mode TEXT NOT NULL DEFAULT 'auto'")
+            # Migrate exclusive claims without losing historical receipts/snapshots.
+            info=list(db.execute('PRAGMA table_info(media_share_assignments)'))
+            if next(row['pk'] for row in info if row['name']=='service_id') == 0:
+                sql=db.execute("SELECT sql FROM sqlite_master WHERE name='media_share_assignments'").fetchone()[0]
+                sql=sql.replace('media_share_assignments','media_share_assignments_v142',1)
+                sql=sql.replace('image_key TEXT PRIMARY KEY','image_key TEXT NOT NULL')
+                sql=sql.rstrip().removesuffix(')')+', PRIMARY KEY(image_key,service_id))'
+                db.execute(sql)
+                db.execute('INSERT INTO media_share_assignments_v142 SELECT * FROM media_share_assignments')
+                db.execute('DROP TABLE media_share_assignments')
+                db.execute('ALTER TABLE media_share_assignments_v142 RENAME TO media_share_assignments')
+            db.execute('CREATE TABLE IF NOT EXISTS media_share_auto_floor (singleton INTEGER PRIMARY KEY CHECK(singleton=1), uploaded REAL NOT NULL, drop_id TEXT NOT NULL)')
+            for row in db.execute('SELECT snapshot FROM media_share_assignments').fetchall():
+                self.advance_floor(db,json.loads(row['snapshot']))
             db.execute('CREATE INDEX IF NOT EXISTS media_share_assignment_service ON media_share_assignments(service_id)')
 
     def identifiers(self,value):
@@ -119,7 +134,7 @@ class Assignments:
         except ValueError:raise self.media.Error('The slide availability date or Sunday service is invalid.',409) from None
         if manual:
             if not service_start:raise self.media.Error('Manual selection requires the service time.',409)
-            return  # Explicit operator choice overrides dates, never ownership.
+            return  # Explicit operator choice permits reuse, with separate service receipts.
         now=self.now()
         if now.tzinfo is None:now=now.replace(tzinfo=EASTERN)
         if available and available>now.astimezone(EASTERN).date().isoformat():
@@ -145,8 +160,8 @@ class Assignments:
         if row['selection_mode']!=mode:
             if db is None:
                 with self.media.db() as connection:
-                    connection.execute('UPDATE media_share_assignments SET selection_mode=? WHERE image_key=?',(mode,row['image_key']))
-            else:db.execute('UPDATE media_share_assignments SET selection_mode=? WHERE image_key=?',(mode,row['image_key']))
+                    connection.execute('UPDATE media_share_assignments SET selection_mode=? WHERE image_key=? AND service_id=?',(mode,row['image_key'],service_id))
+            else:db.execute('UPDATE media_share_assignments SET selection_mode=? WHERE image_key=? AND service_id=?',(mode,row['image_key'],service_id))
         return self.public({**dict(row),'selection_mode':mode})
 
     @staticmethod
@@ -157,30 +172,49 @@ class Assignments:
             state=row['state'],destinations=json.loads(row['destinations']),
             receipts=json.loads(row['receipts']),drop=json.loads(row['snapshot']))
 
+    @staticmethod
+    def upload_rank(drop):
+        if drop.get('availableStartingDate'):return None
+        try:
+            stamp=datetime.fromisoformat(drop['createdAt'].replace('Z','+00:00'))
+            if stamp.tzinfo is None:return None
+            return stamp.timestamp(),str(drop['id'])
+        except (KeyError,TypeError,ValueError,OverflowError):return None
+
+    def advance_floor(self,db,drop):
+        rank=self.upload_rank(drop)
+        if rank:
+            db.execute("INSERT INTO media_share_auto_floor VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET uploaded=excluded.uploaded,drop_id=excluded.drop_id WHERE (excluded.uploaded,excluded.drop_id)>(uploaded,drop_id)",rank)
+
     def reserve(self,value):
         service_id,drop_id,image_key=self.identifiers(value)
         service_start=self.service_start(value.get('serviceStart'))
         mode=value.get('selectionMode','auto')
         if mode not in ('auto','manual'):raise self.media.Error('Invalid selectionMode.')
         with self.media.db() as db:
-            existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone()
+            existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=? AND service_id=?',(image_key,service_id)).fetchone()
         if existing:
             return self.existing_claim(existing,service_id,drop_id,service_start,mode)
         drop=self.source(drop_id)
         self.validate_candidate(drop,image_key,service_start,mode=='manual')
         with self.media.lock,self.media.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            # A competing manager may have claimed the same image during fetch.
-            existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone()
+            existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=? AND service_id=?',(image_key,service_id)).fetchone()
             if existing:
                 return self.existing_claim(existing,service_id,drop_id,service_start,mode,db)
-            # Recheck local edits inside the claim transaction.
+            if mode=='auto' and db.execute('SELECT 1 FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone():
+                raise self.media.Error('This slide was already reserved or used by another service. Reuse it only through Choose slide.',409)
             drop=self.local(drop_id,db) or drop
             self.validate_candidate(drop,image_key,service_start,mode=='manual')
+            rank=self.upload_rank(drop)
+            floor=db.execute('SELECT uploaded,drop_id FROM media_share_auto_floor WHERE singleton=1').fetchone()
+            if mode=='auto' and rank and floor and rank<=tuple(floor):
+                raise self.media.Error('An equal or newer undated slide was already selected. Waiting for a new upload; use Choose slide to reuse older slides.',409)
+            self.advance_floor(db,drop)
             now=time.time()
             db.execute('INSERT INTO media_share_assignments(image_key,service_id,drop_id,snapshot,service_start,selection_mode,created,updated) VALUES(?,?,?,?,?,?,?,?)',
                        (image_key,service_id,drop_id,json.dumps(drop),service_start,mode,now,now))
-            return self.public(db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone())
+            return self.public(db.execute('SELECT * FROM media_share_assignments WHERE image_key=? AND service_id=?',(image_key,service_id)).fetchone())
 
     def used(self,value):
         service_id,drop_id,image_key=self.identifiers(value)
@@ -196,16 +230,16 @@ class Assignments:
             raise self.media.Error('A destination ID is required for the receipt.')
         with self.media.lock,self.media.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            row=db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone()
+            row=db.execute('SELECT * FROM media_share_assignments WHERE image_key=? AND service_id=?',(image_key,service_id)).fetchone()
             if not row or row['service_id']!=service_id or row['drop_id']!=drop_id:
                 raise self.media.Error('Reserve this exact slide for the service before marking it used.',409)
             destinations=set(json.loads(row['destinations']))
             if kind=='image':destinations.add(destination)
             receipts=json.loads(row['receipts'])
             receipts[destination+':'+kind+':'+destination_id]=version
-            db.execute("UPDATE media_share_assignments SET state='used',destinations=?,receipts=?,updated=? WHERE image_key=?",
-                       (json.dumps(sorted(destinations)),json.dumps(receipts),time.time(),image_key))
-            return self.public(db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone())
+            db.execute("UPDATE media_share_assignments SET state='used',destinations=?,receipts=?,updated=? WHERE image_key=? AND service_id=?",
+                       (json.dumps(sorted(destinations)),json.dumps(receipts),time.time(),image_key,service_id))
+            return self.public(db.execute('SELECT * FROM media_share_assignments WHERE image_key=? AND service_id=?',(image_key,service_id)).fetchone())
 
     def refresh(self,row):
         snapshot=json.loads(row['snapshot'])
@@ -221,7 +255,7 @@ class Assignments:
             if snapshot.get('titleStatus') not in ('complete','error'):
                 snapshot.update(titleStatus='unavailable',autoTitle=None,titleUncertain=False)
         with self.media.db() as db:
-            db.execute('UPDATE media_share_assignments SET snapshot=? WHERE image_key=?',(json.dumps(snapshot),row['image_key']))
+            db.execute('UPDATE media_share_assignments SET snapshot=? WHERE image_key=? AND service_id=?',(json.dumps(snapshot),row['image_key'],row['service_id']))
         value=self.public(row);value['drop']=snapshot
         return value
 
@@ -239,7 +273,8 @@ class Assignments:
             with self.media.db() as db:
                 rows=db.execute('SELECT image_key,service_id,state FROM media_share_assignments WHERE image_key IN ('+','.join('?' for _ in keys)+')',keys).fetchall() if keys else []
             claims={row['image_key']:row for row in rows}
-            return jsonify(availability=[dict(imageKey=key,selectable=key not in claims or claims[key]['service_id']==service_id,
+            own={row['image_key'] for row in rows if row['service_id']==service_id}
+            return jsonify(availability=[dict(imageKey=key,selectable=key not in claims or key in own,manualSelectable=True,
                 state=claims[key]['state'] if key in claims else 'unused') for key in keys])
 
         @self.media.app.post('/api/media-share/assignments/reserve')
