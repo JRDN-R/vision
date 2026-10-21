@@ -195,11 +195,15 @@ def main():
     else:
      control=p.locator('#workspaceSwitchButton')
      assert control.is_visible() and control.get_attribute('aria-label')=='Return to Vision'
-     assert control.evaluate('el=>!!el.closest(".venture-header")')
+     before=control.bounding_box()
+     assert control.evaluate('el=>el.parentElement===document.body')
+     assert control.evaluate('el=>getComputedStyle(el).position')=='fixed'
      control.click();assert not p.evaluate('venture.open')
      assert control.get_attribute('aria-label')=='Open Venture'
-     assert control.evaluate('el=>el.parentElement.id==="appHeader"')
+     assert control.evaluate('el=>el.parentElement===document.body')
+     assert control.bounding_box()==before,'Desktop switch moved between workspaces'
      control.click();assert p.evaluate('venture.open')
+     assert control.bounding_box()==before
     # Logout clears retained content, Sources, and once-per-account state.
     p.evaluate('workspaceOpenSources()');p.wait_for_timeout(100)
     p.evaluate('testSignOut()');p.wait_for_function('!workspace.uid')

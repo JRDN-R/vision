@@ -51,7 +51,9 @@ def verify_delayed_return(browser):
         for view in ('vision', 'venture'):
             api = DelayedVision()
             context, page, errors = enter_from_vortex(browser, api, view=view, width=width)
-            page.locator('html[data-fixture-auth-waiting=true]').wait_for()
+            # This attribute is an async state signal, not a rendered UI element.
+            page.locator('html[data-fixture-auth-waiting=true]').wait_for(state='attached')
+            page.locator('#accountGate').wait_for(state='visible')
             assert page.locator('#accountGateSignIn').is_hidden(), 'Returning account saw a login form before restore'
             assert page.locator('#accountGateEmailArea').is_hidden()
             assert page.locator('#accountGate').get_attribute('aria-busy') == 'true'
@@ -90,7 +92,7 @@ def verify_stalled_recovery(browser):
         '''.replace('MODE', repr(operation))
         api = mod.Fixture()
         context, page, errors = enter_from_vortex(browser, api, script=script)
-        page.locator('html[data-fixture-auth-initialized=true]').wait_for(timeout=2000)
+        page.locator('html[data-fixture-auth-initialized=true]').wait_for(state='attached', timeout=2000)
         assert page.locator('#accountGateSignIn').is_hidden(), 'Recovery exposed a redundant login'
         page.locator('#accountGate').wait_for(state='hidden', timeout=8000)
         assert page.evaluate("localStorage.getItem('__fixtureUID')") == 'alice'
@@ -194,7 +196,7 @@ def verify_real_sdk_return(browser, html=None):
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(seed)
-    page.locator('html[data-seed-ready=true]').wait_for()
+    page.locator('html[data-seed-ready=true]').wait_for(state='attached')
     page.evaluate("VisionFirebaseSDK.auth.signInWithEmailAndPassword(fixtureAuth,'alice@example.test','fixture-password')")
     page.goto(mod.URL)
     page.locator('#menuButton').click()

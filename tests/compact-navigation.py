@@ -126,8 +126,8 @@ def run():
             assert chevron.is_visible() and chevron.get_attribute('aria-label')=='Return to Vision'
             assert page.locator('#ventureSidebar .workspace-brand-head svg.venture-monocle').count()==1
             assert page.locator('#visionVenture .venture-brand-fallback').count()==0
-            if width<=760:assert chevron.bounding_box()==start
-            else:assert chevron.evaluate('el=>!!el.closest(".venture-header")')
+            assert chevron.bounding_box()==start
+            assert chevron.evaluate('el=>el.parentElement===document.body')
             if width==390:page.screenshot(path=str(SHOTS/'compact-venture-menu.png'))
             page.locator('#ventureMenuNews').click();outside(page,'#workspaceNews')
             assert page.locator('#visionVenture').evaluate('el=>el.classList.contains("history-open")')
