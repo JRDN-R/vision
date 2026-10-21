@@ -14,7 +14,7 @@ window.processingFixture={
  settings:()=>({...state.settings}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
  switchView:view=>{accountSignedIn=()=>true;ventureScope=()=> 'processing-fixture';navigationMarkSeen();venture.uid=ventureScope();venture.ready=true;ventureSchedule=()=>{};workspaceSwitch(view);},
- ventureWork:active=>{venture.sending=active;renderActivity();},
+ ventureWork:active=>{venture.sending=active;venturePaintStatus();},
  activity:()=>{mediaActivity.push({title:'Screenshots',detail:'Creating frames',progress:50});renderActivity();},
  done:()=>{mediaActivity.forEach(task=>task.finished=true);renderActivity();},
  nodes:async()=>{
@@ -60,10 +60,15 @@ with sync_playwright() as pw:
   page.evaluate('processingFixture.switchView("venture")')
   expect(indicator).to_be_hidden()
   page.evaluate('processingFixture.ventureWork(true)')
-  expect(indicator).to_be_visible();expect(indicator.locator('span')).to_have_text('1')
+  # Venture owns its progress display; the board pill must stay out of this view.
+  expect(indicator).to_be_hidden()
+  progress=page.locator('#ventureActivity')
+  expect(progress).to_be_visible();expect(progress).to_contain_text('Uploading')
+  expect(progress).to_have_class('working')
   page.evaluate('processingFixture.ventureWork(false)')
-  expect(indicator).to_have_attribute('data-state','complete')
-  page.wait_for_timeout(2200);expect(indicator).to_be_hidden()
+  expect(progress).to_have_text('Ready when you are.')
+  expect(progress).not_to_have_class('working')
+  expect(indicator).to_be_hidden()
   page.evaluate('processingFixture.switchView("vision")')
   expect(indicator).to_be_visible();expect(indicator.locator('span')).to_have_text('1')
   page.evaluate('processingFixture.done()');expect(indicator).to_have_attribute('data-state','complete')

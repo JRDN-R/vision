@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import base64
 import os
+import re
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 def read(name):return (ROOT/name).read_text()
@@ -25,7 +26,11 @@ code=setup+download+'\n'+plain_dictation+'\n'+read('web/console.js')+'\n'+read('
 window.testState=()=>({board:state.title,settings:venture.settings,current:venture.current?.id,pending:!!venture.pending});
 window.testSignOut=()=>accountGoogleSignOut();
 '''
-fixture='<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+''.join(read('web/'+f) for f in ['styles.css','console.css','run-tools.css','venture.css'])+'</style></head><body><svg class="vision-header-head" viewBox="270 110 740 1010" hidden><image href="data:image/png;base64,'+base64.b64encode((ROOT/'logo or node.PNG').read_bytes()).decode()+'" width="1254" height="1254"/></svg><button id="runProjectBtn">Run</button><input id="screenshotMode" hidden><section id="visionConsole" hidden></section><script>'+code+'</script></body></html>'
+# Use the real inert artwork template rather than duplicating obsolete page markup.
+brand_template=re.search(r'<template id="visionBrandSource">.*?</template>', read('web/document.html'), re.S)
+assert brand_template, 'The production document must supply the Venture artwork template'
+brand_template=brand_template.group().replace('{{VISION_HEADER_LOGO}}', 'data:image/png;base64,'+base64.b64encode((ROOT/'logo or node.PNG').read_bytes()).decode())
+fixture='<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+''.join(read('web/'+f) for f in ['styles.css','console.css','run-tools.css','venture.css'])+'</style></head><body>'+brand_template+'<button id="runProjectBtn">Run</button><input id="screenshotMode" hidden><section id="visionConsole" hidden></section><script>'+code+'</script></body></html>'
 settings={'model':'gpt-6-astra','maxOutputTokens':16000,'memoryEnabled':False,'runOptions':{'mode':'auto','effort':'auto','verbosity':'auto','webSearch':False,'codeInterpreter':True}}
 shots=ROOT/'tests/venture-screenshots';shots.mkdir(exist_ok=True)
 def run():
@@ -70,6 +75,8 @@ def run():
                 p.locator('#runProjectBtn').click();p.wait_for_timeout(400)
                 assert p.locator('#visionVenture').is_visible()
                 assert p.locator('.venture-monocle image').count()>=2
+                assert p.locator('body > svg.vision-header-head').count()==0, 'Source artwork must remain inert'
+                assert p.locator('.venture-brand-fallback').count()==0, 'Real artwork was not cloned'
                 assert 'Vision Venture' not in p.locator('#visionVenture').inner_text()
                 if width<761:p.locator('#ventureHistoryToggle').click()
                 p.locator('[data-conversation="v-test-conversation-001"]').first.click();p.wait_for_timeout(200)
