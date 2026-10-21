@@ -42,6 +42,8 @@ class Assignments:
             columns={row['name'] for row in db.execute('PRAGMA table_info(media_share_assignments)')}
             if 'receipts' not in columns:
                 db.execute("ALTER TABLE media_share_assignments ADD COLUMN receipts TEXT NOT NULL DEFAULT '{}'")
+            if 'service_start' not in columns:
+                db.execute("ALTER TABLE media_share_assignments ADD COLUMN service_start TEXT NOT NULL DEFAULT ''")
             db.execute('CREATE INDEX IF NOT EXISTS media_share_assignment_service ON media_share_assignments(service_id)')
 
     def identifiers(self,value):
@@ -62,6 +64,7 @@ class Assignments:
             images=[dict(key=row['image_key'],chunks=row['chunks'],name=row['name'],type='image/jpeg')],
             createdAt=datetime.fromtimestamp(row['created'],EASTERN).isoformat(),
             availableStartingDate=row['available_starting_date'],autoTitle=row['title'],
+            targetServicePeriod=row.get('target_service_period',''),
             titleStatus=row['title_status'],titleRevision=row['title_revision'],
             titleImageKey=row['image_key'],titleUncertain=bool(row['uncertain']),
             imageRevision=row['image_revision'],revision=row['revision'],text=row['text'])
@@ -92,48 +95,75 @@ class Assignments:
         if drop.get('kind')!='drop':raise self.media.Error('This is not a MediaShare slide.',409)
         return drop
 
-    def validate_candidate(self,drop,image_key):
+    def service_start(self,value):
+        if value is None or value=='':return ''
+        if not isinstance(value,str) or len(value)>80:
+            raise self.media.Error('serviceStart must be an ISO date and time with a timezone offset.')
+        try:
+            start=datetime.fromisoformat(value.replace('Z','+00:00'))
+            if start.tzinfo is None or start.utcoffset() is None:raise ValueError()
+            return start.astimezone(EASTERN).isoformat()
+        except (ValueError,OverflowError):
+            raise self.media.Error('serviceStart must be an ISO date and time with a timezone offset.') from None
+
+    def validate_candidate(self,drop,image_key,service_start=''):
         images=drop.get('images') or []
         if not isinstance(images,list) or not images or not isinstance(images[0],dict) or images[0].get('key')!=image_key:
             raise self.media.Error('The slide image changed. Refresh before reserving.',409)
-        from media_share import available_starting_date
-        try:available=available_starting_date(drop.get('availableStartingDate'))
-        except ValueError:raise self.media.Error('The slide availability date is invalid.',409) from None
+        from media_share import available_starting_date, target_service_period
+        try:
+            available=available_starting_date(drop.get('availableStartingDate'))
+            period=target_service_period(drop.get('targetServicePeriod'),available)
+        except ValueError:raise self.media.Error('The slide availability date or Sunday service is invalid.',409) from None
         now=self.now()
         if now.tzinfo is None:now=now.replace(tzinfo=EASTERN)
         if available and available>now.astimezone(EASTERN).date().isoformat():
             raise self.media.Error('This slide is not available yet in America/New_York.',409)
+        if period and not service_start:
+            raise self.media.Error('Update Livestream Manager to provide the service time for Sunday AM/PM slides.',409)
+        if service_start:
+            start=datetime.fromisoformat(service_start)
+            service_date=start.date().isoformat()
+            if available and available>service_date:
+                raise self.media.Error('This slide becomes available after the selected service date.',409)
+            if available==service_date and period and period!=('am' if start.hour<12 else 'pm'):
+                raise self.media.Error('This slide is reserved for the other Sunday service period.',409)
+
+    def existing_claim(self,row,service_id,drop_id,service_start):
+        if row['service_id']!=service_id or row['drop_id']!=drop_id:
+            raise self.media.Error('This slide is already reserved for another service.',409)
+        if row['service_start'] and service_start and row['service_start']!=service_start:
+            raise self.media.Error('This service already reserved the slide with a different start time.',409)
+        return self.public(row)
 
     @staticmethod
     def public(row):
         return dict(serviceId=row['service_id'],dropId=row['drop_id'],imageKey=row['image_key'],
+            serviceStart=row['service_start'],
             state=row['state'],destinations=json.loads(row['destinations']),
             receipts=json.loads(row['receipts']),drop=json.loads(row['snapshot']))
 
     def reserve(self,value):
         service_id,drop_id,image_key=self.identifiers(value)
+        service_start=self.service_start(value.get('serviceStart'))
         with self.media.db() as db:
             existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone()
         if existing:
-            if existing['service_id']!=service_id or existing['drop_id']!=drop_id:
-                raise self.media.Error('This slide is already reserved for another service.',409)
-            return self.public(existing)
+            return self.existing_claim(existing,service_id,drop_id,service_start)
         drop=self.source(drop_id)
-        self.validate_candidate(drop,image_key)
+        self.validate_candidate(drop,image_key,service_start)
         with self.media.lock,self.media.db() as db:
             db.execute('BEGIN IMMEDIATE')
             # A competing manager may have claimed the same image during fetch.
             existing=db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone()
             if existing:
-                if existing['service_id']!=service_id or existing['drop_id']!=drop_id:
-                    raise self.media.Error('This slide is already reserved for another service.',409)
-                return self.public(existing)
+                return self.existing_claim(existing,service_id,drop_id,service_start)
             # Recheck local edits inside the claim transaction.
             drop=self.local(drop_id,db) or drop
-            self.validate_candidate(drop,image_key)
+            self.validate_candidate(drop,image_key,service_start)
             now=time.time()
-            db.execute('INSERT INTO media_share_assignments(image_key,service_id,drop_id,snapshot,created,updated) VALUES(?,?,?,?,?,?)',
-                       (image_key,service_id,drop_id,json.dumps(drop),now,now))
+            db.execute('INSERT INTO media_share_assignments(image_key,service_id,drop_id,snapshot,service_start,created,updated) VALUES(?,?,?,?,?,?,?)',
+                       (image_key,service_id,drop_id,json.dumps(drop),service_start,now,now))
             return self.public(db.execute('SELECT * FROM media_share_assignments WHERE image_key=?',(image_key,)).fetchone())
 
     def used(self,value):

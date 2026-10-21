@@ -168,5 +168,86 @@ class MediaAssignmentTests(unittest.TestCase):
         with server.connect_db() as db:
             self.assertEqual(db.execute('SELECT key FROM media_share_garbage').fetchone()[0],original['imageKey'])
 
+    def sunday_row(self,period='pm'):
+        row=self.upload().json
+        with server.connect_db() as db:
+            db.execute("UPDATE media_share_drops SET available_starting_date='2026-10-25',target_service_period=? WHERE id=?",
+                       (period,row['id']))
+        self.assignments.now=lambda:datetime(2026,10,25,13,tzinfo=timezone.utc)
+        return row
+
+    def reserve_at(self,row,start,service='youtube:video1'):
+        return self.request('post','assignments/reserve',json={**self.claim(row,service),'serviceStart':start})
+
+    def test_sunday_slot_uses_service_time_not_current_time_and_survives_restart(self):
+        row=self.sunday_row('pm')
+        self.assertEqual(self.reserve_at(row,'2026-10-25T10:30:00-04:00').status_code,409)
+        # PM preparation is valid while the wall clock is still AM.
+        accepted=self.reserve_at(row,'2026-10-25T18:00:00-04:00')
+        self.assertEqual(accepted.status_code,200,accepted.json)
+        assignment=accepted.json['assignment']
+        self.assertEqual(assignment['drop']['targetServicePeriod'],'pm')
+        self.assertEqual(assignment['serviceStart'],'2026-10-25T18:00:00-04:00')
+        server.media_share.initialize()
+        # Equivalent instants are canonicalized; a different context is rejected.
+        self.assertEqual(self.reserve_at(row,'2026-10-25T22:00:00Z').status_code,200)
+        self.assertEqual(self.reserve_at(row,'2026-10-25T10:30:00-04:00').status_code,409)
+        self.assertEqual(self.get_claims().json['assignments'][0]['serviceStart'],'2026-10-25T18:00:00-04:00')
+        self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00','youtube:other').status_code,409)
+
+    def test_opposite_period_excluded_for_whole_sunday_but_not_expired_next_day(self):
+        row=self.sunday_row('am')
+        self.assignments.now=lambda:datetime(2026,10,26,1,tzinfo=timezone.utc)  # Sunday evening Eastern.
+        self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00').status_code,409)
+        self.assignments.now=lambda:datetime(2026,10,26,14,tzinfo=timezone.utc)
+        accepted=self.reserve_at(row,'2026-10-26T18:00:00-04:00')
+        self.assertEqual(accepted.status_code,200,accepted.json)
+
+    def test_future_day_and_service_date_restrictions_are_independent(self):
+        row=self.sunday_row()
+        self.assignments.now=lambda:datetime(2026,10,25,3,59,tzinfo=timezone.utc)
+        self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00').status_code,409)
+        self.assignments.now=lambda:datetime(2026,10,25,4,tzinfo=timezone.utc)
+        self.assertEqual(self.reserve_at(row,'2026-10-24T18:00:00-04:00').status_code,409)
+        self.assertEqual(self.reserve_at(row,'2026-10-25T18:00:00-04:00').status_code,200)
+
+    def test_targeted_slide_requires_valid_offset_service_context(self):
+        row=self.sunday_row()
+        self.assertEqual(self.reserve(row).status_code,409)
+        for invalid in ['2026-10-25','2026-10-25T18:00:00','invalid',1,False,[],{}]:
+            response=self.reserve_at(row,invalid)
+            self.assertEqual(response.status_code,400,(invalid,response.json))
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM media_share_assignments').fetchone()[0],0)
+
+    def test_transaction_rechecks_sunday_slot_after_a_concurrent_edit(self):
+        row=self.sunday_row('am')
+        source=self.assignments.source
+        def edit_after_read(ident):
+            old=source(ident)
+            with server.connect_db() as db:
+                db.execute("UPDATE media_share_drops SET target_service_period='pm' WHERE id=?",(ident,))
+            return old
+        with patch.object(self.assignments,'source',side_effect=edit_after_read):
+            rejected=self.reserve_at(row,'2026-10-25T10:30:00-04:00')
+        self.assertEqual(rejected.status_code,409,rejected.json)
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM media_share_assignments').fetchone()[0],0)
+
+    def test_legacy_firestore_period_is_verified_instead_of_client_override(self):
+        row=dict(id='legacy-sunday',imageKey='legacy-image')
+        values=dict(kind='drop',images=[dict(key=row['imageKey'],chunks=1)],
+                    availableStartingDate='2026-10-25',targetServicePeriod='pm')
+        response=MagicMock();response.status_code=200;response.__enter__.return_value=response
+        response.json.return_value={'fields':{key:field(value) for key,value in values.items()}}
+        self.assignments.now=lambda:datetime(2026,10,25,14,tzinfo=timezone.utc)
+        with patch('media_share_assignments.requests.get',return_value=response):
+            rejected=self.request('post','assignments/reserve',json={**self.claim(row),
+                'serviceStart':'2026-10-25T10:30:00-04:00','targetServicePeriod':'am'})
+            self.assertEqual(rejected.status_code,409,rejected.json)
+            accepted=self.reserve_at(row,'2026-10-25T18:00:00-04:00')
+        self.assertEqual(accepted.status_code,200,accepted.json)
+        self.assertEqual(accepted.json['assignment']['drop']['targetServicePeriod'],'pm')
+
 
 if __name__=='__main__':unittest.main()
