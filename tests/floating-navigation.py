@@ -55,7 +55,8 @@ def run():
    assert page.locator('#workspaceMenuGlyph').evaluate("el=>getComputedStyle(el).opacity")=='0'
    assert menu.evaluate("el=>getComputedStyle(el).backgroundColor")=='rgba(0, 0, 0, 0)'
    assert page.evaluate('document.activeElement.id')=='workspaceMenu'
-   assert page.locator('.workspace-menu-heading').inner_text()=='Vision'
+   assert page.locator('.workspace-menu-heading .workspace-brand-name').inner_text()=='Vision'
+   assert page.locator('.workspace-menu-heading .workspace-brand-version').inner_text()=='v'+page.locator('meta[name="vision-version"]').get_attribute('content')
    page.evaluate('document.fonts.ready');assert page.evaluate('document.fonts.check(\'30px "Lilita One"\')')
    assert page.locator('.workspace-menu-heading .workspace-brand-name').evaluate("el=>getComputedStyle(el).fontFamily").startswith('"Lilita One"')
    mw=page.locator('#workspaceMenu').bounding_box()['width']

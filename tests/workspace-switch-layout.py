@@ -14,8 +14,10 @@ where=shell.rfind('\n})();');shell=shell[:where]+probe+shell[where:]
 with sync_playwright() as p:
  b=p.chromium.launch(headless=True,**({'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
  for width in (320,390,430,760,761,1024,1280):
-  page=b.new_page(viewport={'width':width,'height':844},has_touch=True);errs=[];page.on('pageerror',lambda e:errs.append(str(e)));page.route('**/*',lambda r:r.abort());page.set_content(shell);page.wait_for_timeout(400);page.evaluate('checkNavigation()');page.wait_for_timeout(900)
+  page=b.new_page(viewport={'width':width,'height':844},has_touch=width<=760);errs=[];page.on('pageerror',lambda e:errs.append(str(e)));page.route('**/*',lambda r:r.abort());page.set_content(shell);page.wait_for_timeout(400);page.evaluate('checkNavigation()');page.wait_for_timeout(900)
   if page.locator('#workspaceNews').is_visible():page.locator('#workspaceNews button').click()
+  # Desktop cases use a mouse; touch-landscape intentionally shows the portrait guard.
+  assert page.locator('#mobilePortraitGuard').is_hidden()
   switch=page.locator('#workspaceSwitchButton')
   assert switch.is_visible(), f'Workspace switch hidden at {width}px'
   assert switch.get_attribute('aria-label')=='Open Venture'
