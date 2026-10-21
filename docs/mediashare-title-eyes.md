@@ -20,12 +20,34 @@ OBS-driven model readiness, and an unscheduled-service configuration path.
 
 ## Slide receipt, eligibility, and ownership
 
-MediaShare sends the image and `availableStartingDate` in one multipart request
+MediaShare sends the image, `availableStartingDate`, and `targetServicePeriod`
+in one multipart request
 on selection. Waiting until **received and saved** confirms SQLite receipt;
 Firestore publication and OCR continue independently if the browser closes.
 The optional calendar control is labeled **Optional — Available Starting Date**.
 Its date is a do-not-use-before date in `America/New_York`. A blank/missing date
 means unrestricted; reaching the date does not expire the slide.
+
+Choosing a Sunday exposes one AM/PM choice. `targetServicePeriod` stores `am`,
+`pm`, or an empty string; a nonempty value requires a Sunday date. Existing
+slides without this field stay compatible. Changing the date to a weekday or
+clearing it also clears the hidden period. The date and period are included in
+upload recovery, SQLite persistence, replacement, public drop responses, and
+Firestore publication as one revision.
+
+The Manager first prefers unused slides matching the selected service's Eastern
+date and AM/PM period, choosing the newest matching upload. Date-only slides
+still match their date. If no match exists it uses the newest eligible unused
+fallback. A Sunday AM slide cannot be selected for that Sunday's PM service,
+or vice versa; after that calendar date, an unused slide remains eligible as a
+fallback. A future date still cannot be used early during preparation.
+
+Reservation requests include `serviceStart`, an ISO timestamp with an explicit
+offset. The server normalizes it to America/New_York, enforces the service/date
+restriction from authoritative drop metadata, and stores it with the claim.
+Targeted slides require this context, so old Managers cannot accidentally
+consume the other Sunday period. Repeated claims retain their original image
+and service association; a retry supplying a different start time is rejected.
 
 The Manager selects the newest eligible unused slide without a same-day or
 90-minute age cutoff. Server reservations verify authoritative metadata,

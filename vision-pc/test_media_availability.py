@@ -14,11 +14,12 @@ class MediaAvailabilityTests(unittest.TestCase):
     tearDown = test_media_share.MediaShareTests.tearDown
     request = test_media_share.MediaShareTests.request
 
-    def upload(self, rid='availability-test', available=None, prior=None):
+    def upload(self, rid='availability-test', available=None, prior=None, period=None):
         image=io.BytesIO()
         Image.new('RGB',(160,90),'navy').save(image,'PNG')
         data={'requestId':rid,'image':(io.BytesIO(image.getvalue()),'slide.png')}
         if available is not None:data['availableStartingDate']=available
+        if period is not None:data['targetServicePeriod']=period
         if prior:data['revision']=str(prior['revision'])
         return self.request('post','drops'+('/'+prior['id'] if prior else ''),data=data)
 
@@ -65,6 +66,55 @@ class MediaAvailabilityTests(unittest.TestCase):
         self.assertEqual(restored['availableStartingDate'],'')
         self.assertEqual(available_starting_date(None),'')
         self.assertEqual(available_starting_date('2028-02-29'),'2028-02-29')
+
+    def test_sunday_period_survives_receipt_restart_replacement_and_publication(self):
+        row=self.upload(available='2026-10-25',period='pm').json
+        self.assertEqual(row['targetServicePeriod'],'pm')
+        # A retry cannot silently turn the original upload into another service.
+        retried=self.upload(available='2026-11-01',period='am').json
+        self.assertEqual(retried['id'],row['id'])
+        self.assertEqual(retried['availableStartingDate'],'2026-10-25')
+        self.assertEqual(retried['targetServicePeriod'],'pm')
+        server.media_share.initialize()
+        recovered=self.request('get','requests/availability-test').json
+        self.assertEqual(recovered['targetServicePeriod'],'pm')
+        replaced=self.upload('sunday-replacement',prior=recovered).json
+        self.assertEqual(replaced['targetServicePeriod'],'pm')
+        with patch.object(server.media_share.publisher,'write') as write:
+            server.media_share.publisher.publish(server.media_share.row(row['id']))
+        metadata=write.call_args.args[1]
+        self.assertEqual(metadata['availableStartingDate'],'2026-10-25')
+        self.assertEqual(metadata['targetServicePeriod'],'pm')
+
+    def test_period_is_validated_atomically_and_non_sunday_date_clears_hidden_choice(self):
+        row=self.upload(available='2026-10-25',period='am').json
+        for value in ['AM','both',False,1,[],{}]:
+            rejected=self.request('patch','drops/'+row['id'],json={
+                'revision':row['revision'],'targetServicePeriod':value,'text':'must roll back'})
+            self.assertEqual(rejected.status_code,400,(value,rejected.json))
+            current=self.request('get','drops/'+row['id']).json
+            self.assertEqual(current['text'],'')
+            self.assertEqual(current['targetServicePeriod'],'am')
+            self.assertEqual(current['revision'],row['revision'])
+        for invalid_date in ['', '2026-10-26']:
+            rejected=self.request('patch','drops/'+row['id'],json={
+                'revision':row['revision'],'availableStartingDate':invalid_date,'targetServicePeriod':'pm'})
+            self.assertEqual(rejected.status_code,400,rejected.json)
+        changed=self.request('patch','drops/'+row['id'],json={
+            'revision':row['revision'],'availableStartingDate':'2026-10-26'})
+        self.assertEqual(changed.status_code,200,changed.json)
+        self.assertEqual(changed.json['targetServicePeriod'],'')
+        self.assertEqual(self.upload('weekday-with-period',available='2026-10-26',period='am').status_code,400)
+        self.assertEqual(self.upload('no-date-with-period',period='pm').status_code,400)
+
+    def test_period_schema_migration_preserves_legacy_date(self):
+        row=self.upload(available='2026-10-25').json
+        with server.connect_db() as db:
+            db.execute('ALTER TABLE media_share_drops DROP COLUMN target_service_period')
+        server.media_share.initialize()
+        restored=self.request('get','drops/'+row['id']).json
+        self.assertEqual(restored['targetServicePeriod'],'')
+        self.assertEqual(restored['availableStartingDate'],'2026-10-25')
 
 
 if __name__=='__main__':unittest.main()

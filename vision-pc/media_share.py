@@ -36,6 +36,21 @@ def available_starting_date(value):
     return value
 
 
+def target_service_period(value, available):
+    """Optional Sunday preference; the date remains a not-before restriction."""
+    if value is None or value == '':return ''
+    if not isinstance(value,str) or value not in ('am','pm'):
+        raise ValueError('Sunday service must be AM or PM.')
+    if not available or date.fromisoformat(available).weekday()!=6:
+        raise ValueError('Choose a Sunday date before selecting AM or PM.')
+    return value
+
+
+def retained_service_period(value, available):
+    """An older client changing/clearing the date must not retain a hidden slot."""
+    return value if available and date.fromisoformat(available).weekday()==6 else ''
+
+
 def field(value):
     if value is None:return {'nullValue':None}
     if isinstance(value,bool):return {'booleanValue':value}
@@ -96,7 +111,8 @@ class Publisher:
             imageRevision=row['image_revision'],revision=row['revision'],autoTitle=row['title'],
             titleStatus=row['title_status'],titleRevision=row['title_revision'],
             titleImageKey=row['image_key'],titleUncertain=bool(row['uncertain']),
-            availableStartingDate=row.get('available_starting_date',''))
+            availableStartingDate=row.get('available_starting_date',''),
+            targetServicePeriod=row.get('target_service_period',''))
         self.write(row['id'],metadata)
 
 
@@ -128,6 +144,8 @@ class MediaShare:
             columns={row['name'] for row in db.execute('PRAGMA table_info(media_share_drops)')}
             if 'available_starting_date' not in columns:
                 db.execute("ALTER TABLE media_share_drops ADD COLUMN available_starting_date TEXT NOT NULL DEFAULT ''")
+            if 'target_service_period' not in columns:
+                db.execute("ALTER TABLE media_share_drops ADD COLUMN target_service_period TEXT NOT NULL DEFAULT ''")
         self.assignments.initialize()
 
     def authenticate(self):
@@ -155,7 +173,8 @@ class MediaShare:
         return dict(id=row['id'],revision=row['revision'],imageKey=row['image_key'],imageRevision=row['image_revision'],
             title=row['title'],titleStatus=row['title_status'],titleRevision=row['title_revision'],uncertain=bool(row['uncertain']),
             phase=(job or {}).get('phase',''),text=row['text'],published=row['published']>=row['revision'],
-            publishError=row['publish_error'],availableStartingDate=row.get('available_starting_date',''),worker=worker)
+            publishError=row['publish_error'],availableStartingDate=row.get('available_starting_date',''),
+            targetServicePeriod=row.get('target_service_period',''),worker=worker)
 
     def signal(self):
         with self.changed:self.sequence=secrets.token_hex(8);self.changed.notify_all()
@@ -206,10 +225,14 @@ class MediaShare:
                         if 'text' in value:
                             if not isinstance(value['text'],str) or len(value['text'])>20000:raise self.Error('Text is too long.')
                             db.execute('UPDATE media_share_drops SET text=? WHERE id=?',(value['text'],ident))
-                        if 'availableStartingDate' in value:
-                            try:available=available_starting_date(value['availableStartingDate'])
+                        if 'availableStartingDate' in value or 'targetServicePeriod' in value:
+                            try:
+                                available=available_starting_date(value.get('availableStartingDate',row['available_starting_date']))
+                                period=target_service_period(value.get('targetServicePeriod',
+                                    retained_service_period(row['target_service_period'],available)),available)
                             except ValueError as e:raise self.Error(str(e)) from None
-                            db.execute('UPDATE media_share_drops SET available_starting_date=? WHERE id=?',(available,ident))
+                            db.execute('UPDATE media_share_drops SET available_starting_date=?,target_service_period=? WHERE id=?',
+                                       (available,period,ident))
                         db.execute('UPDATE media_share_drops SET revision=revision+1,updated=?,retry_at=0 WHERE id=?',(time.time(),ident))
             self.signal()
             return jsonify(deleted=True) if request.method=='DELETE' else jsonify(self.public(self.row(ident)))
@@ -244,7 +267,10 @@ class MediaShare:
                 raise self.Error('MediaShare server storage is full. Remove older drops or try later.',429)
             prior=self.row(ident) if ident else None
             if prior and str(prior['revision'])!=request.form.get('revision'):raise self.Error('The slide changed. Refresh before replacing it.',409)
-            try:available=available_starting_date(request.form.get('availableStartingDate',prior['available_starting_date'] if prior else ''))
+            try:
+                available=available_starting_date(request.form.get('availableStartingDate',prior['available_starting_date'] if prior else ''))
+                period=target_service_period(request.form.get('targetServicePeriod',
+                    retained_service_period(prior['target_service_period'],available) if prior else ''),available)
             except ValueError as e:raise self.Error(str(e)) from None
             ident=ident or secrets.token_hex(16);key=secrets.token_hex(16);job=secrets.token_hex(12);now=time.time()
             chunks=(len('data:image/jpeg;base64,')+4*((len(picture)+2)//3)+699999)//700000
@@ -253,11 +279,11 @@ class MediaShare:
                 db.execute('DELETE FROM title_eyes_jobs WHERE id=?',(prior['job'],))
                 db.execute('''UPDATE media_share_drops SET uid=?,request_id=?,image_key=?,image=?,chunks=?,name=?,job=?,
                     image_revision=image_revision+1,revision=revision+1,title=NULL,title_status='queued',title_revision=0,
-                    uncertain=0,created=?,updated=?,retry_at=0,available_starting_date=? WHERE id=?''',
-                    (g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available,ident))
+                    uncertain=0,created=?,updated=?,retry_at=0,available_starting_date=?,target_service_period=? WHERE id=?''',
+                    (g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available,period,ident))
             else:
-                db.execute('INSERT INTO media_share_drops(id,uid,request_id,image_key,image,chunks,name,job,created,updated,available_starting_date) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                           (ident,g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available))
+                db.execute('INSERT INTO media_share_drops(id,uid,request_id,image_key,image,chunks,name,job,created,updated,available_starting_date,target_service_period) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                           (ident,g.uid,rid,key,picture,chunks,'slide.jpg',job,now,now,available,period))
             db.execute('INSERT INTO title_eyes_jobs(id,uid,request_id,status,phase,image,created,expires) VALUES(?,?,?,?,?,?,?,?)',
                        (job,g.uid,rid,'queued','Waiting for title worker',picture,now,now+7*86400))
         self.titles.wake.set();self.signal()
