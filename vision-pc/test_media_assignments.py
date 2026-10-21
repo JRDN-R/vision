@@ -229,7 +229,7 @@ class MediaAssignmentTests(unittest.TestCase):
         self.assertEqual(len(self.get_claims().json['assignments']),1)
         self.assertEqual(self.reserve_at(row,'2026-10-19T19:30:00-04:00','youtube:other').status_code,409)
 
-    def test_manual_override_allows_other_date_but_never_other_service(self):
+    def test_manual_override_allows_other_date_and_explicit_service_reuse(self):
         row=self.sunday_row('pm')
         payload={**self.claim(row),'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'}
         self.assignments.now=lambda:datetime(2026,10,21,20,tzinfo=timezone.utc)
@@ -239,7 +239,7 @@ class MediaAssignmentTests(unittest.TestCase):
         server.media_share.initialize()
         self.assertEqual(self.get_claims().json['assignments'][0]['selectionMode'],'manual')
         self.assertEqual(self.request('post','assignments/reserve',json=payload).status_code,200)
-        self.assertEqual(self.request('post','assignments/reserve',json={**payload,'serviceId':'youtube:other'}).status_code,409)
+        self.assertEqual(self.request('post','assignments/reserve',json={**payload,'serviceId':'youtube:other'}).status_code,200)
         self.assertEqual(self.request('post','assignments/reserve',json={**payload,'selectionMode':'auto'}).status_code,409)
 
     def test_picker_availability_is_read_only_and_hides_other_service_identity(self):
@@ -249,8 +249,8 @@ class MediaAssignmentTests(unittest.TestCase):
             'imageKeys':[row['imageKey'],'unused-key']})
         self.assertEqual(response.status_code,200,response.json)
         self.assertEqual(response.json['availability'],[
-            {'imageKey':row['imageKey'],'selectable':False,'state':'reserved'},
-            {'imageKey':'unused-key','selectable':True,'state':'unused'}])
+            {'imageKey':row['imageKey'],'selectable':False,'manualSelectable':True,'state':'reserved'},
+            {'imageKey':'unused-key','selectable':True,'manualSelectable':True,'state':'unused'}])
         own=self.request('post','assignments/availability',json={'serviceId':'youtube:video1','imageKeys':[row['imageKey']]})
         self.assertTrue(own.json['availability'][0]['selectable'])
         with server.connect_db() as db:
@@ -304,6 +304,80 @@ class MediaAssignmentTests(unittest.TestCase):
             accepted=self.reserve_at(row,'2026-10-25T18:00:00-04:00')
         self.assertEqual(accepted.status_code,200,accepted.json)
         self.assertEqual(accepted.json['assignment']['drop']['targetServicePeriod'],'pm')
+
+    def test_reuse_keeps_independent_receipts_and_title_snapshots_after_restart(self):
+        row=self.upload().json
+        self.reserve(row)
+        first={**self.claim(row),'destination':'youtube','destinationId':'video1'}
+        self.assertEqual(self.request('post','assignments/used',json=first).status_code,200)
+        original=self.get_claims().json['assignments'][0]
+        payload={**self.claim(row,'youtube:video2'),'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'}
+        reused=self.request('post','assignments/reserve',json=payload)
+        self.assertEqual(reused.status_code,200,reused.json)
+        self.assertEqual(reused.json['assignment']['receipts'],{})
+        self.assertEqual(self.request('post','assignments/used',json={**payload,'destination':'planning_center','destinationId':'episode2'}).status_code,200)
+        server.media_share.initialize()
+        self.assertEqual(self.get_claims().json['assignments'][0],original)
+        second=self.get_claims('youtube:video2').json['assignments'][0]
+        self.assertEqual(second['receipts'],{'planning_center:image:episode2':row['imageKey']})
+        with server.connect_db() as db:
+            db.execute("UPDATE media_share_drops SET title_status='complete',title='Late title',title_revision=1 WHERE id=?",(row['id'],))
+        self.assertEqual(self.get_claims().json['assignments'][0]['drop']['autoTitle'],'Late title')
+        self.assertEqual(self.get_claims('youtube:video2').json['assignments'][0]['drop']['autoTitle'],'Late title')
+        self.assertEqual(self.reserve(row,'youtube:video3').status_code,409)
+
+    def test_undated_floor_survives_deletion_and_restart_but_manual_and_exact_day_work(self):
+        older=self.upload('older-slide').json
+        newest=self.upload('newer-slide').json
+        with server.connect_db() as db:
+            db.execute('UPDATE media_share_drops SET created=? WHERE id=?',(100,older['id']))
+            db.execute('UPDATE media_share_drops SET created=? WHERE id=?',(200,newest['id']))
+        self.assertEqual(self.reserve(newest).status_code,200)
+        with server.connect_db() as db:
+            db.execute('DELETE FROM media_share_drops WHERE id=?',(newest['id'],))
+        server.media_share.initialize()
+        self.assertEqual(self.reserve(older,'youtube:video2').status_code,409)
+        manual={**self.claim(older,'youtube:video2'),'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'}
+        self.assertEqual(self.request('post','assignments/reserve',json=manual).status_code,200)
+        # Dated slides are separate explicit service targets, not generic backlog.
+        target=self.upload('exact-day-slide').json
+        with server.connect_db() as db:
+            db.execute("UPDATE media_share_drops SET created=50,available_starting_date='2026-10-21' WHERE id=?",(target['id'],))
+        self.assertEqual(self.reserve_at(target,'2026-10-21T19:30:00-04:00','youtube:video3').status_code,200)
+
+    def test_parallel_manual_reuse_does_not_transfer_or_duplicate_claims(self):
+        row=self.upload().json
+        self.reserve(row)
+        def worker(service):
+            with server.app.test_client() as client:
+                return client.post('/api/media-share/assignments/reserve',json={**self.claim(row,service),
+                    'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'},headers={'Authorization':'Bearer test'}).status_code
+        with patch.object(server.media_share.identity,'verify',return_value={'sub':'manager'}), ThreadPoolExecutor(3) as pool:
+            self.assertEqual(list(pool.map(worker,['youtube:video2','youtube:video3','youtube:video2'])),[200,200,200])
+        with server.connect_db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM media_share_assignments').fetchone()[0],3)
+        self.assertEqual(self.get_claims().json['assignments'][0]['serviceId'],'youtube:video1')
+
+    def test_legacy_single_owner_database_migrates_without_losing_receipts(self):
+        row=self.upload().json
+        self.reserve(row)
+        self.request('post','assignments/used',json={**self.claim(row),'destination':'youtube','destinationId':'video1'})
+        before=self.get_claims().json['assignments'][0]
+        with server.connect_db() as db:
+            sql=db.execute("SELECT sql FROM sqlite_master WHERE name='media_share_assignments'").fetchone()[0]
+            sql=sql.replace('media_share_assignments','legacy',1).replace('image_key TEXT NOT NULL','image_key TEXT PRIMARY KEY').replace(', PRIMARY KEY(image_key,service_id)','')
+            db.execute(sql)
+            db.execute('INSERT INTO legacy SELECT * FROM media_share_assignments')
+            db.execute('DROP TABLE media_share_assignments')
+            db.execute('ALTER TABLE legacy RENAME TO media_share_assignments')
+            db.execute('DROP TABLE media_share_auto_floor')
+        server.media_share.initialize()
+        server.media_share.initialize()
+        self.assertEqual(self.get_claims().json['assignments'][0],before)
+        response=self.request('post','assignments/reserve',json={**self.claim(row,'youtube:video2'),
+            'serviceStart':'2026-10-21T19:30:00-04:00','selectionMode':'manual'})
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(self.get_claims().json['assignments'][0],before)
 
 
 if __name__=='__main__':unittest.main()
