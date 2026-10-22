@@ -37,6 +37,10 @@ SEARCH_PAGE_SIZE = 8
 DEFAULT_MAX_DURATION = 32 * 60 * 60
 EVENT_STREAM = sys.stdout
 SUBPROCESS_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+# Prefer a stream-copyable H.264/AAC source at the SAME resolution and fps.
+# Preserve resolution/fps as higher priorities; never pick a lower-quality
+# stream just to avoid transcoding.
+MP4_FORMAT_SORT = ['res', 'fps', '+vcodec:avc', '+acodec:m4a', 'proto']
 
 
 class WorkerError(Exception):
@@ -302,6 +306,19 @@ def apply_probe(media, data):
     return media
 
 
+def encode_cpu_threads(processing=False):
+    """Bound FFmpeg CPU usage without restricting a 16-core host to two threads.
+
+    At most two candidate downloads can encode in parallel inside a Vortex job.
+    A quarter of the logical CPUs per encode (max 8) leaves ample headroom for
+    concurrent encoding, Vision, Venture and the FUPCJ server. Vision's
+    background processing profile retains its conservative two-thread budget.
+    """
+    if processing:
+        return 2
+    return min(8, max(2, (os.cpu_count() or 4) // 4))
+
+
 def export_media(artifact, media, request, *, stem='export'):
     """Convert local media to an explicit, phone-friendly output; never rename it.
 
@@ -349,7 +366,7 @@ def export_media(artifact, media, request, *, stem='export'):
             command += ['-c:v', 'copy']
         else:
             height = f'trunc(min(ih,{cap})/2)*2' if cap else 'trunc(ih/2)*2'
-            command += ['-c:v', 'libx264', '-preset', 'veryfast' if processing else 'fast', '-crf', '28' if processing else '18', '-threads', '2',
+            command += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28' if processing else '18', '-threads', str(encode_cpu_threads(processing)),
                         '-vf', f"scale=w=-2:h='{height}',format=yuv420p"]
         command += ['-c:a', 'aac', '-ac', '1', '-ar', '16000', '-b:a', '32k'] if processing else (['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k'])
         command += ['-tag:v', 'avc1', '-movflags', '+faststart']
@@ -499,6 +516,10 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
         "merge_output_format": "mp4", "restrictfilenames": True,
         "allow_unplayable_formats": False,
     }
+    if not audio and request.get('processingProfile') != 'vision':
+        # ffprobe still decides whether the selected streams are copy-safe;
+        # source metadata alone must never bypass the conversion check.
+        options['format_sort'] = list(MP4_FORMAT_SORT)
     if platform(value) == 'twitter':
         # For equal resolution/fps prefer the native progressive MP4, avoiding
         # thousands of HLS requests for a multi-hour X upload.
@@ -999,7 +1020,8 @@ def verify_result(result, request):
         # Decode the complete local artifact, not just its MP4 header. This
         # catches truncated streams and corrupt frames that ffprobe can list.
         emit(phase='Verifying complete media', progress=None)
-        command = [request['ffmpeg'], '-v', 'error', '-xerror', '-nostdin', '-threads', '2',
+        command = [request['ffmpeg'], '-v', 'error', '-xerror', '-nostdin', '-threads',
+                   str(encode_cpu_threads(request.get('processingProfile') == 'vision')),
                    '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
                    '-i', str(artifact), '-map', '0:V:0?', '-map', '0:a:0?', '-f', 'null', '-']
         checked = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
