@@ -139,6 +139,30 @@ original source in a new tab. This remains available during and after conversion
 Conversion progress uses actual encoded timestamps when the duration is known;
 otherwise it stays indeterminate. Final technical properties come from ffprobe.
 
+### MP4 conversion performance
+
+For ordinary Vortex video downloads, yt-dlp now prefers H.264 video and AAC
+audio when alternatives have the **same resolution and frame rate**. It still
+picks higher-resolution and higher-frame-rate sources when available; those may
+require re-encoding. The worker uses ffprobe to confirm H.264/yuv420p and the
+selected quality cap before stream-copying, and converts incompatible sources
+locally to H.264/AAC without lowering the requested output resolution.
+
+When re-encoding is required, FFmpeg uses x264's `veryfast` preset rather than
+`fast`, retaining CRF 18 for downloads. The per-encode CPU thread budget is
+`min(8, max(2, logical_CPU_count // 4))`; for a Ryzen 9 5950X with 32 logical
+threads, this permits eight encoding threads rather than two. This is capped
+because competing candidates can encode at the same time and FUPCJ also serves
+Vision/Venture. Vision's smaller background processing profile retains its
+two-thread budget. Full-file decoding for verification uses the same bounded
+CPU budget rather than a fixed two threads. All existing size, timeout, codec,
+integrity and account-isolation checks stay in place.
+
+Performance depends on the available source codec, resolution, length and other
+host workloads; these changes do not guarantee a particular speedup. The new
+conversion behavior runs on the Windows processor, not the browser: deploy the
+usual FUPCJ Server `-Action Update` after merging.
+
 Open an item's overflow menu, or hold the item on a touch screen, to save,
 share, cancel, download again or delete it. Native file sharing is offered when
 the browser supports it and the file fits its in-memory sharing limit. Preparing
