@@ -44,8 +44,11 @@ class VortexAdapterTests(unittest.TestCase):
     def choose(self, formats, quality, audio=False):
         # Use yt-dlp's real ranking and fallback implementation, not a string
         # comparison that could pass even when a preset selects the wrong type.
-        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True,
-                              'format': worker.format_selector(quality, audio)}) as ydl:
+        options = {'quiet': True, 'no_warnings': True,
+                   'format': worker.format_selector(quality, audio)}
+        if not audio:
+            options['format_sort'] = list(worker.MP4_FORMAT_SORT)
+        with yt_dlp.YoutubeDL(options) as ydl:
             return ydl.process_ie_result({'id': 'fixture', 'title': 'Fixture media',
                 'webpage_url': 'https://media.example.com/', 'formats': copy.deepcopy(formats)}, download=False)
 
@@ -59,6 +62,24 @@ class VortexAdapterTests(unittest.TestCase):
     def audio(bitrate):
         return {'format_id': 'audio' + str(bitrate), 'url': 'https://media.example.com/audio' + str(bitrate),
                 'ext': 'm4a', 'vcodec': 'none', 'acodec': 'aac', 'abr': bitrate, 'tbr': bitrate}
+
+    def test_h264_copy_preference_keeps_resolution_and_frame_rate(self):
+        avc = dict(self.video(1080), format_id='avc-1080', vcodec='avc1.640028')
+        vp9 = dict(self.video(1080), format_id='vp9-1080',
+                   ext='webm', vcodec='vp09.00.40.08')
+        self.assertEqual(self.choose([vp9, avc], 'balanced')['format_id'], 'avc-1080')
+        # A 60 fps VP9 source must beat a 30 fps AVC source; no downgrade.
+        self.assertEqual(self.choose([vp9 | {'fps': 60}, avc], 'balanced')['format_id'], 'vp9-1080')
+        self.assertEqual(self.choose([vp9, avc, self.video(2160)], 'max')['height'], 2160)
+
+    def test_encoding_threads_are_bounded_and_reserve_vision_headroom(self):
+        with patch.object(worker.os, 'cpu_count', return_value=32):
+            self.assertEqual(worker.encode_cpu_threads(), 8)
+            self.assertEqual(worker.encode_cpu_threads(processing=True), 2)
+        with patch.object(worker.os, 'cpu_count', return_value=8):
+            self.assertEqual(worker.encode_cpu_threads(), 2)
+        with patch.object(worker.os, 'cpu_count', return_value=256):
+            self.assertEqual(worker.encode_cpu_threads(), 8)
 
     def test_real_quality_selection_caps_video_and_max_preserves_best(self):
         formats = [self.video(height) for height in (360, 480, 720, 1080, 2160)]
@@ -403,6 +424,42 @@ class VortexConversionTests(unittest.TestCase):
                 else:
                     self.assertEqual((media['width'], media['height']), (96, 64))
                 self.assertGreater(path.stat().st_size, 0)
+
+    def test_avc_uses_stream_copy_and_vp9_uses_faster_parallel_encode(self):
+        # Exercise the actual FFmpeg commands and codec checks, not only a
+        # fabricated CLI string. Keep decoding/encoding entirely local.
+        h264 = self.root / 'h264-input.mp4'
+        subprocess.run([self.ffmpeg, '-v', 'error', '-i', str(self.source),
+                        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                        '-c:a', 'aac', str(h264)],
+                       check=True, capture_output=True, timeout=30)
+        original_popen = subprocess.Popen
+        commands = []
+
+        def record_command(command, *args, **kwargs):
+            commands.append(command)
+            return original_popen(command, *args, **kwargs)
+
+        with patch.object(worker.subprocess, 'Popen', side_effect=record_command), \
+                patch.object(worker.os, 'cpu_count', return_value=32):
+            copied = worker.export_media(h264, {'mediaType':'video', 'duration':1},
+                                         self.request(), stem='copied')
+        copy_command = next(cmd for cmd in commands if '-progress' in cmd)
+        self.assertEqual(copy_command[copy_command.index('-c:v') + 1], 'copy')
+        self.assertEqual(worker.probe_file(copied, self.ffmpeg, self.root)['streams'][0]['codec_name'], 'h264')
+
+        commands.clear()
+        vp9 = self.root / 'vp9-input.webm'
+        shutil.copyfile(self.source, vp9)
+        with patch.object(worker.subprocess, 'Popen', side_effect=record_command), \
+                patch.object(worker.os, 'cpu_count', return_value=32):
+            converted = worker.export_media(vp9, {'mediaType':'video', 'duration':1},
+                                            self.request(), stem='encoded')
+        encode_command = next(cmd for cmd in commands if '-progress' in cmd)
+        self.assertEqual(encode_command[encode_command.index('-c:v') + 1], 'libx264')
+        self.assertEqual(encode_command[encode_command.index('-preset') + 1], 'veryfast')
+        self.assertEqual(encode_command[encode_command.index('-threads') + 1], '8')
+        self.assertEqual(worker.probe_file(converted, self.ffmpeg, self.root)['streams'][0]['codec_name'], 'h264')
 
     def test_no_audio_and_oversize_exports_fail_instead_of_returning_invalid_files(self):
         silent = self.root / 'silent.webm'
