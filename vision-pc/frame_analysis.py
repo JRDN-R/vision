@@ -18,6 +18,7 @@ from owned_assets import exclusive_file
 from local_visual_runtime import VisualRuntime, MODEL_SHA, IncompleteVisualInspection
 from uploaded_media import atomic_json
 from project_naming import ProjectNaming
+from frame_context import caption_prompt, timed_cues
 
 PRESETS = {'maximum': (.25, 1200), 'medium': (1, 600), 'balanced': (3, 300), 'minimal': (10, 120)}
 MAX_BYTES = 256 * 1024 * 1024
@@ -186,6 +187,25 @@ class FrameAnalysis:
                     row = self.row(collection_id)
                 return jsonify({key:row[key] for key in ('id','status','completed','count','error','analysis_step')} if request.args.get('summary')=='1' else self.report(row))
 
+    def caption_material(self, row):
+        """Match captions to this video's own title and asynchronous speech receipt.
+
+        An opted-in transcription gets a bounded chance to finish before captions
+        begin. Other videos never wait. No external provider is contacted.
+        """
+        with self.db() as db:
+            source = db.execute('SELECT source_name FROM uploaded_media WHERE id=? AND project_id=?',
+                                (row['id'], row['project_id'])).fetchone()
+            speech = db.execute('''SELECT status,result_json FROM local_transcriptions
+                WHERE project_id=? AND client_id=?''', (row['project_id'], 'media-' + row['id'])).fetchone()
+        requested = (self.app.config['DATA_DIR'] / 'uploaded-media' / row['id'] / 'transcription.json').is_file()
+        # Do not stall on an unapproved/failed transcript indefinitely.
+        if requested and (speech is None or speech['status'] in ('queued', 'processing', 'approval_waiting')):
+            if time.time() - row['created_at'] < 20 * 60:
+                return None
+        cues = timed_cues(speech['result_json']) if speech and speech['status'] == 'complete' else []
+        return (source['source_name'] if source else ''), cues
+
     def work_once(self):
         # Foreground Qwen work has priority. A batch releases the shared model
         # lock after at most 16 images; all completed observations are durable.
@@ -205,6 +225,12 @@ class FrameAnalysis:
             with self.db() as db:
                 db.execute("UPDATE frame_collections SET status='paused',error=? WHERE id=?", ('Enable the verified local visual worker on FUPCJ Server, then resume.', cid))
             return True
+        material = self.caption_material(row)
+        if material is None:
+            with self.db() as db:
+                db.execute("UPDATE frame_collections SET retry_at=? WHERE id=? AND status='queued'", (time.time()+30, cid))
+            return False
+        video_title, transcript_cues = material
         try:
             # Defer while OBS is running or system memory is constrained.
             import psutil
@@ -244,18 +270,15 @@ class FrameAnalysis:
                         before = prior.get('scenePixels', []) if prior else []
                         pixels = metadata.get('scenePixels', [])
                         same_scene = len(before) == len(pixels) == 192 and sum(abs(a-b) for a,b in zip(before,pixels))/192 < 12
-                        # Independent observations prevent an earlier hallucination
-                        # from becoming evidence for the next frame. Continuity
-                        # is computed separately from pixels, after captioning.
-                        prompt = ('Describe this screenshot using only directly visible evidence. '
-                                  'Use at most 80 words in one factual paragraph: main subjects, positions and visible posture, '
-                                  'objects, setting, lighting, prominent colors, and text only if clearly legible. '
-                                  'Use generic labels when identity or object type is uncertain. '
-                                  'Say "unclear" for ambiguous details; omit guesses. Do not invent names, emotions, '
-                                  'relationships, intent, speech, movement, or time of day. '
-                                  'Before answering, remove any claim you cannot point to in these pixels.')
+                        # Previous descriptions are labeled unverified and only
+                        # provided for pixel-similar scenes. Title/transcript are
+                        # candidate vocabulary, not claims about visible pixels.
+                        prompt, context = caption_prompt(video_title, transcript_cues,
+                                                          metadata['timestamp'], prior, same_scene)
                         description = prior['description'] if reused else runtime.inspect(data_url(output.getvalue(), 'image/jpeg'), prompt)
-                        record = dict(**metadata, pixelHash=digest, description=description, analysisStatus='reused' if reused else 'inspected', independentlyInspected=not bool(reused), sameScene=same_scene)
+                        record = dict(**metadata, pixelHash=digest, description=description,
+                                      context=context, analysisStatus='reused' if reused else 'inspected',
+                                      independentlyInspected=not bool(reused), sameScene=same_scene)
                         if reused:
                             record['reusedFrom'] = prior.get('reusedFrom', prior['index'])
                         with self.lock:
