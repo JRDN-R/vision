@@ -36,7 +36,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r vision-pc/requirements.txt
       - name: Run uploaded video tests
         working-directory: vision-pc
-        run: python -m unittest -v test_uploaded_media test_frame_analysis test_project_naming test_background_upload test_server test_trials test_account_administration
+        run: python -m unittest -v test_uploaded_media test_frame_context test_frame_analysis test_project_naming test_background_upload test_server test_trials test_account_administration
 
       - name: Browser contracts
         run: node --test tests/*.test.cjs
