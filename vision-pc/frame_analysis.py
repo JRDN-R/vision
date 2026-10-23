@@ -194,14 +194,14 @@ class FrameAnalysis:
         begin. Other videos never wait. No external provider is contacted.
         """
         with self.db() as db:
-            source = db.execute('SELECT source_name FROM uploaded_media WHERE id=? AND project_id=?',
+            source = db.execute('SELECT source_name,updated_at FROM uploaded_media WHERE id=? AND project_id=?',
                                 (row['id'], row['project_id'])).fetchone()
             speech = db.execute('''SELECT status,result_json FROM local_transcriptions
                 WHERE project_id=? AND client_id=?''', (row['project_id'], 'media-' + row['id'])).fetchone()
         requested = (self.app.config['DATA_DIR'] / 'uploaded-media' / row['id'] / 'transcription.json').is_file()
         # Do not stall on an unapproved/failed transcript indefinitely.
         if requested and (speech is None or speech['status'] in ('queued', 'processing', 'approval_waiting')):
-            if time.time() - row['created_at'] < 20 * 60:
+            if time.time() - (source['updated_at'] if source else row['created_at']) < 20 * 60:
                 return None
         cues = timed_cues(speech['result_json']) if speech and speech['status'] == 'complete' else []
         return (source['source_name'] if source else ''), cues
