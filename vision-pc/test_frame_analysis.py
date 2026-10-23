@@ -77,6 +77,34 @@ class FrameAnalysisTests(unittest.TestCase):
             self.assertEqual(frame['analysisStatus'],'skipped');self.assertIsNone(frame['description']);self.assertNotIn('reusedFrom',frame)
         self.assertEqual(report['frames'][18]['reusedFrom'],0)
 
+    def test_title_transcript_and_context_reach_visual_worker(self):
+        store,cid=self.collection(2);calls=[]
+        class FakeRuntime:
+            def __init__(self,*args):pass
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def inspect(self,image,question):calls.append(question);return 'A hinge is visible.'
+        store.runtime_factory=FakeRuntime;server.sessions.local.settings={'enabled':True,'visualEnabled':True}
+        source=('Samsung Dryer Door Reversal.mp4',[(0.0,'Use a Phillips screwdriver on the hinge.')])
+        with patch.object(store,'caption_material',return_value=source),patch('psutil.process_iter',return_value=[]),patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
+            self.assertTrue(store.work_once())
+        self.assertEqual(len(calls),1)
+        self.assertIn('Samsung Dryer Door Reversal',calls[0])
+        self.assertIn('Phillips screwdriver',calls[0])
+        observed=store.report(store.row(cid))['frames'][0]
+        self.assertEqual(observed['context']['videoTitle'],'Samsung Dryer Door Reversal')
+        self.assertEqual(observed['context']['version'],'bounded-transcript-v1')
+
+    def test_pending_transcript_leaves_collection_queued(self):
+        store,cid=self.collection()
+        server.sessions.local.settings={'enabled':True,'visualEnabled':True}
+        with patch.object(store,'caption_material',return_value=None):
+            self.assertFalse(store.work_once())
+        row=store.row(cid)
+        self.assertEqual(row['status'],'queued')
+        self.assertEqual(row['completed'],0)
+        self.assertGreater(row['retry_at'],0)
+
     def test_missing_model_preserves_frames(self):
         store,cid=self.collection();server.sessions.local.settings={}
         self.assertTrue(store.work_once());self.assertEqual(store.row(cid)['status'],'paused')
