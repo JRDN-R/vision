@@ -25,6 +25,9 @@ showing shown looks looking image picture screenshot scene frame video camera ap
 near side right left first second next last now today start off back other still take taking taken
 really actually already little thing things maybe want need going gonna make get got let means see
 through same said like okay alright hello please welcome channel learn step tutorial guide quick
+theyre youre were didnt doesnt wasnt wont cant its well all go goes going gone more around
+easy peasy yes okay nothings everybody anyone clearly simply keep keeping come coming use uses
+they their them there look looks someone anybody dontive really lot lots such
 here two three four five six seven eight nine ten now more some part parts thing one out up down
 """.split())
 
@@ -96,13 +99,21 @@ def narration(cues, when):
 
 def keyword_tags(title, cues, excerpt):
     """Non-model keyword weighting: current speech > title > entire transcript."""
-    scores = Counter()
-    all_text = ' '.join(line for _, line in cues)[:30000]
-    for source, weight in ((all_text, 1), (title, 5), (excerpt, 6)):
-        for word in WORDS.findall(source.lower()):
-            if word not in STOP and len(word) <= 24 and not word.isnumeric():
-                scores[word] += weight
-    return [word for word, _ in scores.most_common(MAX_TAGS)]
+    def terms(text):
+        return [word for word in WORDS.findall(text.lower())
+                if word not in STOP and "'" not in word and 3 <= len(word) <= 24
+                and not any(char.isdigit() for char in word)]
+    # Prioritize time-local subjects over globally common filler words.
+    ranked = [Counter(terms(excerpt)), Counter(terms(title)),
+              Counter(terms(' '.join(line for _, line in cues)[:30000]))]
+    words = []
+    for counts, limit in zip(ranked, (5, 3, 3)):
+        for word, _ in counts.most_common(limit):
+            if word not in words:
+                words.append(word)
+            if len(words) == MAX_TAGS:
+                return words
+    return words
 
 
 def caption_prompt(source_title, cues, when, prior=None, same_scene=False):
