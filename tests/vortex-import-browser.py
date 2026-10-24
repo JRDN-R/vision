@@ -6,9 +6,9 @@ ROOT = Path(__file__).resolve().parents[1]
 URL = 'https://vision-vortex-import.test/'
 HOOK = r'''
 let fixtureAudio=false,fixtureSerial=0,fixtureFinished=false,fixtureHoldLookup=false;
-const fixtureCalls=[],fixtureMeta={id:'vortex_fixture_project',revision:1,backendUrl:'https://fixture.ts.net'};
+const fixtureCalls=[],fixtureMeta={id:'vortex_fixture_project',key:'a'.repeat(64),revision:1,backendUrl:'https://fixture.ts.net'};
 projectQueueSave=()=>{};projectBackup=async()=>{};projectPerformSave=async()=>fixtureMeta;
-ensureRemoteProject=async()=>fixtureMeta;projectCapabilities=async()=>({});
+ensureRemoteProject=async()=>fixtureMeta;projectCapabilities=async()=>({capabilities:{frameCollectionsV1:true}});
 youtubeAPI=async(path,options={})=>{
  fixtureCalls.push({path,method:options.method||'GET',body:options.body?JSON.parse(options.body):null});
  if(path==='vortex/capabilities')return{ready:true,visionImport:true};
@@ -24,7 +24,10 @@ youtubeAPI=async(path,options={})=>{
   if(!path.endsWith('/result'))return{status:fixtureFinished?'complete':'processing',phase:'Transcribing on FUPCJ Server',progress:80};
   const c=document.createElement('canvas');c.width=320;c.height=208;c.getContext('2d').fillRect(0,0,320,208);
   return{title:fixtureAudio?'Music fixture':'Video fixture',mediaType:fixtureAudio?'audio':'video',duration:2,hasAudio:true,
-    frames:fixtureAudio?[]:[{name:'frame-1.jpg',timestamp:0,data:c.toDataURL('image/jpeg')}],transcription:{text:'[00:00:00.000] Fixture transcript'}};
+    frameCollection:fixtureAudio?undefined:'f'.repeat(24),thumbnail:fixtureAudio?null:c.toDataURL('image/jpeg'),
+    frames:fixtureAudio?[]:[{name:'frame-1.jpg',timestamp:0,size:843,
+      frameRef:{projectId:fixtureMeta.id,collectionId:'f'.repeat(24),index:0}}],
+    transcription:{text:'[00:00:00.000] Fixture transcript'}};
  }
  throw new Error('Unexpected fixture request '+path);
 };
@@ -81,6 +84,9 @@ def main():
             assert page.evaluate('vortexFixture.nodes().length') == 1
             assert len([call for call in page.evaluate('vortexFixture.calls()') if call['path'] == 'vortex/import']) == 1
             assert page.evaluate('vortexFixture.queue()[0].sourceKind') == 'vortex'
+            request = page.evaluate("vortexFixture.calls().find(c=>c.path==='vortex/import')")
+            assert request['body']['processing']['describeFrames'] is True, request
+            assert request['body']['processing']['frameDescriptionEngine'] == 'auto', request
             page.evaluate('vortexFixture.reopen();vortexFixture.finish()')
             try:
                 page.wait_for_function('vortexFixture.queue().length===0')
@@ -88,7 +94,8 @@ def main():
                 print(page.evaluate('({queue:vortexFixture.queue(),calls:vortexFixture.calls(),nodes:vortexFixture.nodes()})'))
                 print(errors)
                 raise
-            assert page.evaluate("vortexFixture.nodes()[0].attachments.some(a=>a.role==='video-frame')")
+            assert page.evaluate("vortexFixture.nodes()[0].attachments.some(a=>a.role==='video-frame'&&a.frameRef&&a.metadataOnly)")
+            assert page.evaluate("vortexFixture.nodes()[0].attachments.some(a=>a.role==='video'&&a.frameCollection?.collectionId==='f'.repeat(24))")
             assert page.evaluate("vortexFixture.nodes()[0].attachments.some(a=>a.role==='video-transcript')")
             page.evaluate('vortexFixture.validate()')
             # Files-tab shortcut targets the selected module, rather than adding another.

@@ -133,6 +133,61 @@ class ImportTests(unittest.TestCase):
         server.vortex.queue_vision_history()
         self.assertIsNotNone(self.low_job()['history_id'])
 
+    def test_vortex_video_enters_normal_frame_collection_and_analysis_queue(self):
+        from PIL import Image
+        from frame_analysis import image_metadata
+        import io
+        processing = {'screenshotDetail':'maximum','describeFrames':True,
+                      'frameDescriptionEngine':'auto'}
+        job = self.submit(processing=processing).json['id']
+        self.advance(job)
+        self.finish_low()
+        captured = []
+        def prepared(_source, _metadata, _ffmpeg, _temp, _update, **kwargs):
+            captured.append(kwargs)
+            store = kwargs['frame_store']
+            self.assertIs(store, server.frame_analysis)
+            self.assertEqual(kwargs['collection_id'],job)
+            self.assertEqual(kwargs['processing'],processing)
+            store.create(self.project,job)
+            store.set_source_title(job,self.project,'Vortex Hardware Demonstration')
+            picture = Image.new('RGB',(320,180),'navy')
+            stream = io.BytesIO();picture.save(stream,format='JPEG')
+            frame = store.add(job,0,0,stream.getvalue(),image_metadata(picture))
+            return (dict(title='Vortex Hardware Demonstration',mediaType='video',
+                         duration=4,frameCollection=job,frames=[frame],
+                         thumbnail='data:image/jpeg;base64,' + __import__('base64').b64encode(stream.getvalue()).decode(),
+                         snapshotInterval=.25,hasAudio=True),
+                    [dict(start=0,end=4,mimeType='audio/mpeg',
+                          audioData='data:audio/mpeg;base64,SUQzYXVkaW8=')])
+        with patch('vortex_imports.prepare_source',side_effect=prepared):
+            self.advance(job)  # Extract and store frames.
+            queued = self.advance(job)  # Enqueue audio transcription.
+            receipt = json.loads(Path(queued['result_path']).read_text())['transcriptionId']
+            with server.connect_db() as db:
+                db.execute("UPDATE local_transcriptions SET status='complete',result_json=? WHERE id=?",
+                           (json.dumps({'text':'[00:00:00.000] Remove the door hinge screws.'}),receipt))
+            row = self.advance(job)  # Seal frames after speech is available.
+        self.assertEqual(row['status'],'complete')
+        self.assertEqual(len(captured),1)
+        saved = self.client.get('/api/jobs/'+job+'/result',headers=self.alice).json
+        self.assertEqual(saved['frameCollection'],job)
+        self.assertEqual(saved['frames'][0]['frameRef']['collectionId'],job)
+        self.assertNotIn('data',saved['frames'][0])
+        frame_row = server.frame_analysis.row(job)
+        self.assertEqual(frame_row['caption_engine'],'luna')
+        self.assertEqual(frame_row['fallback_enabled'],1)
+        self.assertEqual(frame_row['analysis_step'],1)
+        self.assertEqual(frame_row['status'],'queued')
+        title,cues=server.frame_analysis.caption_material(frame_row)
+        self.assertEqual(title,'Vortex Hardware Demonstration')
+        self.assertEqual(len(cues),1)
+        self.assertIn('hinge screws',cues[0][1])
+        frame_read = self.client.get('/api/projects/'+self.project+'/frames/'+job+'/0',headers=self.alice)
+        self.assertEqual(frame_read.status_code,200)
+        self.assertEqual(frame_read.mimetype,'image/jpeg')
+        self.assertEqual(self.client.get('/api/projects/'+self.project+'/frames/'+job+'/0',headers=self.bob).status_code,404)
+
     def test_deleted_project_stops_before_download(self):
         job = self.submit().json['id']
         with server.connect_db() as db:
@@ -177,6 +232,38 @@ class CodecTests(unittest.TestCase):
                 self.assertEqual(len(sections), 1)
                 self.assertEqual(sections[0]['start'], 0)
                 self.assertAlmostEqual(sections[0]['end'], 2, delta=.1)
+                # The real Vortex analysis proxy uses regular video presets
+                # and preserves full image refs instead of inline JPEG data.
+                class Store:
+                    created = False
+                    title = None
+                    def create(self, project, collection):
+                        self.created = True
+                        assert (project,collection)==('vortex_codec_project','f'*24)
+                    def set_source_title(self, collection, project, title):
+                        self.title = title
+                    def add(self, collection, index, when, jpeg, metadata):
+                        assert len(jpeg) <= 512*1024
+                        assert len(metadata['scenePixels'])==192
+                        return dict(name=f'frame-{index+1:04}.jpg',timestamp=when,
+                                    frameRef=dict(collectionId=collection,index=index,projectId='vortex_codec_project'),
+                                    size=len(jpeg))
+                store = Store()
+                processed, _ = prepare_source(
+                    output, {'title':'Vortex codec test'}, ffmpeg, temp, lambda **_:None,
+                    processing={'screenshotDetail':'maximum','describeFrames':True,'frameDescriptionEngine':'auto'},
+                    frame_store=store, project_id='vortex_codec_project',collection_id='f'*24)
+                if audio:
+                    self.assertFalse(store.created)
+                    self.assertNotIn('frameCollection',processed)
+                    self.assertEqual(processed['frames'],[])
+                else:
+                    self.assertTrue(store.created)
+                    self.assertEqual(store.title,'Vortex codec test')
+                    self.assertEqual(processed['frameCollection'],'f'*24)
+                    self.assertEqual(len(processed['frames']),8)
+                    self.assertTrue(all('frameRef' in f and 'data' not in f for f in processed['frames']))
+                    self.assertTrue(processed['thumbnail'].startswith('data:image/jpeg;base64,'))
                 output.unlink()
         self.assertIn('height>=320', format_selector('small', processing=True))
         self.assertEqual(format_selector(audio=True, processing=True), 'worstaudio/worst[acodec!=none]')

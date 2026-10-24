@@ -434,7 +434,10 @@ def youtube():
             url = normalize_url(payload.get('url', ''))
         except (ValueError, AttributeError):
             raise APIError('Paste a direct YouTube video, Shorts, or youtu.be link.')
-    if source_kind == 'youtube' and payload.get('processing') is not None:
+    # A Vortex video applied to Vision uses exactly the same persisted
+    # project-owned screenshot/caption options as an ordinary YouTube import.
+    # Legacy Vortex clients without processing retain their inline frames.
+    if payload.get('processing') is not None:
         project_id = payload.get('projectId')
         if not isinstance(project_id, str):
             raise APIError('Save the destination project before importing video.')
