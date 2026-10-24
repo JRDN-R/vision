@@ -71,18 +71,21 @@ async function applyVortexMedia(){
  let staged=false;vortexApplying=true;syncVortexImport();
  try{
   const meta=await ensureRemoteProject();if(!vortexDestinationCurrent(destination))return;
+  const capabilities=await projectCapabilities();if(!vortexDestinationCurrent(destination))return;
+  if(!capabilities.capabilities?.frameCollectionsV1)
+   throw new Error('Update FUPCJ Server to enable Vortex screenshot presets and AI descriptions.');
   if(!newModule&&!nodeById(destination.targetId))throw new Error('The selected module was removed. Open Vortex again.');
   const n=newModule?await createModuleNode('video',choice.title):nodeById(destination.targetId);if(!vortexDestinationCurrent(destination)||!n)return;
   // Pending sources use Vision's resumable video placeholder; audio-only sources
   // become audio metadata when the complete transcript has arrived.
   const source={id:uid(),name:choice.title+'.mp4',mime:'video/mp4',size:0,metadataOnly:true,role:'video',status:'pending',snapshotsStatus:'pending',transcriptionStatus:'pending',createdAt:new Date().toISOString()};
   checkpoint();n.attachments.push(source);if(newModule)n.videoSourceId=source.id;
-  const job={sourceKind:'vortex',url:choice.url,provider,includeSoundEvents,projectId:meta.id,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
+  const job={sourceKind:'vortex',url:choice.url,provider,includeSoundEvents,processing:processingSettings(),projectId:meta.id,clientRequestId:uid(),backendUrl:cloudConfig.backendUrl,targetId:n.id,sourceId:source.id,remoteId:'',createdAt:source.createdAt,status:'queued'};
   state.youtubeImports=state.youtubeImports||[];state.youtubeImports.push(job);staged=true;vortexChoice=null;youtubeTask(job);markDirty();updateVideoAttachments(n);renderActivity();
   // Persist the target/receipt before polling so reopening resumes this import.
   await projectBackup();if(!vortexDestinationCurrent(destination))return;
   await projectPerformSave();if(!vortexDestinationCurrent(destination))return;
-  const accepted=await youtubeAPI('vortex/import',{method:'POST',body:JSON.stringify({url:job.url,projectId:job.projectId,provider,includeSoundEvents,clientRequestId:job.clientRequestId})});if(!vortexDestinationCurrent(destination))return;
+  const accepted=await youtubeAPI('vortex/import',{method:'POST',body:JSON.stringify({url:job.url,projectId:job.projectId,provider,includeSoundEvents,processing:job.processing,clientRequestId:job.clientRequestId})});if(!vortexDestinationCurrent(destination))return;
   if(!accepted.id)throw new Error('The server did not return an import ID.');
   job.remoteId=String(accepted.id);markDirty();await projectBackup();
   vortexDialog.close();scheduleYouTubeImports();toast('Vortex import queued. Processing will continue on FUPCJ Server.');
@@ -90,10 +93,17 @@ async function applyVortexMedia(){
  finally{if(staged&&vortexDestinationCurrent(destination)){vortexDialog.close();scheduleYouTubeImports();}vortexApplying=false;syncVortexImport();}
 }
 async function applyVortexImportResult(n,source,job,result,check){
- if(!['video','audio'].includes(result.mediaType)||!Number.isFinite(result.duration)||result.duration<=0||result.duration>7200||!Array.isArray(result.frames)||result.frames.length>120)throw new Error('FUPCJ Server returned incomplete media results.');
+ if(!['video','audio'].includes(result.mediaType)||!Number.isFinite(result.duration)||result.duration<=0||result.duration>7200||!Array.isArray(result.frames)||result.frames.length>1200)throw new Error('FUPCJ Server returned incomplete media results.');
  const audio=result.mediaType==='audio',title=String(result.title||'Vortex media').slice(0,150);
  if(!audio&&!result.frames.length)throw new Error('No video snapshots were returned.');
+ // Imported video frames must participate in the same background description
+ // worker as uploads and YouTube. Audio-only Vortex items need no collection.
+ if(!audio&&job.processing&&!/^[0-9a-f]{24}$/.test(result.frameCollection||''))
+  throw new Error('Update FUPCJ Server: Vortex did not return a frame collection for AI descriptions.');
  let total=0;const frames=result.frames.map((frame,index)=>{
+  if(!Number.isFinite(frame.timestamp)||frame.timestamp<0||frame.timestamp>result.duration)
+   throw new Error('A video snapshot has an invalid timestamp.');
+  if(frame.frameRef)return frameAttachment(frame,source,index);
   total+=String(frame.data||'').length;
   if(total>25*1024*1024||!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(frame.data||'')||!Number.isFinite(frame.timestamp)||frame.timestamp<0||frame.timestamp>result.duration)throw new Error('A video snapshot could not be read.');
   return{id:source.id+'-frame-'+index,name:String(frame.name||'frame.jpg'),mime:'image/jpeg',size:bytesFromDataURL(frame.data).length,data:frame.data,timestamp:frame.timestamp,requestedTimestamp:frame.timestamp,role:'video-frame',videoOf:source.id,generated:true,status:'complete',createdAt:new Date().toISOString()};
@@ -102,12 +112,12 @@ async function applyVortexImportResult(n,source,job,result,check){
  const soundJob={includeSoundEvents:job.includeSoundEvents,sourceKind:audio?'audio':'video',offsetSeconds:0,sections:[{start:0,end:result.duration}]};
  if(result.hasAudio&&job.includeSoundEvents)soundJob.soundResult=validateSoundResult(result.transcription,soundJob);
  check();if(result.sourceAsset){if(!/^[0-9a-f]{24}$/.test(result.sourceAsset.id||''))throw new Error('Invalid retained source reference.');source.ownedAssetId=result.sourceAsset.id;source.sourceRepresentation='acquired-analysis-proxy';}
- source.name=title+(audio?'.m4a':'.mp4');source.mime=audio?'audio/mp4':'video/mp4';source.role=audio?'audio':'video';source.transcriptionProvider=job.provider;source.videoDuration=result.duration;source.videoHasAudio=!!result.hasAudio;source.snapshotsStatus='complete';if(!audio)source.snapshotInterval=result.snapshotInterval;
+ source.name=title+(audio?'.m4a':'.mp4');source.mime=audio?'audio/mp4':'video/mp4';source.role=audio?'audio':'video';source.transcriptionProvider=job.provider;source.videoDuration=result.duration;source.videoHasAudio=!!result.hasAudio;source.snapshotsStatus='complete';if(!audio){source.snapshotInterval=result.snapshotInterval;attachFrameCollection(source,result);}
  n.attachments=n.attachments.filter(a=>!(a.videoOf===source.id&&a.role==='video-frame'));n.attachments.push(...frames);
  if(n.videoSourceId===source.id){
   n.title=title;
   if(audio){n.videoSourceId=null;n.kind='node';n.fileType='Audio';}
-  else{n.src=frames[0].data;const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;}
+  else{n.src=result.thumbnail||frames[0].data||(await frameData(frames[0]));check();const img=await R.loadImage(n.src);check();n.width=img.naturalWidth;n.height=img.naturalHeight;}
   await renderNode(n);check();
  }
  if(result.hasAudio){if(audio){saveTranscript(n,source,text,'complete');source.transcriptionStatus='complete';}else storeVideoTranscript(n,source,text,'complete');if(soundJob.soundResult)saveSoundSubtitles(n,source,soundJob);}
