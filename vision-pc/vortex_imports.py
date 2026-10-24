@@ -18,7 +18,8 @@ from media import MEDIA_LOCK, SUBPROCESS_FLAGS, data_url, snapshot_interval, tim
 from vortex_worker import MEDIA_DEMUXERS, probe_file
 
 
-def prepare_source(source, metadata, ffmpeg, temporary, update):
+def prepare_source(source, metadata, ffmpeg, temporary, update, *,
+                   processing=None, frame_store=None, project_id=None, collection_id=None):
     """Read a verified local file only; preserve timing and bound every output."""
     from PIL import Image, ImageDraw, ImageFont
     details = probe_file(source, ffmpeg, source.parent)
@@ -32,30 +33,60 @@ def prepare_source(source, metadata, ffmpeg, temporary, update):
     flags = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS]
     common = [ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '2']
     title = str(metadata.get('title') or 'Vortex media')[:150]
-    interval, frames, total = snapshot_interval(duration), [], 0
+    # New Vision imports use the same detail/cap/collection contract as
+    # uploaded videos. Ordinary Vortex downloads never create collections.
+    use_collection = video and processing is not None and frame_store is not None
+    visual_duration = min(duration, float(video_stream.get('duration') or duration)) if video else 0
+    if use_collection:
+        if not project_id or not collection_id:
+            raise ValueError('The Vision import is missing a project-owned frame collection.')
+        from frame_analysis import frame_interval, image_metadata, PRESETS
+        interval = frame_interval(visual_duration, processing['screenshotDetail'])
+        count = min(PRESETS[processing['screenshotDetail']][1], math.ceil(visual_duration / interval))
+        frame_store.create(project_id, collection_id)
+        frame_store.set_source_title(collection_id, project_id, title)
+    else:
+        interval = snapshot_interval(duration)
+        count = math.ceil(visual_duration / interval) if video else 0
+    frames, total, thumbnail = [], 0, None
     with tempfile.TemporaryDirectory(prefix='vision-vortex-', dir=temporary) as temp:
         directory = Path(temp)
         if video:
-            visual_duration = min(duration, float(video_stream.get('duration') or duration))
-            count = math.ceil(visual_duration / interval)
             font = ImageFont.load_default(size=16)
             for index in range(count):
                 when = min(index * interval, max(0, visual_duration - .1))
                 update(phase=f'Snapshot {index + 1} of {count}', progress=45 + 25 * index / count)
                 raw = subprocess.run([*common, '-ss', str(when), *flags, '-i', str(source), '-map', '0:V:0',
-                    '-frames:v', '1', '-vf', "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+                    '-frames:v', '1', '-vf',
+                    ("scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease"
+                     if use_collection else "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease"),
                     '-f', 'image2pipe', '-vcodec', 'mjpeg', '-'], capture_output=True, check=True, timeout=90, **SUBPROCESS_FLAGS).stdout
                 with Image.open(io.BytesIO(raw)) as picture:
+                    picture = picture.convert('RGB')
+                    metadata = image_metadata(picture) if use_collection else None
                     stamped = Image.new('RGB', (picture.width, picture.height + 28), 'black')
-                    stamped.paste(picture.convert('RGB'), (0, 0))
+                    stamped.paste(picture, (0, 0))
                     ImageDraw.Draw(stamped).text((picture.width / 2, picture.height + 14), timestamp(when), font=font, fill='white', anchor='mm')
-                    output = io.BytesIO()
-                    stamped.save(output, format='JPEG', quality=72, optimize=True)
-                    encoded = data_url(output.getvalue(), 'image/jpeg')
-                    total += len(encoded)
-                    if total > 24 * 1024 * 1024:
-                        raise ValueError('The snapshots exceed the project limit. Try a shorter video.')
-                    frames.append(dict(name=f'frame-{index + 1:04d}.jpg', timestamp=when, mime='image/jpeg', data=encoded))
+                    # Match the 512-KiB bounded, project-owned JPEG contract.
+                    # Keep the original pixels in the server collection rather
+                    # than sending base64 through the board/project JSON.
+                    for quality in ((82, 68, 52, 38, 25) if use_collection else (72,)):
+                        output = io.BytesIO()
+                        stamped.save(output, format='JPEG', quality=quality, optimize=True)
+                        if not use_collection or output.tell() <= 512 * 1024:
+                            break
+                    jpeg = output.getvalue()
+                    if thumbnail is None:
+                        thumbnail = data_url(jpeg, 'image/jpeg')
+                    if use_collection:
+                        frames.append(frame_store.add(collection_id, index, when, jpeg, metadata))
+                    else:
+                        encoded = data_url(jpeg, 'image/jpeg')
+                        total += len(encoded)
+                        if total > 24 * 1024 * 1024:
+                            raise ValueError('The snapshots exceed the project limit. Try a shorter video.')
+                        frames.append(dict(name=f'frame-{index + 1:04d}.jpg', timestamp=when,
+                                           mime='image/jpeg', data=encoded))
         sections = []
         if audio:
             for index in range(math.ceil(duration / 900)):
@@ -69,9 +100,12 @@ def prepare_source(source, metadata, ffmpeg, temporary, update):
                 if not 0 < path.stat().st_size < 5 * 1024 * 1024:
                     raise ValueError('The audio section exceeded the processing limit.')
                 sections.append(dict(start=start, end=end, mimeType='audio/mpeg', audioData=data_url(path.read_bytes(), 'audio/mpeg')))
-    return dict(title=title, duration=duration, mediaType='video' if video else 'audio',
-                snapshotInterval=interval if video else None, frames=frames,
-                thumbnail=frames[0]['data'] if frames else None, hasAudio=audio), sections
+    result = dict(title=title, duration=duration, mediaType='video' if video else 'audio',
+                  snapshotInterval=interval if video else None, frames=frames,
+                  thumbnail=thumbnail, hasAudio=audio)
+    if use_collection:
+        result['frameCollection'] = collection_id
+    return result, sections
 
 
 def advance(server, value, update):
