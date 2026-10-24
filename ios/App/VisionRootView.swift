@@ -13,7 +13,6 @@ struct VisionRootView: View {
     @StateObject private var web = VisionWebModel()
     @ObservedObject private var downloads = DownloadManager.shared
     @Environment(\.scenePhase) private var scenePhase
-    @State private var settings = false
     @State private var export: ExportItem?
     @State private var offered = Set<String>()
     @State private var urlText = ""
@@ -22,39 +21,44 @@ struct VisionRootView: View {
     private let green = Color(red: 0.83, green: 0.94, blue: 0.67)
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(red: 0.06, green: 0.08, blue: 0.07).ignoresSafeArea()
-                VisionWebView(model: web).opacity(web.page == .downloads ? 0 : 1).allowsHitTesting(web.page != .downloads)
-                if web.page == .downloads { downloadsView }
-                if web.loading && web.page != .downloads {
-                    VStack { ProgressView().tint(green).padding(12).background(.ultraThinMaterial, in: Capsule()); Spacer() }.padding(.top, 6)
+        ZStack {
+            Color(red: 0.06, green: 0.08, blue: 0.07).ignoresSafeArea()
+            // The original website owns the logo, left menus, account UI and
+            // Vision/Venture/Vortex navigation. No replacement native tab bar.
+            VisionWebView(model: web)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(web.showingDownloads ? 0 : 1)
+                .allowsHitTesting(!web.showingDownloads)
+                .accessibilityHidden(web.showingDownloads)
+            if web.showingDownloads {
+                NavigationStack {
+                    downloadsView
+                        .navigationTitle("Downloads")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button { web.showingDownloads = false } label: { Label("Back to workspace", systemImage: "chevron.left") }
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button { web.showingSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("iPhone download settings")
+                            }
+                        }
                 }
-            }
-            .navigationTitle(web.page.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { web.webView.reload(); Task { await downloads.refresh() } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Refresh Vision")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { settings = true } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("Account and download settings")
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                HStack(spacing: 0) {
-                    ForEach(VisionPage.allCases) { page in
-                        Button { web.select(page) } label: {
-                            VStack(spacing: 5) { Image(systemName: page.symbol).font(.system(size: 20)); Text(page.title).font(.caption2) }
-                                .foregroundStyle(web.page == page ? green : .secondary)
-                                .frame(maxWidth: .infinity).padding(.vertical, 10)
-                        }.buttonStyle(.plain).accessibilityAddTraits(web.page == page ? .isSelected : [])
-                    }
-                }.background(.ultraThinMaterial)
+            } else if let failure = web.loadFailure {
+                connectionFailure(failure)
+            } else if web.loading {
+                VStack {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(green)
+                        Text("Loading Vision…").font(.footnote)
+                    }.padding(12).background(.ultraThinMaterial, in: Capsule())
+                    Spacer()
+                }.padding(.top, 6).allowsHitTesting(false)
             }
         }
         .tint(green)
-        .sheet(isPresented: $settings) { settingsView }
+        .task { web.start() }
+        .sheet(isPresented: $web.showingSettings) { settingsView }
         .sheet(item: $export, onDismiss: { Task { @MainActor in offerAudioExport() } }) { item in
             FilesExporter(url: item.url) { saved in
                 if saved, let record = item.record { Task { await downloads.markExported(record) } }
@@ -69,8 +73,22 @@ struct VisionRootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await downloads.refresh(); offerAudioExport() } }
         }
-        .onOpenURL { url in if ["visionapp", "visioncompanion"].contains(url.scheme ?? ""), url.host == "downloads" { web.select(.downloads) } }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("VisionOpenDownloads"))) { _ in web.select(.downloads) }
+        .onOpenURL { url in if ["visionapp", "visioncompanion"].contains(url.scheme ?? ""), url.host == "downloads" { web.openDownloads() } }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("VisionOpenDownloads"))) { _ in web.openDownloads() }
+    }
+
+    private func connectionFailure(_ message: String) -> some View {
+        VStack(spacing: 18) {
+            Image(systemName: "wifi.exclamationmark").font(.largeTitle).foregroundStyle(green)
+            Text("Vision couldn't load").font(.title2.bold())
+            Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Retry") { web.reloadWorkspace() }.buttonStyle(.borderedProminent)
+            Button("Open website") { web.openWebsite() }
+            Button("iPhone downloads") { web.openDownloads() }
+        }
+        .padding(28).frame(maxWidth: 440)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0.06, green: 0.08, blue: 0.07))
     }
 
     private var downloadsView: some View {
@@ -81,7 +99,7 @@ struct VisionRootView: View {
                     Text("Share a media link to Vortex from another app, or paste it here.").foregroundStyle(.secondary)
                 }
                 if web.email.isEmpty {
-                    Button("Continue with Google") { web.select(.vision); Task { await web.signIn() } }.buttonStyle(.borderedProminent)
+                    Button("Continue with Google") { web.showingDownloads = false; Task { await web.signIn() } }.buttonStyle(.borderedProminent)
                     Text("You can also sign in with your existing email and password in Vision.").font(.footnote).foregroundStyle(.secondary)
                 } else {
                     VStack(spacing: 12) {
@@ -148,12 +166,16 @@ struct VisionRootView: View {
             Form {
                 Section("Your account") {
                     if web.email.isEmpty {
-                        Button("Continue with Google") { settings = false; web.select(.vision); Task { await web.signIn() } }
+                        Button("Continue with Google") { web.showingSettings = false; web.showingDownloads = false; Task { await web.signIn() } }
                     } else {
                         Text(web.email)
-                        Button("Sign out", role: .destructive) { settings = false; Task { await web.signOut() } }
+                        Button("Sign out", role: .destructive) { web.showingSettings = false; Task { await web.signOut() } }
                     }
                     Text("Vision, Venture, and Vortex use the same account and saved FUPCJ Server projects.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Workspace") {
+                    Button("Reload workspace") { web.showingSettings = false; web.showingDownloads = false; web.reloadWorkspace() }
+                    Button("Open website in Safari") { web.openWebsite() }
                 }
                 Section("Shared links") {
                     Picker("Video format", selection: $videoFormat) { Text("MP4").tag("mp4"); Text("MOV").tag("mov") }
@@ -168,8 +190,8 @@ struct VisionRootView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Vision settings")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { settings = false } } }
+            .navigationTitle("iPhone settings")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { web.showingSettings = false } } }
         }
     }
 
@@ -178,7 +200,7 @@ struct VisionRootView: View {
         catch { downloads.errorMessage = error.localizedDescription }
     }
     private func offerAudioExport() {
-        guard scenePhase == .active, export == nil, !settings else { return }
+        guard scenePhase == .active, export == nil, !web.showingSettings else { return }
         if let item = downloads.records.first(where: { $0.uid == NativeSession.currentUID && $0.status == .ready && $0.mode == .audio && $0.canExport && !offered.contains($0.id) }) { offer(item) }
     }
 }

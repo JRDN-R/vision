@@ -3,9 +3,9 @@ name: Test Vision iOS
 on:
   push:
     branches: [codex/vision-ios-companion-20261024, main]
-    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/ios-workspace.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
   pull_request:
-    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/ios-workspace.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
         working-directory: vision-pc
         run: python -m unittest -q test_ios_companion test_ios_live_activities
       - name: Check native web bridge and existing login and media integrations
-        run: node --test tests/ios-native.test.cjs tests/account-auth.test.cjs tests/google-login.test.cjs tests/vortex-moises.test.cjs
+        run: node --test tests/ios-native.test.cjs tests/ios-workspace.test.cjs tests/account-auth.test.cjs tests/google-login.test.cjs tests/vortex-moises.test.cjs
   simulator-build:
     runs-on: macos-latest
     timeout-minutes: 25
