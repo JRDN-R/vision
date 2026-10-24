@@ -244,7 +244,8 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(result['frames'][1]['timestamp'],.25);self.assertEqual(server.frame_analysis.row(job)['status'],'queued')
         with self.client.get(self.base+'/frames/'+job+'/7',headers=self.headers) as response:self.assertEqual(response.status_code,200)
         self.assertFalse((self.service.root/job/'source.input').exists())
-        self.assertEqual(server.frame_analysis.row(job)['analysis_step'],2)
+        self.assertEqual(server.frame_analysis.row(job)['analysis_step'],1)
+        self.assertEqual(server.frame_analysis.row(job)['fallback_enabled'],1)
         metadata=json.loads((server.frame_analysis.root/job/'0000.json').read_text())
         self.assertEqual(metadata['width'],800)  # Not reduced to the preview's 640 pixels.
 
