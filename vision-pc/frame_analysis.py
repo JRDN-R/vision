@@ -77,7 +77,8 @@ class FrameAnalysis:
                                      ('luna_requests', 'INTEGER NOT NULL DEFAULT 0'), ('luna_inflight', 'INTEGER NOT NULL DEFAULT 0'),
                                      ('gemini_cost_usd', 'REAL NOT NULL DEFAULT 0'), ('gemini_requests', 'INTEGER NOT NULL DEFAULT 0'),
                                      ('fallback_enabled', 'INTEGER NOT NULL DEFAULT 0'),
-                                     ('fallback_history_json', "TEXT NOT NULL DEFAULT '[]'")]:
+                                     ('fallback_history_json', "TEXT NOT NULL DEFAULT '[]'"),
+                                     ('source_title', "TEXT NOT NULL DEFAULT ''")]:
                 if name not in columns:
                     db.execute(f'ALTER TABLE frame_collections ADD COLUMN {name} {definition}')
             recover_inflight(db)
@@ -101,6 +102,13 @@ class FrameAnalysis:
             (self.root / collection_id).mkdir(exist_ok=True)
             db.execute("INSERT INTO frame_collections(id,project_id,status,created_at) VALUES(?,?,'collecting',?)", (collection_id, project_id, time.time()))
         return collection_id
+
+    def set_source_title(self, collection_id, project_id, title):
+        """Record the actual source title (not the Vision project title)."""
+        title = ' '.join(str(title or '').split())[:180]
+        with self.db() as db:
+            db.execute("UPDATE frame_collections SET source_title=? WHERE id=? AND project_id=? AND status='collecting'",
+                       (title, collection_id, project_id))
 
     def add(self, collection_id, index, when, jpeg, metadata):
         if not 0 <= index < 1200 or len(jpeg) > 512*1024:
@@ -223,13 +231,20 @@ class FrameAnalysis:
                                 (row['id'], row['project_id'])).fetchone()
             speech = db.execute('''SELECT status,result_json FROM local_transcriptions
                 WHERE project_id=? AND client_id=?''', (row['project_id'], 'media-' + row['id'])).fetchone()
+            if source is None:
+                # Vortex uses the same collection ID as its durable import job.
+                # Its transcription receipt is stored under a different
+                # client ID; look it up without touching unrelated projects.
+                speech = db.execute('''SELECT status,result_json FROM local_transcriptions
+                    WHERE project_id=? AND client_id=?''',
+                    (row['project_id'], 'vortex-' + row['id'])).fetchone()
         requested = (self.app.config['DATA_DIR'] / 'uploaded-media' / row['id'] / 'transcription.json').is_file()
         # Do not stall on an unapproved/failed transcript indefinitely.
         if requested and (speech is None or speech['status'] in ('queued', 'processing', 'approval_waiting')):
             if time.time() - (source['updated_at'] if source else row['created_at']) < 20 * 60:
                 return None
         cues = timed_cues(speech['result_json']) if speech and speech['status'] == 'complete' else []
-        return (source['source_name'] if source else ''), cues
+        return (source['source_name'] if source else row.get('source_title', '')), cues
 
     def work_once(self):
         # Foreground Qwen work has priority. A batch releases the shared model
