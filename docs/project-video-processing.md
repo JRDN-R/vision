@@ -44,6 +44,36 @@ inventory and explicit deletion. Deleting a preview leaves its separate frame
 collection intact. Removing a collection makes those frame references unavailable.
 Account deletion and expired trial cleanup include frame collections.
 
+## Vortex videos added to Vision
+
+**Apply** from the Vortex control inside Vision sends the project's complete
+video processing settings with the durable Vortex import receipt. After
+Vortex downloads its verified media file, the private FUPCJ Server processes
+actual video streams through the **same frame interval presets, per-file
+512-KiB cap, 1,200-frame limit and project-owned screenshot collections** used
+for ordinary video imports. These imports no longer stop at the older
+sparse (up to 120) inline screenshots.
+
+After the video's own transcript completes (or if it has no audio), the
+collection is sealed and the same background visual-description queue is
+activated. The queue uses the source video's title and its own timed speech
+cues, and obeys the project's selected Qwen/Luna/Gemini fallback settings.
+If the project has turned off descriptions, all frames are still saved but no
+provider is contacted.
+
+Vision receives a small inline thumbnail and frame references, not hundreds
+of base64 images in its editable project. The node's visual timeline, Activity
+progress, RAG exports and frame-level authorization now work the same as for
+an uploaded video. The original downloaded Vortex *analysis proxy* may have
+lower resolution than a direct original video upload. Screenshots preserve
+the actual pixels available from that source; scaling cannot recreate
+missing details.
+
+Audio-only Vortex imports remain transcript-only. Older Vortex result
+receipts without project-owned frame collections still support their
+original inline screenshot presentation. Standalone Vortex download
+history is not automatically fed into Vision's AI pipeline.
+
 ## Background visual worker
 
 The existing verified Qwen3.5-0.8B runtime supplies descriptions. This feature does
