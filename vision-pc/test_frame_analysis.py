@@ -143,6 +143,55 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(store.row(cid)['status'],'paused')
         self.assertEqual(store.row(cid)['luna_requests'],0)
 
+    def test_automatic_luna_gemini_qwen_fallback_saves_frames(self):
+        store,cid=self.collection(4)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='luna',fallback_enabled=1,analysis_step=1 WHERE id=?",(cid,))
+        # Neither provider has a usable credential; the worker must use Qwen.
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('luna_caption_worker._owner_key',side_effect=RuntimeError('OpenAI key unavailable')):
+            # Key absence is specifically handled as LunaCaptionError. Here
+            # check Gemini's own credential/access denial transition instead.
+            pass
+        from luna_captions import LunaCaptionError
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('luna_caption_worker._owner_key',side_effect=LunaCaptionError('No OpenAI key')):
+            self.assertTrue(store.work_once())
+        self.assertEqual(store.row(cid)['caption_engine'],'gemini')
+        from gemini_captions import GeminiCaptionError
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('gemini_caption_worker._owner_gemini',side_effect=GeminiCaptionError('No Gemini key')):
+            self.assertTrue(store.work_once())
+        self.assertEqual(store.row(cid)['caption_engine'],'local')
+        calls=[]
+        class FakeRuntime:
+            def __init__(self,*args):pass
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def inspect(self,image,question):calls.append(question);return 'A dryer door lies flat on a bench.'
+        store.runtime_factory=FakeRuntime
+        server.sessions.local.settings={'enabled':True,'visualEnabled':True}
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('psutil.process_iter',return_value=[]),\
+             patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
+            self.assertTrue(store.work_once())
+        data=store.report(store.row(cid))
+        self.assertEqual(data['status'],'complete')
+        self.assertEqual(len(calls),1)
+        self.assertEqual(len(data['fallbackHistory']),2)
+        self.assertEqual(data['frames'][0]['model'],'Qwen3.5-0.8B')
+        self.assertEqual(data['activeEngine'],'local')
+
+    def test_auto_engine_seals_with_every_frame(self):
+        store,cid=self.collection(2)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET status='collecting' WHERE id=?",(cid,))
+        store.seal(cid,True,'maximum','auto')
+        row=store.row(cid)
+        self.assertEqual(row['caption_engine'],'luna')
+        self.assertEqual(row['fallback_enabled'],1)
+        self.assertEqual(row['analysis_step'],1)
+
     def test_missing_model_preserves_frames(self):
         store,cid=self.collection();server.sessions.local.settings={}
         self.assertTrue(store.work_once());self.assertEqual(store.row(cid)['status'],'paused')
