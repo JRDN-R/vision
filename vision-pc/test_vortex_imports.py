@@ -133,6 +133,54 @@ class ImportTests(unittest.TestCase):
         server.vortex.queue_vision_history()
         self.assertIsNotNone(self.low_job()['history_id'])
 
+    def test_vortex_video_enters_normal_frame_collection_and_analysis_queue(self):
+        from PIL import Image
+        from frame_analysis import image_metadata
+        import io
+        processing = {'screenshotDetail':'maximum','describeFrames':True,
+                      'frameDescriptionEngine':'auto'}
+        job = self.submit(processing=processing).json['id']
+        self.advance(job)
+        self.finish_low()
+        captured = []
+        def prepared(_source, _metadata, _ffmpeg, _temp, _update, **kwargs):
+            captured.append(kwargs)
+            store = kwargs['frame_store']
+            self.assertIs(store, server.frame_analysis)
+            self.assertEqual(kwargs['collection_id'],job)
+            self.assertEqual(kwargs['processing'],processing)
+            store.create(self.project,job)
+            store.set_source_title(job,self.project,'Vortex Hardware Demonstration')
+            picture = Image.new('RGB',(320,180),'navy')
+            stream = io.BytesIO();picture.save(stream,format='JPEG')
+            frame = store.add(job,0,0,stream.getvalue(),image_metadata(picture))
+            return (dict(title='Vortex Hardware Demonstration',mediaType='video',
+                         duration=4,frameCollection=job,frames=[frame],
+                         thumbnail='data:image/jpeg;base64,' + __import__('base64').b64encode(stream.getvalue()).decode(),
+                         snapshotInterval=.25,hasAudio=False),[])
+        with patch('vortex_imports.prepare_source',side_effect=prepared):
+            self.advance(job)
+            self.advance(job)
+            row = self.advance(job)
+        self.assertEqual(row['status'],'complete')
+        self.assertEqual(len(captured),1)
+        saved = self.client.get('/api/jobs/'+job+'/result',headers=self.alice).json
+        self.assertEqual(saved['frameCollection'],job)
+        self.assertEqual(saved['frames'][0]['frameRef']['collectionId'],job)
+        self.assertNotIn('data',saved['frames'][0])
+        frame_row = server.frame_analysis.row(job)
+        self.assertEqual(frame_row['caption_engine'],'luna')
+        self.assertEqual(frame_row['fallback_enabled'],1)
+        self.assertEqual(frame_row['analysis_step'],1)
+        self.assertEqual(frame_row['status'],'queued')
+        title,cues=server.frame_analysis.caption_material(frame_row)
+        self.assertEqual(title,'Vortex Hardware Demonstration')
+        self.assertEqual(cues,[])
+        frame_read = self.client.get('/api/projects/'+self.project+'/frames/'+job+'/0',headers=self.alice)
+        self.assertEqual(frame_read.status_code,200)
+        self.assertEqual(frame_read.mimetype,'image/jpeg')
+        self.assertEqual(self.client.get('/api/projects/'+self.project+'/frames/'+job+'/0',headers=self.bob).status_code,404)
+
     def test_deleted_project_stops_before_download(self):
         job = self.submit().json['id']
         with server.connect_db() as db:
