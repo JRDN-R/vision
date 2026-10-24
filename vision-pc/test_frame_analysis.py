@@ -148,11 +148,6 @@ class FrameAnalysisTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute("UPDATE frame_collections SET caption_engine='luna',fallback_enabled=1,analysis_step=1 WHERE id=?",(cid,))
         # Neither provider has a usable credential; the worker must use Qwen.
-        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
-             patch('luna_caption_worker._owner_key',side_effect=RuntimeError('OpenAI key unavailable')):
-            # Key absence is specifically handled as LunaCaptionError. Here
-            # check Gemini's own credential/access denial transition instead.
-            pass
         from luna_captions import LunaCaptionError
         with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
              patch('luna_caption_worker._owner_key',side_effect=LunaCaptionError('No OpenAI key')):
