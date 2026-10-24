@@ -114,6 +114,7 @@ def advance(server, value, update):
     options = json.loads(value['import_options'])
     project_id = options['projectId']
     retained = options.get('assetOwnership') == 1
+    processing = options.get('processing')
     with server.connect_db() as db:
         owner = db.execute('SELECT owner_uid FROM projects WHERE id=?', (project_id,)).fetchone()
     if not owner or owner['owner_uid'] != uid:
@@ -156,7 +157,9 @@ def advance(server, value, update):
             with MEDIA_LOCK:
                 prepared, sections = prepare_source(source, metadata,
                     server.app.config['FFMPEG'], str(server.app.config['DATA_DIR'] / 'temporary'),
-                    lambda **fields: update(job_id, **fields))
+                    lambda **fields: update(job_id, **fields),
+                    processing=processing, frame_store=server.frame_analysis if processing else None,
+                    project_id=project_id, collection_id=job_id)
             if source_asset:
                 prepared['sourceAsset'] = server.owned_assets.snapshot(source_asset)
             prepared.update(url=value['url'], provider=value['provider'], includeSoundEvents=bool(value['include_sound_events']))
@@ -192,6 +195,14 @@ def advance(server, value, update):
             prepared['transcription'] = transcript['result']
         if retained:
             server.owned_assets.retain_result(uid, job_id, project_id, prepared)
+        if prepared.get('frameCollection'):
+            # Publish the collection only after transcript finalization, so
+            # background captions can use the actual Vortex title + ASR cues.
+            # The result receipt is already durable; browser reopening merely
+            # adopts the same frame IDs, never recreating screenshots.
+            server.frame_analysis.seal(job_id, processing.get('describeFrames'),
+                                       processing.get('screenshotDetail'),
+                                       processing.get('frameDescriptionEngine'))
         update(job_id, status='complete', phase='Ready to add to Vision', progress=100,
                result=json.dumps(prepared, ensure_ascii=False).encode('utf-8'))
     except server.APIError as error:
