@@ -3,27 +3,22 @@ import WebKit
 import UniformTypeIdentifiers
 import AuthenticationServices
 
-enum VisionPage: String, CaseIterable, Identifiable {
-    case vision, venture, vortex, downloads
-    var id: String { rawValue }
-    var title: String { rawValue.capitalized }
-    var symbol: String {
-        switch self { case .vision: return "square.grid.2x2"; case .venture: return "bubble.left.and.bubble.right"; case .vortex: return "arrow.down.circle"; case .downloads: return "tray.and.arrow.down" }
-    }
-}
-
 @MainActor
 final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply, WKDownloadDelegate {
-    @Published var page: VisionPage = .vision
     @Published var loading = true
+    @Published var loadFailure: String?
     @Published var errorMessage: String?
     @Published var email = (try? NativeSession.load())?.email ?? ""
     @Published var exportURL: URL?
     @Published var bridgeReady = false
+    @Published var showingDownloads = false
+    @Published var showingSettings = false
     private let google = GoogleSignIn()
     private var authenticating = false
     private var downloadURLs: [ObjectIdentifier: URL] = [:]
-    private var lastWebPage: VisionPage = .vision
+    private var started = false
+    private var activeNavigation: WKNavigation?
+    private var loadWatchdog: Task<Void, Never>?
 
     lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -32,19 +27,8 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let controller = WKUserContentController()
         controller.addScriptMessageHandler(self, contentWorld: .page, name: "vision")
-        let bridge = """
-        (() => {
-          if (window.top !== window) return;
-          const post = body => window.webkit.messageHandlers.vision.postMessage(body);
-          Object.defineProperty(window, 'VisionNative', {value: Object.freeze({
-            isNative: true,
-            signIn: () => post({type:'signIn'}),
-            openDownloads: () => post({type:'downloads'}),
-            adoptVortexJob: jobID => post({type:'vortexJob',jobID})
-          }), configurable:false, writable:false});
-        })();
-        """
-        controller.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: WorkspaceScripts.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: WorkspaceScripts.sidebar, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
@@ -52,38 +36,71 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         view.isOpaque = false
         view.backgroundColor = UIColor(red: 0.06, green: 0.08, blue: 0.07, alpha: 1)
         view.scrollView.backgroundColor = view.backgroundColor
+        view.scrollView.contentInsetAdjustmentBehavior = .never
         view.allowsBackForwardNavigationGestures = true
-        view.load(URLRequest(url: AppConfiguration.webURL))
+        // Do not start navigation inside a lazy initializer: delegates and the
+        // native bridge must observe the fully initialized, mounted web view.
         return view
     }()
 
-    func select(_ value: VisionPage) {
-        page = value
-        guard value != .downloads else { Task { await DownloadManager.shared.refresh() }; return }
-        if value == lastWebPage { return }
-        let wasVortex = lastWebPage == .vortex
-        lastWebPage = value
-        if value == .vortex {
-            webView.load(URLRequest(url: AppConfiguration.webURL.appendingPathComponent("vortex/")))
-        } else if wasVortex {
-            var url = AppConfiguration.webURL
-            if value == .venture { url = url.appendingPathComponent("venture/") }
-            webView.load(URLRequest(url: url))
-        } else {
-            Task { [weak self] in
-                guard let self else { return }
-                let switched = try? await self.webView.callAsyncJavaScript("if (window.VisionNativeSelectWorkspace) { window.VisionNativeSelectWorkspace(view); return true; } return false;", arguments: ["view": value.rawValue], in: nil, contentWorld: .page)
-                guard self.page == value, self.lastWebPage == value else { return }
-                if switched as? Bool == true { return }
-                self.webView.load(URLRequest(url: value == .venture ? AppConfiguration.webURL.appendingPathComponent("venture/") : AppConfiguration.webURL))
-            }
+    func start() {
+        guard !started else { return }
+        started = true
+        navigate(to: AppConfiguration.workspaceURL)
+    }
+
+    func reloadWorkspace() {
+        let current = webView.url
+        navigate(to: AppConfiguration.isTrustedPage(current) ? current! : AppConfiguration.workspaceURL)
+    }
+
+    func openWebsite() { UIApplication.shared.open(AppConfiguration.workspaceURL) }
+
+    private func navigate(to url: URL) {
+        guard AppConfiguration.isTrustedPage(url) else {
+            failLoading("The workspace address is not an approved Vision page. Reload the workspace to return to Vision.")
+            return
         }
+        beginLoading()
+        activeNavigation = webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60))
+    }
+
+    private func beginLoading() {
+        loadWatchdog?.cancel()
+        loading = true
+        bridgeReady = false
+        loadFailure = nil
+        loadWatchdog = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+            guard !Task.isCancelled, let self, self.loading else { return }
+            self.failLoading("Vision did not finish loading within 60 seconds. Check the connection, then retry. Your saved account and projects have not been cleared.")
+            self.webView.stopLoading()
+        }
+    }
+
+    private func finishLoading() {
+        loadWatchdog?.cancel()
+        loadWatchdog = nil
+        loading = false
+    }
+
+    private func failLoading(_ message: String) {
+        finishLoading()
+        bridgeReady = false
+        loadFailure = message
+    }
+
+    func openDownloads() {
+        showingDownloads = true
+        Task { await DownloadManager.shared.refresh() }
     }
 
     func signIn() async {
         guard !authenticating else { return }
         guard bridgeReady else {
-            errorMessage = "Vision is still connecting. If this continues, merge the iOS update and refresh the app so the website and FUPCJ Server use the new sign-in bridge."
+            errorMessage = loading
+                ? "The workspace is still loading. Sign in once it appears. A failed connection will show a Retry button."
+                : "The workspace loaded, but its sign-in bridge is not ready. Use Reload workspace and try again."
             return
         }
         authenticating = true
@@ -116,9 +133,11 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             replyHandler(nil, "Untrusted Vision message."); return
         }
         switch type {
-        case "ready": bridgeReady = true; replyHandler(true, nil)
+        case "ready": bridgeReady = true; loadFailure = nil; finishLoading(); replyHandler(true, nil)
         case "signIn": replyHandler(true, nil); Task { await signIn() }
-        case "downloads": select(.downloads); replyHandler(true, nil)
+        case "downloads": openDownloads(); replyHandler(true, nil)
+        case "settings": showingSettings = true; replyHandler(true, nil)
+        case "reload": replyHandler(true, nil); Task { reloadWorkspace() }
         case "sessionError": errorMessage = "Your sign-in could not be shared with Vortex. Reconnect in Vision."; replyHandler(true, nil)
         case "session":
             do {
@@ -152,33 +171,72 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         }
     }
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { loading = true; bridgeReady = false }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loading = false }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        activeNavigation = navigation
+        beginLoading()
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === activeNavigation else { return }
+        finishLoading()
+        loadFailure = nil
+        guard AppConfiguration.isTrustedPage(webView.url) else { return }
+        // Also covers a workspace installed by the site's document.write loader.
+        webView.evaluateJavaScript(WorkspaceScripts.sidebar, completionHandler: nil)
+    }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        loading = false
-        if (error as NSError).code != NSURLErrorCancelled { errorMessage = "Vision could not connect. Check your internet connection, then refresh." }
+        navigationFailed(navigation, error: error)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        navigationFailed(navigation, error: error)
+    }
+    private func navigationFailed(_ navigation: WKNavigation?, error: Error) {
+        guard navigation === activeNavigation else { return }
+        let value = error as NSError
+        if value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled {
+            // Superseded navigation and explicit Stop aren't network failures.
+            // Keep a more useful HTTP/policy/timeout error already recorded.
+            finishLoading()
+            return
+        }
+        failLoading("Vision could not load the workspace (\(value.domain), \(value.code)). Check the connection and retry. Your saved data has not been cleared.")
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        loading = false; errorMessage = "iOS paused the workspace to free memory. Refresh to reconnect to your saved projects."
+        failLoading("iOS stopped the workspace to free memory. Reload to reconnect to your saved projects.")
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if navigationAction.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
-        guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
-        if navigationAction.shouldPerformDownload || (url.scheme == "blob" && AppConfiguration.isTrustedPage(webView.url)) { decisionHandler(.download); return }
+        guard let url = navigationAction.request.url else {
+            failLoading("The workspace tried to open an invalid address. Reload Vision to retry.")
+            decisionHandler(.cancel); return
+        }
+        if (navigationAction.shouldPerformDownload || url.scheme == "blob") && AppConfiguration.isTrustedPage(webView.url) {
+            decisionHandler(.download); return
+        }
         if AppConfiguration.isTrustedPage(url) { decisionHandler(.allow); return }
         // Keep untrusted content outside the WebKit view holding the native bridge.
-        if navigationAction.navigationType == .linkActivated, ["https", "http", "mailto"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+        if navigationAction.navigationType == .linkActivated, ["https", "http", "mailto"].contains(url.scheme ?? "") {
+            UIApplication.shared.open(url)
+        } else if loading {
+            failLoading("Vision blocked navigation outside its approved workspace. Reload to return to the original Vision page.")
+        }
         decisionHandler(.cancel)
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
+            failLoading("The Vision website returned HTTP \(response.statusCode). Retry or open the website to check its availability.")
+            decisionHandler(.cancel); return
+        }
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url, ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+        if let url = navigationAction.request.url {
+            if AppConfiguration.isTrustedPage(url) { navigate(to: url) }
+            else if ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+        }
         return nil
     }
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { finishLoading(); download.delegate = self }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { finishLoading(); download.delegate = self }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let name = URL(fileURLWithPath: suggestedFilename).lastPathComponent.replacingOccurrences(of: ":", with: "_")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("VisionExports", isDirectory: true).appendingPathComponent(UUID().uuidString, isDirectory: true)
