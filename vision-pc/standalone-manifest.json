@@ -1,7 +1,7 @@
 {
-  "version": "1.0.9.3",
-  "sha256": "8f828dad82cc226d4622c9701e12f9ac8e9f7e88d9afceb17f31060212acd960",
-  "size": 20854670,
+  "version": "1.0.9.4",
+  "sha256": "003fd2520e1a7710893ad4d097a58bee264248fd736086d363d45d498182466e",
+  "size": 20855640,
   "server": "https://desktop-vjt2br2.tail385c9d.ts.net",
   "policy": "default-src 'none'; img-src 'self' data: blob: https://www.gstatic.com; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://apis.google.com https://www.gstatic.com https://visionboard-api.firebaseapp.com; worker-src blob:; media-src blob: data:; connect-src 'self' blob: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://visionboard-api.firebaseapp.com https://www.googleapis.com/identitytoolkit/ https://www.gstatic.com; frame-src blob: https://visionboard-api.firebaseapp.com https://accounts.google.com https://apis.google.com; font-src data:; manifest-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
 }
