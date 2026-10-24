@@ -3,9 +3,9 @@ name: Test Vision iOS
 on:
   push:
     branches: [codex/vision-ios-companion-20261024, main]
-    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', '.github/workflows/test-ios.yml']
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
   pull_request:
-    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', '.github/workflows/test-ios.yml']
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', 'tests/test_ios_installer.py', '.github/workflows/test-ios.yml']
   workflow_dispatch:
 
 permissions:
@@ -27,6 +27,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Preserve manually selected signing identity during weekly renewal
+        run: python tests/test_ios_installer.py -v
       - name: Install isolated backend test dependencies
         run: python -m pip install 'Flask>=3.1,<4' 'PyJWT[crypto]>=2.10,<3' 'requests>=2.32,<3' 'psutil>=7.2,<8' 'Pillow>=11,<13' 'httpx[http2]>=0.28,<1'
       - name: Check account isolation, authentication exchange, delivery and Live Activity pushes

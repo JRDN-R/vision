@@ -199,6 +199,23 @@ print(str(value) if value is not None else "")
 PY
 }
 SAVED_TEAM="$(saved_value team)"
+if [ -z "$SAVED_TEAM" ] && [ -f "$REPO_ROOT/ios/Vision.xcodeproj/project.pbxproj" ]; then
+  # On first launch the user may choose a team in Xcode and press Run before
+  # a signing certificate exists for terminal discovery. Adopt that selection
+  # before regenerating, so weekly renewal keeps the installed app's bundle ID.
+  SAVED_TEAM="$("$PYTHON" - "$REPO_ROOT/ios/Vision.xcodeproj/project.pbxproj" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+teams = set()
+if path.stat().st_size <= 5 * 1024 * 1024:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    pattern = r'^\s*"?DEVELOPMENT_TEAM"?\s*=\s*(?:"([A-Z0-9]{10})"|([A-Z0-9]{10}))\s*;\s*$'
+    teams = {quoted or bare for quoted, bare in re.findall(pattern, text, re.MULTILINE)}
+    teams.discard("TESTTEAM01")  # The unsigned CI-only project fixture is not a real account.
+print(next(iter(teams)) if len(teams) == 1 else "")
+PY
+)"
+fi
 TEAM="${REQUESTED_TEAM:-$SAVED_TEAM}"
 PUSH="${REQUESTED_PUSH:-$(saved_value push)}"
 PUSH="${PUSH:-0}"
