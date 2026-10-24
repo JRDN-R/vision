@@ -26,8 +26,8 @@ Public access is saved in `C:\ProgramData\VisionPC\config.json`. Future `Setup` 
 
 Vision continues using the local Qwen 0.8B visual model by default. If you want
 cloud-based descriptions, sign in to the **Vision account connected to your FUPCJ Server**
-and save a normal OpenAI Platform key in the existing **Account > OpenAI API key**
-control (the console key setting). The server stores it under Windows DPAPI.
+and save a normal OpenAI Platform key in the existing **Run > Settings > OpenAI API key**
+control (saved to your Google-signed-in Vision account). The server stores it under Windows DPAPI.
 You do not need a new Firebase Cloud Function, Cloud Run service, or embedded browser key.
 
 If you already have an OpenAI key saved in Vision, **do not paste it again**.
