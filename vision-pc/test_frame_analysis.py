@@ -105,6 +105,44 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(row['completed'],0)
         self.assertGreater(row['retry_at'],0)
 
+    def test_luna_captions_use_existing_account_credential_and_resume(self):
+        store,cid=self.collection(6)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='luna',analysis_step=1 WHERE id=?",(cid,))
+        server.sessions.local.settings={}  # Luna must not require the Qwen model.
+        calls=[]
+        def fake_batch(key,entries):
+            calls.append((key,[e['index'] for e in entries]))
+            return {'usage':{'input_tokens':8000,'output_tokens':500},
+                    'output_text':json.dumps({'frames':[{'index':item['index'],
+                        'description':'A technician removes screws from an appliance door.'}
+                        for item in entries]})}
+        source=('Samsung dryer door.mp4',[(0.0,'Remove the latch screw.')])
+        with patch.object(store,'caption_material',return_value=source),\
+             patch('luna_caption_worker._owner_key',return_value='server-protected-test-key'),\
+             patch('luna_caption_worker.analyze_batch',side_effect=fake_batch):
+            self.assertTrue(store.work_once())
+            self.assertEqual(store.row(cid)['completed'],4)
+            self.assertTrue(store.work_once())
+        report=store.report(store.row(cid))
+        self.assertEqual(report['status'],'complete')
+        self.assertEqual(report['model'],'gpt-6-luna')
+        self.assertGreater(report['estimatedProviderCostUSD'],0)
+        self.assertEqual(report['providerRequests'],1)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0][1],[0,1,2,3])
+        self.assertNotIn('server-protected-test-key',json.dumps(report))
+        self.assertEqual(report['frames'][4]['analysisStatus'],'reused')
+
+    def test_luna_missing_account_key_pauses_safely(self):
+        store,cid=self.collection(2)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='luna' WHERE id=?",(cid,))
+        with patch.object(store,'caption_material',return_value=('',[])):
+            self.assertTrue(store.work_once())
+        self.assertEqual(store.row(cid)['status'],'paused')
+        self.assertEqual(store.row(cid)['luna_requests'],0)
+
     def test_missing_model_preserves_frames(self):
         store,cid=self.collection();server.sessions.local.settings={}
         self.assertTrue(store.work_once());self.assertEqual(store.row(cid)['status'],'paused')
