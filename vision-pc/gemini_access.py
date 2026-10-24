@@ -344,8 +344,8 @@ class GeminiUsage:
 
     def begin_request(self, uid, project_id, job_id, model, kind='sound', event_start=None,
                       event_end=None, clip_duration=None, request_key=None):
-        if kind not in ('sound', 'speech'):
-            raise ValueError('Gemini request kind must be sound or speech.')
+        if kind not in ('sound', 'speech', 'frame'):
+            raise ValueError('Gemini request kind must be sound, speech, or frame.')
         for value in (event_start, event_end, clip_duration):
             if value is not None and number(value) is None:
                 raise ValueError('Gemini event times and clip duration must be finite and nonnegative.')
