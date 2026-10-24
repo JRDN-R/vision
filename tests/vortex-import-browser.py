@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 URL = 'https://vision-vortex-import.test/'
 HOOK = r'''
 let fixtureAudio=false,fixtureSerial=0,fixtureFinished=false,fixtureHoldLookup=false;
-const fixtureCalls=[],fixtureMeta={id:'vortex_fixture_project',revision:1,backendUrl:'https://fixture.ts.net'};
+const fixtureCalls=[],fixtureMeta={id:'vortex_fixture_project',key:'a'.repeat(64),revision:1,backendUrl:'https://fixture.ts.net'};
 projectQueueSave=()=>{};projectBackup=async()=>{};projectPerformSave=async()=>fixtureMeta;
 ensureRemoteProject=async()=>fixtureMeta;projectCapabilities=async()=>({capabilities:{frameCollectionsV1:true}});
 youtubeAPI=async(path,options={})=>{
