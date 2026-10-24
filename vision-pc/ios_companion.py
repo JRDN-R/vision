@@ -42,6 +42,15 @@ MAX_TRANSFERS = 2
 MAX_ATTEMPTS = 32
 MAX_FRAME_BYTES = 8192
 MAX_FILE_BYTES = 2 * 1024 ** 3
+# Native TransferArchive validates suffix/MIME pairs. Windows MIME registry
+# entries vary by installed software; Python's built-ins omit .m4a entirely.
+# Keep the protocol stable for supported payloads without changing OS mappings.
+TRANSFER_MIMES = {
+    '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+    '.m4a': 'audio/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.zip': 'application/zip',
+}
 
 
 def digest(value):
@@ -252,7 +261,9 @@ class IOSCompanion:
                         return
                     with path.open('rb') as source:
                         metadata = dict(type='file', filename=self.vortex.download_name(row),
-                                        mimeType=mimetypes.guess_type(path.name)[0] or 'application/octet-stream', size=size)
+                                        mimeType=(TRANSFER_MIMES.get(path.suffix.lower())
+                                                  or mimetypes.guess_type(path.name)[0]
+                                                  or 'application/octet-stream'), size=size)
                         yield self._frame(metadata)
                         file_started = True
                         remaining = size

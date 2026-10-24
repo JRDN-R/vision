@@ -86,14 +86,14 @@ class IOSCompanionTests(unittest.TestCase):
         self.assertEqual(result.status_code, 202, result.json)
         return result.json['id']
 
-    def complete(self, job_id, content=b'not-a-real-movie-but-exact-private-bytes'):
+    def complete(self, job_id, content=b'not-a-real-movie-but-exact-private-bytes', filename='media.mp4'):
         directory = server.vortex.root / job_id
         directory.mkdir(exist_ok=True)
-        (directory / 'media.mp4').write_bytes(content)
+        (directory / filename).write_bytes(content)
         with server.connect_db() as db:
             db.execute("UPDATE vortex_jobs SET status='processing' WHERE id=?", (job_id,))
         server.vortex._event(job_id, {'media': {'title': 'My movie', 'source': 'YouTube'}})
-        self.assertTrue(server.vortex._finish(job_id, {'filename': 'media.mp4'}))
+        self.assertTrue(server.vortex._finish(job_id, {'filename': filename}))
         return content
 
     def ticket(self, job_id, owner=None):
@@ -184,6 +184,26 @@ class IOSCompanionTests(unittest.TestCase):
         self.assertNotIn('firebase:alice', server.account_admin.active_requests)
         with server.connect_db() as db:
             self.assertFalse(self.service.source_leased(db, job_id))
+
+    def test_native_mime_contract_ignores_missing_or_incorrect_os_associations(self):
+        expected = {'.m4a': 'audio/mp4', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+                    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+                    '.webp': 'image/webp', '.zip': 'application/zip'}
+        job_id = self.enqueue()
+        ticket = self.ticket(job_id)
+        for suffix, mime in expected.items():
+            with self.subTest(suffix=suffix):
+                content = self.complete(job_id, filename='media' + suffix)
+                with patch('ios_companion.mimetypes.guess_type', return_value=('application/octet-stream', None)) as guess:
+                    response = self.transfer(job_id, ticket, buffered=True)
+                self.assertEqual(response.status_code, 200)
+                _, line, payload = response.data.split(b'\n', 2)
+                metadata = json.loads(line)
+                self.assertEqual(metadata['mimeType'], mime)
+                self.assertTrue(metadata['filename'].endswith(suffix))
+                self.assertEqual(payload, content)
+                guess.assert_not_called()
 
     def test_background_stream_waits_without_restarting_and_then_sends_movie(self):
         job_id = self.enqueue()

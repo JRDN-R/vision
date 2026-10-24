@@ -6,7 +6,7 @@ set -euo pipefail
 umask 077
 
 REPOSITORY_URL="https://github.com/JRDN-R/vision.git"
-DEFAULT_REF="codex/vision-ios-companion-20261024"
+DEFAULT_REF="main"
 ORIGINAL_ARGS=("$@")
 REQUESTED_TEAM=""
 REQUESTED_DEVICE=""
@@ -117,25 +117,55 @@ else
   REF="${REQUESTED_REF:-$DEFAULT_REF}"
   valid_ref "$REF" || die "Invalid repository branch or commit: $REF"
   case "$INSTALL_DIRECTORY" in /*) ;; *) INSTALL_DIRECTORY="$PWD/$INSTALL_DIRECTORY" ;; esac
+  NEED_INITIAL_FETCH=0
   if [ -e "$INSTALL_DIRECTORY" ]; then
     [ -f "$INSTALL_DIRECTORY/.git/vision-ios-managed.json" ] || die "The destination already exists and was not created by this installer: $INSTALL_DIRECTORY. Choose an empty --directory or run ios/setup-ios.sh from your existing checkout."
-    [ -f "$INSTALL_DIRECTORY/ios/setup-ios.sh" ] || die "The existing managed checkout is incomplete. Choose a new --directory; no files were removed."
+    if [ ! -f "$INSTALL_DIRECTORY/ios/setup-ios.sh" ]; then
+      INITIALIZING="$("$PYTHON" - "$INSTALL_DIRECTORY/.git/vision-ios-managed.json" <<'PY'
+import json, sys
+print(int(json.load(open(sys.argv[1])).get("initializing", False)))
+PY
+)"
+      [ "$INITIALIZING" = 1 ] || die "The selected checkout has no iOS installer. Choose a new --directory or update it using Git; no files were removed."
+      [ "$(git -C "$INSTALL_DIRECTORY" remote get-url origin)" = "$REPOSITORY_URL" ] || die "The managed checkout's origin changed. No files were modified."
+      if [ -z "$REQUESTED_REF" ]; then
+        REF="$("$PYTHON" - "$INSTALL_DIRECTORY/.git/vision-ios-managed.json" "$DEFAULT_REF" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1])).get("ref") or sys.argv[2])
+PY
+)"
+      fi
+      valid_ref "$REF" || die "Invalid repository branch or commit: $REF"
+      NEED_INITIAL_FETCH=1
+    fi
   else
     mkdir -p "$(dirname "$INSTALL_DIRECTORY")"
     printf 'Downloading Vision into %s\n' "$INSTALL_DIRECTORY"
     git clone --filter=blob:none --no-checkout "$REPOSITORY_URL" "$INSTALL_DIRECTORY"
-    git -C "$INSTALL_DIRECTORY" fetch --depth 1 origin "$REF"
-    git -C "$INSTALL_DIRECTORY" checkout --detach FETCH_HEAD
     "$PYTHON" - "$INSTALL_DIRECTORY/.git/vision-ios-managed.json" "$REF" "$REPOSITORY_URL" <<'PY'
 import json, pathlib, sys
-pathlib.Path(sys.argv[1]).write_text(json.dumps({"ref": sys.argv[2], "repository": sys.argv[3]}, indent=2) + "\n")
+pathlib.Path(sys.argv[1]).write_text(json.dumps({"ref": sys.argv[2], "repository": sys.argv[3], "initializing": True}, indent=2) + "\n")
 PY
-    [ -f "$INSTALL_DIRECTORY/ios/setup-ios.sh" ] || die "The selected revision does not contain the iOS companion. Use the companion branch or its merged revision with --ref."
+    NEED_INITIAL_FETCH=1
+  fi
+  if [ "$NEED_INITIAL_FETCH" -eq 1 ]; then
+    git -C "$INSTALL_DIRECTORY" fetch --depth 1 origin "$REF"
+    git -C "$INSTALL_DIRECTORY" checkout --detach FETCH_HEAD
+    [ -f "$INSTALL_DIRECTORY/ios/setup-ios.sh" ] || die "The selected revision does not contain the iOS companion. Rerun with the companion branch or a revision containing it; no files were removed."
+    "$PYTHON" - "$INSTALL_DIRECTORY/.git/vision-ios-managed.json" "$REF" "$REPOSITORY_URL" <<'PY'
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({"ref": sys.argv[2], "repository": sys.argv[3], "initializing": False}, indent=2) + "\n")
+PY
+    export VISION_IOS_UPDATED_THIS_RUN=1
   fi
   exec /bin/bash "$INSTALL_DIRECTORY/ios/setup-ios.sh" "${ORIGINAL_ARGS[@]}"
 fi
 
 MARKER="$REPO_ROOT/.git/vision-ios-managed.json"
+if [ -n "$REQUESTED_REF" ] && [ "${VISION_IOS_UPDATED_THIS_RUN:-0}" != 1 ]; then
+  [ -f "$MARKER" ] || die "--ref selects a revision in a checkout managed by this installer. For this existing repository, check out the desired revision using Git and rerun without --ref."
+  DO_UPDATE=1
+fi
 if [ "$DO_UPDATE" -eq 1 ] && [ "${VISION_IOS_UPDATED_THIS_RUN:-0}" != 1 ]; then
   [ -f "$MARKER" ] || die "Automatic --update only changes a checkout created by this installer. Update this existing repository using your normal Git workflow, then rerun without --update."
   [ "$(git -C "$REPO_ROOT" remote get-url origin)" = "$REPOSITORY_URL" ] || die "The managed checkout's origin changed. Update it manually; no files were modified."
