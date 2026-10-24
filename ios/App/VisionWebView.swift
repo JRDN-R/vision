@@ -70,12 +70,12 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             if value == .venture { url = url.appendingPathComponent("venture/") }
             webView.load(URLRequest(url: url))
         } else {
-            webView.callAsyncJavaScript("if (window.VisionNativeSelectWorkspace) { window.VisionNativeSelectWorkspace(view); return true; } return false;", arguments: ["view": value.rawValue], in: nil, contentWorld: .page) { [weak self] result in
-                if case .success(let switched) = result, switched as? Bool == true { return }
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.webView.load(URLRequest(url: value == .venture ? AppConfiguration.webURL.appendingPathComponent("venture/") : AppConfiguration.webURL))
-                }
+            Task { [weak self] in
+                guard let self else { return }
+                let switched = try? await self.webView.callAsyncJavaScript("if (window.VisionNativeSelectWorkspace) { window.VisionNativeSelectWorkspace(view); return true; } return false;", arguments: ["view": value.rawValue], in: nil, contentWorld: .page)
+                guard self.page == value, self.lastWebPage == value else { return }
+                if switched as? Bool == true { return }
+                self.webView.load(URLRequest(url: value == .venture ? AppConfiguration.webURL.appendingPathComponent("venture/") : AppConfiguration.webURL))
             }
         }
     }
