@@ -8,6 +8,7 @@ import hashlib
 import json
 from PIL import Image
 from frame_context import caption_prompt
+from frame_fallback import failover
 from luna_captions import (analyze_batch, estimated_request_usd, paid_amount,
                            extract_captions, LunaCaptionError, CAP_USD, BATCH_SIZE)
 from sessions import unprotect_secret
@@ -15,8 +16,8 @@ from uploaded_media import atomic_json
 
 
 def _pause(store, cid, message):
-    with store.db() as db:
-        db.execute("UPDATE frame_collections SET status='paused',error=?,luna_inflight=0 WHERE id=?", (message[:400], cid))
+    # Auto mode advances to Gemini. Explicit Luna-only mode still pauses.
+    return failover(store, cid, 'luna', message)
 
 
 def _owner_key(store, project_id):
@@ -50,7 +51,7 @@ def work_luna_batch(store, row, video_title, cues):
         return True
     remaining = min(BATCH_SIZE, row['count'] - row['completed'])
     quote = estimated_request_usd(remaining)
-    if row.get('luna_cost_usd', 0) + quote > CAP_USD:
+    if row.get('luna_cost_usd', 0) + row.get('gemini_cost_usd', 0) + quote > CAP_USD:
         _pause(store, cid, 'Luna paused near the $0.90 application budget. No new paid requests were submitted.')
         return True
     with store.db() as db:
@@ -93,7 +94,7 @@ def work_luna_batch(store, row, video_title, cues):
             index = rec['index']
             if index in captions:
                 rec.update(description=captions[index],analysisStatus='inspected',independentlyInspected=True)
-            rec['model'] = 'gpt-6-luna'
+            rec['model'] = 'gpt-6-luna' if index in captions else (prior.get('model', 'gpt-6-luna') if prior else 'gpt-6-luna')
             with store.lock:
                 if store.stop.is_set():
                     raise InterruptedError('Luna results arrived after service stop. Check usage before resuming.')

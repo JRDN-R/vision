@@ -22,33 +22,44 @@ Vision HTML with the connection settings already embedded connects automatically
 
 Public access is saved in `C:\ProgramData\VisionPC\config.json`. Future `Setup` and `Start` actions preserve it. The background Funnel connection and processor startup task resume after Windows restarts. Setup checks the local processor and its HTTPS endpoint before reporting success; the final public reachability check is to open Vision from another device with Tailscale turned off.
 
-## Opt-in Luna descriptions for video screenshots
+## Automatic screenshot descriptions (Luna → Gemini 3.8 Flash → Qwen)
 
-Vision continues using the local Qwen 0.8B visual model by default. If you want
-cloud-based descriptions, sign in to the **Vision account connected to your FUPCJ Server**
-and save a normal OpenAI Platform key in the existing **Run > Settings > OpenAI API key**
-control (saved to your Google-signed-in Vision account). The server stores it under Windows DPAPI.
-You do not need a new Firebase Cloud Function, Cloud Run service, or embedded browser key.
+For new video imports, Vision's default background frame-description chain is:
+**GPT-6 Luna first**, **Gemini 3.8 Flash second**, and **local Qwen3.5-0.8B**
+last. Project Settings → Description engine also allows explicit **Qwen only**
+(no API fees) or **Luna only**. Existing saved frame collections keep their
+original engine.
 
-If you already have an OpenAI key saved in Vision, **do not paste it again**.
-To reuse a key managed by a separate Firebase project (for example PrivMsg's
-`OPENAI_API_KEY` in `privmsg-stream`), copy that secret's value once through
-the authorized Google Cloud Secret Manager console directly into Vision account
-settings. Do not post it to chat, paste it into Cloud Shell logs, or put it in GitHub.
+The FUPCJ Server retrieves the OpenAI key using the existing signed-in
+account credential saved in **Run → Settings → OpenAI API key** (DPAPI-encrypted
+on Windows). If saved already, do not reenter it. A key stored separately in
+PrivMsg's `privmsg-stream / OPENAI_API_KEY` Secret Manager entry is not
+automatically accessible to FUPCJ Server. To reuse it, an authorized user can
+copy its current value once to Vision's signed-in account settings.
+Do not place keys in GitHub, RAG files, or public HTML.
 
-In Vision's **Project Settings > Description engine**, explicitly select
-**GPT-6 Luna**, leave **Describe screenshots** enabled, and import a new video.
-Vision sends batches of up to four full-detail frames and short, timestamp-aligned
-narration excerpts to OpenAI. It records the model and measured token use with
-the frame collection and retains every original screenshot for export. It applies
-an approximately **$0.90 per-video spending guard**, but that guard cannot
-guarantee final provider charges because unsettled or interrupted requests may
-still be billed. Use OpenAI Platform project-level budgets and alerts as well.
+The **Gemini 3.8 Flash** backup uses the existing protected Gemini credential
+on FUPCJ Server and is attempted only if the signed-in account has **approved
+Gemini access**. A missing key, denied Gemini access, unavailable provider,
+bad response, or exhausted cloud budget advances automatically to the next
+provider. If both cloud providers fail, the remaining images use the installed
+Qwen visual worker. Qwen requires local visual processing to be enabled.
 
-When a paid batch fails or the process restarts mid-request, the collection
-pauses rather than automatically resubmitting an uncertain paid request.
-Review OpenAI usage before manually resuming. When no saved account key exists,
-Luna pauses without making an API request. Local Qwen remains available.
+Images are sent to providers in batches of up to four independent JPEGs,
+with a bounded title/transcript context. Captions and source-model labels are
+saved per frame, and the RAG timeline records fallback events. Completed
+frames are not discarded or reprocessed after a fallback.
+
+Both cloud providers share an approximate **$0.90 per-video application
+spending guard**, based on reported token usage and estimated rates. Provider
+invoices, unknown usage, and interrupted requests can still cause final
+billing to differ or exceed the guard. Vision never automatically repeats
+an uncertain paid request: a restart advances to the next provider instead.
+OpenAI and Google billing limits and alerts should be configured separately.
+
+**To activate on FUPCJ Server**, merge and deploy the checked update from
+`main`; Project Settings changes only affect *new* video imports.
+No separate Google Cloud Run deployment is needed.
 
 ## Update an installed FUPCJ Server for saved projects and background conversations
 

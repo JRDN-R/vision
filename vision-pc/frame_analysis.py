@@ -20,6 +20,8 @@ from uploaded_media import atomic_json
 from project_naming import ProjectNaming
 from frame_context import caption_prompt, timed_cues
 from luna_caption_worker import work_luna_batch
+from gemini_caption_worker import work_gemini_batch
+from frame_fallback import recover_inflight, DEFAULT_LABEL
 
 PRESETS = {'maximum': (.25, 1200), 'medium': (1, 600), 'balanced': (3, 300), 'minimal': (10, 120)}
 MAX_BYTES = 256 * 1024 * 1024
@@ -30,7 +32,7 @@ def processing_options(raw):
     raw = raw if isinstance(raw, dict) else {}
     return {'screenshotDetail': raw.get('screenshotDetail') if raw.get('screenshotDetail') in PRESETS else 'balanced',
             'describeFrames': raw.get('describeFrames') is True,
-            'frameDescriptionEngine': 'luna' if raw.get('frameDescriptionEngine') == 'luna' else 'local'}
+            'frameDescriptionEngine': raw.get('frameDescriptionEngine') if raw.get('frameDescriptionEngine') in ('auto','luna','local') else 'auto'}
 
 
 def frame_interval(duration, detail):
@@ -72,11 +74,13 @@ class FrameAnalysis:
             columns = {row[1] for row in db.execute('PRAGMA table_info(frame_collections)')}
             for name, definition in [('analysis_step', 'INTEGER NOT NULL DEFAULT 1'), ('failures', 'INTEGER NOT NULL DEFAULT 0'), ('retry_at', 'REAL NOT NULL DEFAULT 0'),
                                      ('caption_engine', "TEXT NOT NULL DEFAULT 'local'"), ('luna_cost_usd', 'REAL NOT NULL DEFAULT 0'),
-                                     ('luna_requests', 'INTEGER NOT NULL DEFAULT 0'), ('luna_inflight', 'INTEGER NOT NULL DEFAULT 0')]:
+                                     ('luna_requests', 'INTEGER NOT NULL DEFAULT 0'), ('luna_inflight', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('gemini_cost_usd', 'REAL NOT NULL DEFAULT 0'), ('gemini_requests', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('fallback_enabled', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('fallback_history_json', "TEXT NOT NULL DEFAULT '[]'")]:
                 if name not in columns:
                     db.execute(f'ALTER TABLE frame_collections ADD COLUMN {name} {definition}')
-            db.execute("""UPDATE frame_collections SET status='paused',error='Luna captioning was interrupted. Check OpenAI usage before resuming.',luna_inflight=0
-                          WHERE status='processing' AND caption_engine='luna'""")
+            recover_inflight(db)
             db.execute("UPDATE frame_collections SET status='queued' WHERE status='processing'")
             if 'failures' not in columns:
                 # One-time recovery for the old incomplete-generation failure.
@@ -120,9 +124,14 @@ class FrameAnalysis:
                     frameRef=dict(collectionId=collection_id, index=index, projectId=row['project_id']))
 
     def seal(self, collection_id, describe, detail=None, engine='local'):
-        engine = 'luna' if engine == 'luna' else 'local'
+        # Existing saved collections keep their provider. New imports default
+        # to the automatic paid-to-free fallback chain.
+        auto = engine == 'auto'
+        provider = 'luna' if engine in ('luna', 'auto') else 'local'
+        step = 1 if provider != 'local' else (2 if detail in ('maximum', 'medium') else 1)
         with self.db() as db:
-            db.execute("UPDATE frame_collections SET status=?,analysis_step=?,caption_engine=? WHERE id=? AND status='collecting'", ('queued' if describe else 'disabled', 1 if engine == 'luna' else (2 if detail in ('maximum', 'medium') else 1), engine, collection_id))
+            db.execute("UPDATE frame_collections SET status=?,analysis_step=?,caption_engine=?,fallback_enabled=? WHERE id=? AND status='collecting'",
+                       ('queued' if describe else 'disabled', step, provider, int(auto), collection_id))
 
     def row(self, collection_id):
         with self.db() as db:
@@ -156,10 +165,16 @@ class FrameAnalysis:
                                    end=record['timestamp'], description=record['description'],
                                    observations=[dict(timestamp=record['timestamp'],description=record['description'])]))
         return dict(id=row['id'], status=row['status'], completed=row['completed'], count=row['count'], error=row['error'],
-                    model='gpt-6-luna' if row.get('caption_engine') == 'luna' else 'Qwen3.5-0.8B',
-                    modelSha256=None if row.get('caption_engine') == 'luna' else MODEL_SHA,
-                    estimatedProviderCostUSD=round(row.get('luna_cost_usd', 0), 6),
-                    providerRequests=row.get('luna_requests', 0), frames=records, timeline=groups,
+                    model=DEFAULT_LABEL if row.get('fallback_enabled') else
+                        ('gpt-6-luna' if row.get('caption_engine')=='luna' else
+                         'gemini-3.8-flash' if row.get('caption_engine')=='gemini' else 'Qwen3.5-0.8B'),
+                    modelSha256=MODEL_SHA if row.get('caption_engine')=='local' else None,
+                    activeEngine=row.get('caption_engine'),
+                    fallbackHistory=json.loads(row.get('fallback_history_json') or '[]'),
+                    estimatedProviderCostUSD=round(row.get('luna_cost_usd',0)+row.get('gemini_cost_usd',0),6),
+                    providerCostsUSD=dict(luna=round(row.get('luna_cost_usd',0),6),gemini=round(row.get('gemini_cost_usd',0),6)),
+                    providerRequests=row.get('luna_requests',0)+row.get('gemini_requests',0),
+                    frames=records,timeline=groups,
                     analysisStep=row.get('analysis_step', 1), analyzed=sum(r.get('analysisStatus') != 'skipped' for r in records),
                     planned=(row['count']+row.get('analysis_step',1)-1)//row.get('analysis_step',1),
                     grouping='Nearby frames are grouped by coarse visual similarity, not confirmed identity. Each changed observation is retained. Sampled timestamps do not prove continuous action.')
@@ -195,7 +210,7 @@ class FrameAnalysis:
                     with self.db() as db:
                         db.execute('UPDATE frame_collections SET status=?,error=NULL,failures=0,retry_at=0 WHERE id=?', ('paused' if action == 'pause' else 'queued', collection_id))
                     row = self.row(collection_id)
-                return jsonify({key:row[key] for key in ('id','status','completed','count','error','analysis_step','caption_engine','luna_cost_usd')} if request.args.get('summary')=='1' else self.report(row))
+                return jsonify({key:row[key] for key in ('id','status','completed','count','error','analysis_step','caption_engine','luna_cost_usd','gemini_cost_usd','fallback_enabled')} if request.args.get('summary')=='1' else self.report(row))
 
     def caption_material(self, row):
         """Match captions to this video's own title and asynchronous speech receipt.
@@ -220,8 +235,7 @@ class FrameAnalysis:
         # Foreground Qwen work has priority. A batch releases the shared model
         # lock after at most 16 images; all completed observations are durable.
         with self.db() as db:
-            if db.execute("SELECT 1 FROM project_runs WHERE provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving') LIMIT 1").fetchone():
-                return False
+            foreground_busy = bool(db.execute("SELECT 1 FROM project_runs WHERE provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving') LIMIT 1").fetchone())
             row = db.execute("SELECT * FROM frame_collections WHERE status='queued' AND retry_at<=? ORDER BY created_at LIMIT 1", (time.time(),)).fetchone()
         if not row:
             return False
@@ -230,13 +244,17 @@ class FrameAnalysis:
         if trials and trials.expired(row['project_id']):
             return False
         row = dict(row); cid = row['id']; directory = self.root / cid
-        if row.get('caption_engine') == 'luna':
+        if row.get('caption_engine') in ('luna','gemini'):
             material = self.caption_material(row)
             if material is None:
                 with self.db() as db:
                     db.execute("UPDATE frame_collections SET retry_at=? WHERE id=? AND status='queued'", (time.time()+30, cid))
                 return False
-            return work_luna_batch(self, row, *material)
+            if row['caption_engine'] == 'luna':
+                return work_luna_batch(self, row, *material)
+            return work_gemini_batch(self, row, *material)
+        if foreground_busy:
+            return False
         settings = self.sessions.local.settings
         if not settings.get('enabled') or not settings.get('visualEnabled'):
             with self.db() as db:
@@ -295,7 +313,8 @@ class FrameAnalysis:
                         description = prior['description'] if reused else runtime.inspect(data_url(output.getvalue(), 'image/jpeg'), prompt)
                         record = dict(**metadata, pixelHash=digest, description=description,
                                       context=context, analysisStatus='reused' if reused else 'inspected',
-                                      independentlyInspected=not bool(reused), sameScene=same_scene)
+                                      independentlyInspected=not bool(reused), sameScene=same_scene,
+                                      model=(prior.get('model','Qwen3.5-0.8B') if reused else 'Qwen3.5-0.8B'))
                         if reused:
                             record['reusedFrom'] = prior.get('reusedFrom', prior['index'])
                         with self.lock:

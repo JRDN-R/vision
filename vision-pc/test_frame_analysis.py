@@ -143,6 +143,85 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(store.row(cid)['status'],'paused')
         self.assertEqual(store.row(cid)['luna_requests'],0)
 
+    def test_automatic_luna_gemini_qwen_fallback_saves_frames(self):
+        store,cid=self.collection(4)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='luna',fallback_enabled=1,analysis_step=1 WHERE id=?",(cid,))
+        # Neither provider has a usable credential; the worker must use Qwen.
+        from luna_captions import LunaCaptionError
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('luna_caption_worker._owner_key',side_effect=LunaCaptionError('No OpenAI key')):
+            self.assertTrue(store.work_once())
+        self.assertEqual(store.row(cid)['caption_engine'],'gemini')
+        from gemini_captions import GeminiCaptionError
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('gemini_caption_worker._owner_gemini',side_effect=GeminiCaptionError('No Gemini key')):
+            self.assertTrue(store.work_once())
+        self.assertEqual(store.row(cid)['caption_engine'],'local')
+        calls=[]
+        class FakeRuntime:
+            def __init__(self,*args):pass
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def inspect(self,image,question):calls.append(question);return 'A dryer door lies flat on a bench.'
+        store.runtime_factory=FakeRuntime
+        server.sessions.local.settings={'enabled':True,'visualEnabled':True}
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[])),\
+             patch('psutil.process_iter',return_value=[]),\
+             patch('psutil.virtual_memory',return_value=SimpleNamespace(available=32*1024**3)):
+            self.assertTrue(store.work_once())
+        data=store.report(store.row(cid))
+        self.assertEqual(data['status'],'complete')
+        self.assertEqual(len(calls),1)
+        self.assertEqual(len(data['fallbackHistory']),2)
+        self.assertEqual(data['frames'][0]['model'],'Qwen3.5-0.8B')
+        self.assertEqual(data['activeEngine'],'local')
+
+    def test_gemini_success_captions_are_billed_and_checkpointed(self):
+        store,cid=self.collection(3)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='gemini',fallback_enabled=1,analysis_step=1 WHERE id=?",(cid,))
+        called=[]
+        def fake_gemini(key,entries):
+            called.append([e['index'] for e in entries])
+            return {'status':'completed',
+                    'usage':{'promptTokenCount':3000,'candidatesTokenCount':140,'thoughtsTokenCount':0},
+                    'output_text':json.dumps({'frames':[{'index':e['index'],
+                        'description':'A technician repositions a dryer door hinge.'} for e in entries]})}
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[(0.0,'Remove the hinge.')])) ,\
+             patch('gemini_caption_worker._owner_gemini',return_value=('firebase:test-person','private-test-secret')),\
+             patch('gemini_caption_worker.analyze_batch',side_effect=fake_gemini):
+            self.assertTrue(store.work_once())
+        report=store.report(store.row(cid))
+        self.assertEqual(report['status'],'complete')
+        self.assertEqual(report['activeEngine'],'gemini')
+        self.assertEqual(called,[[0,1,2]])
+        self.assertGreater(report['providerCostsUSD']['gemini'],0)
+        self.assertEqual(report['providerRequests'],1)
+        self.assertEqual(report['frames'][0]['model'],'gemini-3.8-flash')
+        self.assertNotIn('private-test-secret',json.dumps(report))
+
+    def test_gemini_cloud_budget_falls_through_to_local(self):
+        store,cid=self.collection(2)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='gemini',fallback_enabled=1,analysis_step=1,luna_cost_usd=0.895 WHERE id=?",(cid,))
+        with patch.object(store,'caption_material',return_value=('',[])),\
+             patch('gemini_caption_worker.analyze_batch') as paid:
+            self.assertTrue(store.work_once())
+            paid.assert_not_called()
+        self.assertEqual(store.row(cid)['caption_engine'],'local')
+        self.assertEqual(store.row(cid)['status'],'queued')
+
+    def test_auto_engine_seals_with_every_frame(self):
+        store,cid=self.collection(2)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET status='collecting' WHERE id=?",(cid,))
+        store.seal(cid,True,'maximum','auto')
+        row=store.row(cid)
+        self.assertEqual(row['caption_engine'],'luna')
+        self.assertEqual(row['fallback_enabled'],1)
+        self.assertEqual(row['analysis_step'],1)
+
     def test_missing_model_preserves_frames(self):
         store,cid=self.collection();server.sessions.local.settings={}
         self.assertTrue(store.work_once());self.assertEqual(store.row(cid)['status'],'paused')
@@ -165,7 +244,8 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(result['frames'][1]['timestamp'],.25);self.assertEqual(server.frame_analysis.row(job)['status'],'queued')
         with self.client.get(self.base+'/frames/'+job+'/7',headers=self.headers) as response:self.assertEqual(response.status_code,200)
         self.assertFalse((self.service.root/job/'source.input').exists())
-        self.assertEqual(server.frame_analysis.row(job)['analysis_step'],2)
+        self.assertEqual(server.frame_analysis.row(job)['analysis_step'],1)
+        self.assertEqual(server.frame_analysis.row(job)['fallback_enabled'],1)
         metadata=json.loads((server.frame_analysis.root/job/'0000.json').read_text())
         self.assertEqual(metadata['width'],800)  # Not reduced to the preview's 640 pixels.
 
