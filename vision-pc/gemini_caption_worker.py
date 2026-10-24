@@ -81,7 +81,7 @@ def work_gemini_batch(store, row, video_title, cues):
         else:
             entries.append({'index':i,'when':metadata['timestamp'],'jpeg':jpeg,'prompt':prompt})
 
-    ledger, actual_usage, result_status = None, {}, 'failed'
+    ledger, actual_usage, result_status, unpriced = None, {}, 'failed', False
     try:
         if entries:
             usage_api = store.app.config['GEMINI_USAGE']
@@ -98,6 +98,7 @@ def work_gemini_batch(store, row, video_title, cues):
                     db.execute("UPDATE frame_collections SET gemini_cost_usd=gemini_cost_usd+?,gemini_requests=gemini_requests+1 WHERE id=?",
                                (amount, cid))
             else:
+                unpriced = True
                 with store.db() as db:
                     db.execute("UPDATE frame_collections SET gemini_requests=gemini_requests+1 WHERE id=?", (cid,))
             descriptions = captions(result, [e['index'] for e in entries])
@@ -114,10 +115,16 @@ def work_gemini_batch(store, row, video_title, cues):
                 atomic_json(folder / f'{idx:04d}.analysis.json', record)
                 with store.db() as db:
                     db.execute("UPDATE frame_collections SET completed=? WHERE id=?", (idx+1,cid))
-        with store.db() as db:
-            db.execute("""UPDATE frame_collections SET
-                          status=CASE WHEN completed=count THEN 'complete' ELSE 'queued' END,
-                          luna_inflight=0,error=NULL,retry_at=0 WHERE id=?""", (cid,))
+        if unpriced:
+            # Preserve completed captions, but do not submit another unmetered
+            # Gemini batch that could silently exceed the video's budget.
+            failover(store, cid, 'gemini',
+                     'Gemini did not provide priceable token usage; remaining frames will use Qwen.')
+        else:
+            with store.db() as db:
+                db.execute("""UPDATE frame_collections SET
+                              status=CASE WHEN completed=count THEN 'complete' ELSE 'queued' END,
+                              luna_inflight=0,error=NULL,retry_at=0 WHERE id=?""", (cid,))
     except Exception:
         failover(store, cid, 'gemini', 'Gemini could not finish safely; proceeding to local Qwen without retrying.')
     finally:
