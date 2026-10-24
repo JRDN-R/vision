@@ -103,6 +103,7 @@ async function accountLoad(){
   if(!accountFirebase)accountFirebase=authSDK.initializeAuth(app,{persistence});
   authSDK.useDeviceLanguage(accountFirebase);
   await accountWait(accountFirebase.authStateReady(),'Your sign-in could not be restored. Check your connection and retry.');
+  if(typeof accountInstallNativeBridge==='function')accountInstallNativeBridge(accountFirebase,authSDK);
   accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(accountFirebase.currentUser));
   await accountWait(accountTransition,'Your workspace could not open. Retry to reconnect.');
   if(!accountObserver)accountObserver=authSDK.onAuthStateChanged(accountFirebase,user=>{
@@ -123,6 +124,7 @@ async function accountIdToken(){
  return token;
 }
 async function accountGoogleSignIn(){
+ if(window.VisionNative?.isNative){window.VisionNative.signIn();return;}
  if(accountBusy||trialStarting)return;accountBusy=true;accountError='';accountPaint();
  try{
   // Load before the gesture that opens Google, never await then launch a popup.

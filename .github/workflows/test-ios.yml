@@ -1,0 +1,68 @@
+name: Test Vision iOS
+
+on:
+  push:
+    branches: [codex/vision-ios-companion-20261024, main]
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', '.github/workflows/test-ios.yml']
+  pull_request:
+    paths: ['ios/**', 'Vision-icon-512.png', 'web/ios-*', 'ios-signin.html', 'web/auth.js', 'web/vortex/**', 'vision-pc/ios_*', 'vision-pc/test_ios_*', 'tests/ios-native.test.cjs', '.github/workflows/test-ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vision-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-and-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated backend test dependencies
+        run: python -m pip install Flask 'PyJWT[crypto]' requests psutil 'httpx[http2]'
+      - name: Check account isolation, authentication exchange, delivery and Live Activity pushes
+        working-directory: vision-pc
+        run: python -m unittest -q test_ios_companion test_ios_live_activities
+      - name: Check native web bridge and existing login and media integrations
+        run: node --test tests/ios-native.test.cjs tests/account-auth.test.cjs tests/google-login.test.cjs tests/vortex-moises.test.cjs
+  simulator-build:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check installer syntax
+        run: bash -n ios/setup-ios.sh
+      - name: Verify optional paid APNs configuration
+        run: python3 ios/generate_project.py --team TESTTEAM01 --bundle-id com.vision.iosci --push --self-check
+      - name: Generate Personal Team configuration and verify all target references
+        run: python3 ios/generate_project.py --team TESTTEAM01 --bundle-id com.vision.iosci --self-check
+      - name: Select an available iPhone Simulator
+        run: |
+          SIMULATOR_ID="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; groups=json.load(sys.stdin).get("devices",{}); devices=[d for key,values in groups.items() if "iOS" in key for d in values if d.get("isAvailable") and d.get("name", "").startswith("iPhone")]; print(devices[0]["udid"] if devices else "")')"
+          test -n "$SIMULATOR_ID"
+          echo "IOS_TEST_DEVICE=$SIMULATOR_ID" >> "$GITHUB_ENV"
+      - name: Build all app targets and run the parser and URL tests without signing
+        run: |
+          mkdir -p .qa
+          set -o pipefail
+          xcodebuild -project ios/Vision.xcodeproj -scheme Vision -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$IOS_TEST_DEVICE" \
+            -derivedDataPath .qa/ios-build -resultBundlePath .qa/ios-build.xcresult \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test 2>&1 | tee .qa/ios-build.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Vision-iOS-build-diagnostics
+          path: |
+            .qa/ios-build.log
+            .qa/ios-build.xcresult
+          retention-days: 7

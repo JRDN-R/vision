@@ -435,8 +435,14 @@ async function flushDownloadQueue() {
     }
     const job = await submitJob('download', intent.input, intent.quality, intent.options);
     if (epoch !== accountEpoch()) return;
-    state.autoSaveJobs.set(job.id, {...intent, delivering:false});
-    notice(intent.delivery === 'moises' ? 'Preparing your file. Keep Vortex open, then tap Open in Moises when it is ready.' : 'Download accepted. Keep Vortex open to save automatically when the file is ready; it will also remain in Download history.');
+    if (window.VisionNative?.isNative && intent.delivery === 'save') {
+      await window.VisionNative.adoptVortexJob(job.id);
+      if (epoch !== accountEpoch()) return;
+      notice('Download accepted. Vision is transferring it in the background. Videos save to Photos when access is enabled; audio asks for a Files destination in Downloads.');
+    } else {
+      state.autoSaveJobs.set(job.id, {...intent, delivering:false});
+      notice(intent.delivery === 'moises' ? 'Preparing your file. Keep Vortex open, then tap Open in Moises when it is ready.' : 'Download accepted. Keep Vortex open to save automatically when the file is ready; it will also remain in Download history.');
+    }
     renderJobs(); renderProcessing(); checkAutoSaves(); renderDownloadStatus(); scheduleRefresh(500);
   } catch (error) {
     if (epoch === accountEpoch()) { state.downloadError = error.message; notice(error.message, true); if (intent.delivery === 'moises' && currentDownloadKey() === intent.key) moisesNotice(error.message, true); renderDownloadStatus(); scheduleRefresh(1000); }
@@ -880,6 +886,18 @@ function submitReexport() {
 
 function actionCurrent(id, epoch) { return !!user() && state.actionId === id && state.actionEpoch === epoch && $('actionDialog').open; }
 async function prepareTicket(job, epoch = state.actionEpoch) {
+  if (window.VisionNative?.isNative) {
+    if (!actionCurrent(job.id, epoch)) return;
+    const save = $('saveFile'); save.href = '#'; save.hidden = false;
+    save.onclick = async event => {
+      event.preventDefault();
+      try { await window.VisionNative.adoptVortexJob(job.id); await window.VisionNative.openDownloads(); }
+      catch (error) { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message || 'Open Downloads to retry this file.'; }
+    };
+    $('actionStatus').textContent = 'Save with Vision for Photos or a Files destination.';
+    return;
+  }
+  $('saveFile').onclick = handleSaveFile;
   const ticket = await request(jobPath(job.id) + '/ticket', {method:'POST'});
   if (!actionCurrent(job.id, epoch)) return;
   const url = validateTicketURL(job, ticket);
@@ -977,7 +995,8 @@ $('shareFile').onclick = () => void shareAction(); $('cancelJob').onclick = () =
 $('retryJob').onclick = toggleReexport;
 $('reexportMode').onchange = () => { const job = getJob(state.actionId); if (job) updateReexportOptions(job); };
 $('reexportSubmit').onclick = submitReexport;
-$('saveFile').onclick = event => { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } };
+function handleSaveFile(event) { if (!state.ticket || seconds(state.ticket.expiresAt) <= Date.now() + 5000) { event.preventDefault(); const job = getJob(state.actionId), epoch = state.actionEpoch; if (job) void prepareTicket(job, epoch).then(() => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = 'Download refreshed. Tap Save file again.'; }).catch(error => { if (actionCurrent(job.id, epoch)) $('actionStatus').textContent = error.message; }); } }
+$('saveFile').onclick = handleSaveFile;
 window.addEventListener('pagehide', () => { resetMoisesHandoff(); state.visitEpoch++; state.sessionJobs.clear(); renderJobs(); renderProcessing(); });
 window.addEventListener('online', () => void refresh()); window.addEventListener('offline', () => { showServerVersion(); $('connectionStatus').textContent = 'You are offline. Accepted jobs continue on FUPCJ Server.'; $('connectionStatus').classList.add('offline'); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else { checkAutoSaves(); void refresh(); void loadProfile(); } }); window.addEventListener('pageshow', () => { if (user()) { checkAutoSaves(); void refresh(); void loadProfile(); } });

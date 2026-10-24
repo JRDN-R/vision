@@ -1,0 +1,3 @@
+# Optional paid Apple Developer / APNs Live Activity updates only.
+# Core iOS sign-in and background downloads need no additional dependencies.
+httpx[http2]>=0.28,<1
