@@ -177,6 +177,41 @@ class FrameAnalysisTests(unittest.TestCase):
         self.assertEqual(data['frames'][0]['model'],'Qwen3.5-0.8B')
         self.assertEqual(data['activeEngine'],'local')
 
+    def test_gemini_success_captions_are_billed_and_checkpointed(self):
+        store,cid=self.collection(3)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='gemini',fallback_enabled=1,analysis_step=1 WHERE id=?",(cid,))
+        called=[]
+        def fake_gemini(key,entries):
+            called.append([e['index'] for e in entries])
+            return {'status':'completed',
+                    'usage':{'promptTokenCount':3000,'candidatesTokenCount':140,'thoughtsTokenCount':0},
+                    'output_text':json.dumps({'frames':[{'index':e['index'],
+                        'description':'A technician repositions a dryer door hinge.'} for e in entries]})}
+        with patch.object(store,'caption_material',return_value=('Dryer door.mp4',[(0.0,'Remove the hinge.')])) ,\
+             patch('gemini_caption_worker._owner_gemini',return_value=('firebase:test-person','private-test-secret')),\
+             patch('gemini_caption_worker.analyze_batch',side_effect=fake_gemini):
+            self.assertTrue(store.work_once())
+        report=store.report(store.row(cid))
+        self.assertEqual(report['status'],'complete')
+        self.assertEqual(report['activeEngine'],'gemini')
+        self.assertEqual(called,[[0,1,2]])
+        self.assertGreater(report['providerCostsUSD']['gemini'],0)
+        self.assertEqual(report['providerRequests'],1)
+        self.assertEqual(report['frames'][0]['model'],'gemini-3.8-flash')
+        self.assertNotIn('private-test-secret',json.dumps(report))
+
+    def test_gemini_cloud_budget_falls_through_to_local(self):
+        store,cid=self.collection(2)
+        with server.connect_db() as db:
+            db.execute("UPDATE frame_collections SET caption_engine='gemini',fallback_enabled=1,analysis_step=1,luna_cost_usd=0.895 WHERE id=?",(cid,))
+        with patch.object(store,'caption_material',return_value=('',[])),\
+             patch('gemini_caption_worker.analyze_batch') as paid:
+            self.assertTrue(store.work_once())
+            paid.assert_not_called()
+        self.assertEqual(store.row(cid)['caption_engine'],'local')
+        self.assertEqual(store.row(cid)['status'],'queued')
+
     def test_auto_engine_seals_with_every_frame(self):
         store,cid=self.collection(2)
         with server.connect_db() as db:
