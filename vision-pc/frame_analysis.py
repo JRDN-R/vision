@@ -330,9 +330,11 @@ class FrameAnalysis:
         def run():
             while not self.stop.is_set():
                 try:
-                    if not self.naming.work_once():
-                        self.work_once()
+                    worked = self.naming.work_once()
+                    if not worked:
+                        worked = self.work_once()
                 except Exception:
+                    worked = False
                     self.app.logger.exception('Frame analysis queue failed')
-                self.stop.wait(5)
+                self.stop.wait(1.5 if worked else 5)
         threading.Thread(target=run, name='vision-frame-analysis', daemon=True).start()
