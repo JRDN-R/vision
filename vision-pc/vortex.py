@@ -439,7 +439,9 @@ class VortexJobs:
 
     def source_leased(self, db, job_id):
         assets = self.app.config.get('OWNED_ASSETS')
-        return bool(assets and assets.source_leased(db, job_id))
+        ios = self.app.config.get('IOS_COMPANION')
+        return bool((assets and assets.source_leased(db, job_id)) or
+                    (ios and ios.source_leased(db, job_id)))
 
     def _remove_terminal(self, job_id, delete=False):
         if not isinstance(job_id, str) or not re.fullmatch(r'[0-9a-f]{24}', job_id):

@@ -40,6 +40,8 @@ from vortex import VortexJobs
 from account_administration import AccountAdministration
 from owned_assets import OwnedAssets
 import standalone
+import ios_companion
+from ios_live_activities import IOSLiveActivities
 
 app = Flask(__name__)
 standalone.register(app)
@@ -131,6 +133,8 @@ def configure(config_path, migrate_gemini=False):
     trials.initialize()
     account_admin.initialize(config)
     owned_assets.initialize(config)
+    ios.initialize()
+    ios_live.initialize(config, config_path)
     church_admin.initialize(config)
     church_mcp.initialize()
     app.config['OWNED_ASSETS'] = owned_assets
@@ -246,6 +250,8 @@ def authorize():
         raise APIError('This page is not an allowed Vision origin.', 403)
     if request.method == 'OPTIONS':
         return Response(status=204)
+    if ios_companion.public_request():
+        return
     if request.method == 'GET' and request.path == '/api/status':
         return
     if request.method == 'POST' and request.path == '/api/church-admin/bridge':
@@ -353,7 +359,7 @@ def cors(response):
     elif public_access or origin in ORIGINS:
         response.headers['Access-Control-Allow-Origin'] = '*' if public_access else origin
         response.headers['Vary'] = 'Origin'
-        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key, Range'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-OpenAI-Key, X-Vision-Project-Key, X-Vision-Transfer, Range'
         response.headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, PATCH, DELETE, OPTIONS'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type, Content-Length, Content-Range, Accept-Ranges'
         if request.headers.get('Access-Control-Request-Private-Network') == 'true':
@@ -815,6 +821,9 @@ documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
 account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
+ios = ios_companion.IOSCompanion(app, connect_db, APIError, vortex, account_admin)
+app.config['IOS_COMPANION'] = ios
+ios_live = IOSLiveActivities(app, connect_db, APIError, vortex, account_admin, protect_secret, unprotect_secret)
 app.config['TITLE_EYES_ACCOUNT_ADMIN'] = account_admin
 owned_assets = OwnedAssets(app, connect_db, APIError)
 owned_assets.register_routes()
@@ -866,6 +875,8 @@ def main():
         media_share.start()
         documents.start()
         vortex.start()
+        ios.start()
+        ios_live.start()
         church_admin.start()
         try:
             church_mcp.start()
@@ -879,6 +890,8 @@ def main():
                   trusted_proxy_count=1, trusted_proxy_headers={'x-forwarded-for', 'x-forwarded-proto'},
                   clear_untrusted_proxy_headers=True)
         finally:
+            ios.wait.set()
+            ios_live.close()
             church_admin.stop.set()
             church_admin.wake.set()
             vortex.close()

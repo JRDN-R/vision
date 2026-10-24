@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://accounts.google.com https://www.gstatic.com; connect-src https://accounts.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://desktop-vjt2br2.tail385c9d.ts.net; frame-src https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gstatic.com; base-uri 'none'; object-src 'none'; form-action 'none'">
+<title>Connect Vision on iPhone</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100dvh;background:#101512;color:#f0f2ed;font:17px/1.6 system-ui,sans-serif;display:grid;place-items:center;padding:28px}main{width:min(440px,100%)}.brand{letter-spacing:.2em;color:#d6efac;font-size:13px;font-weight:700}h1{font-size:36px;line-height:1.15;letter-spacing:-.03em}p{color:#b8c2b5}button,a{display:block;width:100%;border:0;border-radius:16px;padding:16px;background:#d6efac;color:#152012;text-align:center;text-decoration:none;font:600 17px system-ui}button:disabled{opacity:.45}small{display:block;color:#8f9d8c;margin-top:28px}#status{min-height:54px}[hidden]{display:none!important}
+</style>
+</head><body><main>
+<div class="brand">VISION · IPHONE</div><h1>Your workspace.<br>Your existing account.</h1>
+<p>Connect the Google account you already use for Vision, Venture, and Vortex.</p>
+<button id="connect" disabled>Continue with Google</button>
+<a id="return" hidden>Return to Vision</a>
+<p id="status" role="status">Preparing secure sign-in…</p>
+<small>This connection expires in five minutes. Your password stays with Google. Return to Vision to finish connecting your iPhone.</small>
+</main>
+<script src="./web/vendor/firebase.js"></script>
+<script src="./web/google-login.js"></script>
+<script src="./web/ios-signin.js"></script>
+</body></html>

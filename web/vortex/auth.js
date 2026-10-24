@@ -3,6 +3,7 @@
 export const FIREBASE_CONFIG = Object.freeze({apiKey:'AIzaSyDh1AHhi41cAXcSFnvFkfeZWmxc8gI0zSg',authDomain:'visionboard-api.firebaseapp.com',projectId:'visionboard-api',appId:'1:150865729216:web:554423d0c7602d3a47bf25'});
 export const BACKEND = 'https://desktop-vjt2br2.tail385c9d.ts.net';
 let sdk, auth, loading, onUser = () => {}, epoch = 0, currentUser = null;
+let nativeBridgeAuth = null, nativeBridgeCleanup = null;
 const requests = new Set();
 export function user() { return currentUser; }
 export function accountEpoch() { return epoch; }
@@ -26,6 +27,30 @@ export async function initAuth(callback) {
     auth = sdk.initializeAuth(app, {persistence:[sdk.indexedDBLocalPersistence,sdk.browserLocalPersistence]});
     sdk.useDeviceLanguage(auth);
     await auth.authStateReady();
+    if (window.VisionNative?.isNative && window.webkit?.messageHandlers?.vision && nativeBridgeAuth !== auth) {
+      nativeBridgeCleanup?.();
+      const post = value => { try { const reply = window.webkit.messageHandlers.vision.postMessage(value); reply?.catch?.(() => {}); } catch {} };
+      let sequence = 0, active = true;
+      window.VisionNativeReceiveGoogle = async accessToken => {
+        if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 20000) throw new Error('Invalid native sign-in.');
+        await sdk.signInWithCredential(auth, sdk.GoogleAuthProvider.credential(null, accessToken));
+        return true;
+      };
+      window.VisionNativeSignOut = () => sdk.signOut(auth).then(() => true);
+      const unsubscribe = sdk.onIdTokenChanged(auth, async identity => {
+        if (!active) return;
+        const current = ++sequence;
+        if (!identity) { post({type:'session',signedIn:false}); return; }
+        try {
+          const token = await identity.getIdTokenResult();
+          if (!active || current !== sequence || auth.currentUser?.uid !== identity.uid) return;
+          post({type:'session',signedIn:true,uid:identity.uid,email:identity.email || '',idToken:token.token,refreshToken:identity.refreshToken,expiresAt:Date.parse(token.expirationTime)/1000});
+        } catch { if (active && current === sequence && auth.currentUser?.uid === identity.uid) post({type:'sessionError'}); }
+      });
+      nativeBridgeAuth = auth;
+      nativeBridgeCleanup = () => { active = false; sequence++; unsubscribe?.(); };
+      post({type:'ready'});
+    }
     changed(auth.currentUser);
     sdk.onAuthStateChanged(auth, changed);
     return auth;
