@@ -157,11 +157,17 @@ class ImportTests(unittest.TestCase):
             return (dict(title='Vortex Hardware Demonstration',mediaType='video',
                          duration=4,frameCollection=job,frames=[frame],
                          thumbnail='data:image/jpeg;base64,' + __import__('base64').b64encode(stream.getvalue()).decode(),
-                         snapshotInterval=.25,hasAudio=False),[])
+                         snapshotInterval=.25,hasAudio=True),
+                    [dict(start=0,end=4,mimeType='audio/mpeg',
+                          audioData='data:audio/mpeg;base64,SUQzYXVkaW8=')])
         with patch('vortex_imports.prepare_source',side_effect=prepared):
-            self.advance(job)
-            self.advance(job)
-            row = self.advance(job)
+            self.advance(job)  # Extract and store frames.
+            queued = self.advance(job)  # Enqueue audio transcription.
+            receipt = json.loads(Path(queued['result_path']).read_text())['transcriptionId']
+            with server.connect_db() as db:
+                db.execute("UPDATE local_transcriptions SET status='complete',result_json=? WHERE id=?",
+                           (json.dumps({'text':'[00:00:00.000] Remove the door hinge screws.'}),receipt))
+            row = self.advance(job)  # Seal frames after speech is available.
         self.assertEqual(row['status'],'complete')
         self.assertEqual(len(captured),1)
         saved = self.client.get('/api/jobs/'+job+'/result',headers=self.alice).json
@@ -175,7 +181,8 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(frame_row['status'],'queued')
         title,cues=server.frame_analysis.caption_material(frame_row)
         self.assertEqual(title,'Vortex Hardware Demonstration')
-        self.assertEqual(cues,[])
+        self.assertEqual(len(cues),1)
+        self.assertIn('hinge screws',cues[0][1])
         frame_read = self.client.get('/api/projects/'+self.project+'/frames/'+job+'/0',headers=self.alice)
         self.assertEqual(frame_read.status_code,200)
         self.assertEqual(frame_read.mimetype,'image/jpeg')
