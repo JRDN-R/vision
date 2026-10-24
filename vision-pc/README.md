@@ -22,6 +22,34 @@ Vision HTML with the connection settings already embedded connects automatically
 
 Public access is saved in `C:\ProgramData\VisionPC\config.json`. Future `Setup` and `Start` actions preserve it. The background Funnel connection and processor startup task resume after Windows restarts. Setup checks the local processor and its HTTPS endpoint before reporting success; the final public reachability check is to open Vision from another device with Tailscale turned off.
 
+## Opt-in Luna descriptions for video screenshots
+
+Vision continues using the local Qwen 0.8B visual model by default. If you want
+cloud-based descriptions, sign in to the **Vision account connected to your FUPCJ Server**
+and save a normal OpenAI Platform key in the existing **Run > Settings > OpenAI API key**
+control (saved to your Google-signed-in Vision account). The server stores it under Windows DPAPI.
+You do not need a new Firebase Cloud Function, Cloud Run service, or embedded browser key.
+
+If you already have an OpenAI key saved in Vision, **do not paste it again**.
+To reuse a key managed by a separate Firebase project (for example PrivMsg's
+`OPENAI_API_KEY` in `privmsg-stream`), copy that secret's value once through
+the authorized Google Cloud Secret Manager console directly into Vision account
+settings. Do not post it to chat, paste it into Cloud Shell logs, or put it in GitHub.
+
+In Vision's **Project Settings > Description engine**, explicitly select
+**GPT-6 Luna**, leave **Describe screenshots** enabled, and import a new video.
+Vision sends batches of up to four full-detail frames and short, timestamp-aligned
+narration excerpts to OpenAI. It records the model and measured token use with
+the frame collection and retains every original screenshot for export. It applies
+an approximately **$0.90 per-video spending guard**, but that guard cannot
+guarantee final provider charges because unsettled or interrupted requests may
+still be billed. Use OpenAI Platform project-level budgets and alerts as well.
+
+When a paid batch fails or the process restarts mid-request, the collection
+pauses rather than automatically resubmitting an uncertain paid request.
+Review OpenAI usage before manually resuming. When no saved account key exists,
+Luna pauses without making an API request. Local Qwen remains available.
+
 ## Update an installed FUPCJ Server for saved projects and background conversations
 
 Run this once from **administrator PowerShell** on the FUPCJ Server after downloading the updated Vision app:

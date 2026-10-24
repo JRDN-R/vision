@@ -695,7 +695,7 @@ class UploadedMedia:
                     options_path = directory / 'processing.json'
                     if result.get('frameCollection') and options_path.exists():
                         options = json.loads(options_path.read_text())
-                        self.app.config['FRAME_ANALYSIS'].seal(result['frameCollection'], options.get('describeFrames'), options.get('screenshotDetail'))
+                        self.app.config['FRAME_ANALYSIS'].seal(result['frameCollection'], options.get('describeFrames'), options.get('screenshotDetail'), options.get('frameDescriptionEngine'))
                     size = sum(path.stat().st_size for path in directory.iterdir() if path.is_file() and path.name != 'source.input')
                     self.update(row['id'], status='complete', phase='Video ready', progress=100, output_size=size)
                     (directory / 'source.input').unlink(missing_ok=True)
@@ -966,5 +966,5 @@ class UploadedMedia:
             result['transcription'] = dict(status='waiting', phase='Waiting for server transcription queue')
         atomic_json(directory / 'result.json', result)
         if store:
-            store.seal(job_id, processing.get('describeFrames'), processing.get('screenshotDetail'))
+            store.seal(job_id, processing.get('describeFrames'), processing.get('screenshotDetail'), processing.get('frameDescriptionEngine'))
         alive()
