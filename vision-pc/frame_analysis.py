@@ -20,6 +20,8 @@ from uploaded_media import atomic_json
 from project_naming import ProjectNaming
 from frame_context import caption_prompt, timed_cues
 from luna_caption_worker import work_luna_batch
+from gemini_caption_worker import work_gemini_batch
+from frame_fallback import recover_inflight, DEFAULT_LABEL
 
 PRESETS = {'maximum': (.25, 1200), 'medium': (1, 600), 'balanced': (3, 300), 'minimal': (10, 120)}
 MAX_BYTES = 256 * 1024 * 1024
@@ -30,7 +32,7 @@ def processing_options(raw):
     raw = raw if isinstance(raw, dict) else {}
     return {'screenshotDetail': raw.get('screenshotDetail') if raw.get('screenshotDetail') in PRESETS else 'balanced',
             'describeFrames': raw.get('describeFrames') is True,
-            'frameDescriptionEngine': 'luna' if raw.get('frameDescriptionEngine') == 'luna' else 'local'}
+            'frameDescriptionEngine': raw.get('frameDescriptionEngine') if raw.get('frameDescriptionEngine') in ('auto','luna','local') else 'auto'}
 
 
 def frame_interval(duration, detail):
@@ -72,11 +74,13 @@ class FrameAnalysis:
             columns = {row[1] for row in db.execute('PRAGMA table_info(frame_collections)')}
             for name, definition in [('analysis_step', 'INTEGER NOT NULL DEFAULT 1'), ('failures', 'INTEGER NOT NULL DEFAULT 0'), ('retry_at', 'REAL NOT NULL DEFAULT 0'),
                                      ('caption_engine', "TEXT NOT NULL DEFAULT 'local'"), ('luna_cost_usd', 'REAL NOT NULL DEFAULT 0'),
-                                     ('luna_requests', 'INTEGER NOT NULL DEFAULT 0'), ('luna_inflight', 'INTEGER NOT NULL DEFAULT 0')]:
+                                     ('luna_requests', 'INTEGER NOT NULL DEFAULT 0'), ('luna_inflight', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('gemini_cost_usd', 'REAL NOT NULL DEFAULT 0'), ('gemini_requests', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('fallback_enabled', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('fallback_history_json', "TEXT NOT NULL DEFAULT '[]'")]:
                 if name not in columns:
                     db.execute(f'ALTER TABLE frame_collections ADD COLUMN {name} {definition}')
-            db.execute("""UPDATE frame_collections SET status='paused',error='Luna captioning was interrupted. Check OpenAI usage before resuming.',luna_inflight=0
-                          WHERE status='processing' AND caption_engine='luna'""")
+            recover_inflight(db)
             db.execute("UPDATE frame_collections SET status='queued' WHERE status='processing'")
             if 'failures' not in columns:
                 # One-time recovery for the old incomplete-generation failure.
