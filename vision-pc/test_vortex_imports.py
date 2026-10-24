@@ -225,6 +225,38 @@ class CodecTests(unittest.TestCase):
                 self.assertEqual(len(sections), 1)
                 self.assertEqual(sections[0]['start'], 0)
                 self.assertAlmostEqual(sections[0]['end'], 2, delta=.1)
+                # The real Vortex analysis proxy uses regular video presets
+                # and preserves full image refs instead of inline JPEG data.
+                class Store:
+                    created = False
+                    title = None
+                    def create(self, project, collection):
+                        self.created = True
+                        assert (project,collection)==('vortex_codec_project','f'*24)
+                    def set_source_title(self, collection, project, title):
+                        self.title = title
+                    def add(self, collection, index, when, jpeg, metadata):
+                        assert len(jpeg) <= 512*1024
+                        assert len(metadata['scenePixels'])==192
+                        return dict(name=f'frame-{index+1:04}.jpg',timestamp=when,
+                                    frameRef=dict(collectionId=collection,index=index,projectId='vortex_codec_project'),
+                                    size=len(jpeg))
+                store = Store()
+                processed, _ = prepare_source(
+                    output, {'title':'Vortex codec test'}, ffmpeg, temp, lambda **_:None,
+                    processing={'screenshotDetail':'maximum','describeFrames':True,'frameDescriptionEngine':'auto'},
+                    frame_store=store, project_id='vortex_codec_project',collection_id='f'*24)
+                if audio:
+                    self.assertFalse(store.created)
+                    self.assertNotIn('frameCollection',processed)
+                    self.assertEqual(processed['frames'],[])
+                else:
+                    self.assertTrue(store.created)
+                    self.assertEqual(store.title,'Vortex codec test')
+                    self.assertEqual(processed['frameCollection'],'f'*24)
+                    self.assertEqual(len(processed['frames']),8)
+                    self.assertTrue(all('frameRef' in f and 'data' not in f for f in processed['frames']))
+                    self.assertTrue(processed['thumbnail'].startswith('data:image/jpeg;base64,'))
                 output.unlink()
         self.assertIn('height>=320', format_selector('small', processing=True))
         self.assertEqual(format_selector(audio=True, processing=True), 'worstaudio/worst[acodec!=none]')
