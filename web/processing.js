@@ -34,6 +34,7 @@ function frameReportText(report){
   if(frame.analysisStatus==='skipped')lines.push('Not analyzed (every-other-screenshot setting). Screenshot retained.','');
   else lines.push('Model: '+(frame.model||report.model),frame.independentlyInspected?'Independently inspected.':'Description reused from frame '+(frame.reusedFrom+1)+' (identical decoded pixels).',frame.description,'');
  }
+ for(const t of report.fallbackHistory||[])lines.push('AUTOMATIC FALLBACK · '+t.from+' → '+t.to+': '+t.reason);
  lines.push('GROUPED TIMELINE');for(const group of report.timeline||[])lines.push('['+videoTimestamp(group.start)+' – '+videoTimestamp(group.end)+'] Frames '+(group.startFrame+1)+'–'+(group.endFrame+1)+': '+(group.observations||[{description:group.description}]).map(o=>(o.timestamp!==undefined?'['+videoTimestamp(o.timestamp)+'] ':'')+o.description).join(' '));
  if(report.error)lines.push('Analysis needs attention: '+report.error);
  return lines.join('\n');
