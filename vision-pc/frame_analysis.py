@@ -235,8 +235,7 @@ class FrameAnalysis:
         # Foreground Qwen work has priority. A batch releases the shared model
         # lock after at most 16 images; all completed observations are durable.
         with self.db() as db:
-            if db.execute("SELECT 1 FROM project_runs WHERE provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving') LIMIT 1").fetchone():
-                return False
+            foreground_busy = bool(db.execute("SELECT 1 FROM project_runs WHERE provider='local_llama_cpp' AND status IN ('queued','preparing','submitting','in_progress','saving') LIMIT 1").fetchone())
             row = db.execute("SELECT * FROM frame_collections WHERE status='queued' AND retry_at<=? ORDER BY created_at LIMIT 1", (time.time(),)).fetchone()
         if not row:
             return False
@@ -245,13 +244,17 @@ class FrameAnalysis:
         if trials and trials.expired(row['project_id']):
             return False
         row = dict(row); cid = row['id']; directory = self.root / cid
-        if row.get('caption_engine') == 'luna':
+        if row.get('caption_engine') in ('luna','gemini'):
             material = self.caption_material(row)
             if material is None:
                 with self.db() as db:
                     db.execute("UPDATE frame_collections SET retry_at=? WHERE id=? AND status='queued'", (time.time()+30, cid))
                 return False
-            return work_luna_batch(self, row, *material)
+            if row['caption_engine'] == 'luna':
+                return work_luna_batch(self, row, *material)
+            return work_gemini_batch(self, row, *material)
+        if foreground_busy:
+            return False
         settings = self.sessions.local.settings
         if not settings.get('enabled') or not settings.get('visualEnabled'):
             with self.db() as db:
@@ -310,7 +313,8 @@ class FrameAnalysis:
                         description = prior['description'] if reused else runtime.inspect(data_url(output.getvalue(), 'image/jpeg'), prompt)
                         record = dict(**metadata, pixelHash=digest, description=description,
                                       context=context, analysisStatus='reused' if reused else 'inspected',
-                                      independentlyInspected=not bool(reused), sameScene=same_scene)
+                                      independentlyInspected=not bool(reused), sameScene=same_scene,
+                                      model=(prior.get('model','Qwen3.5-0.8B') if reused else 'Qwen3.5-0.8B'))
                         if reused:
                             record['reusedFrom'] = prior.get('reusedFrom', prior['index'])
                         with self.lock:
