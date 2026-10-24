@@ -41,7 +41,10 @@ def work_gemini_batch(store, row, video_title, cues):
         with store.db() as db:
             db.execute("UPDATE frame_collections SET status='complete' WHERE id=?", (cid,))
         return True
-    quote = _estimated_cost(store, remaining)
+    try:
+        quote = _estimated_cost(store, remaining)
+    except Exception:
+        quote = None
     if quote is None or row.get('luna_cost_usd', 0) + row.get('gemini_cost_usd', 0) + quote > MAX_USD:
         failover(store, cid, 'gemini',
                  'Gemini pricing is unavailable or the combined cloud budget is near $0.90.')
