@@ -10,9 +10,15 @@ window.upgradeFixture={
  boot:async()=>{
   await accountReady;await projectRecoverStartup();
   accountSignedIn=()=>true;accountCanUseApp=()=>true;ventureScope=()=> 'upgrade-fixture';
-  accountFirebase={currentUser:{uid:'upgrade-fixture',displayName:'Jordan Rapp',email:'jordan@example.test'}};
-  cloudAuth={fixture:true};window.fixtureApproval='unrequested';window.fixturePrefs={};
-  projectRequest=async(path,options={})=>{
+  accountFirebase={currentUser:{uid:'upgrade-fixture',displayName:'Jordan Rapp',email:'jordan@example.test',getIdToken:async()=> 'fixture-id-token'}};
+  cloudAuth={kind:'firebase-google',uid:'upgrade-fixture'};window.fixtureApproval='unrequested';window.fixturePrefs={};
+  // Keep projectRequest, cloudFetch and the Firebase token path real. Mock
+  // only the network boundary so a project-only guard cannot be hidden again.
+  window.fetch=async(url,options={})=>{
+   const path=new URL(url).pathname.replace(/^\/api/,'');
+   const headers=new Headers(options.headers);
+   if(headers.get('Authorization')!=='Bearer fixture-id-token')throw new Error('Missing account authentication');
+   if(path.startsWith('/account/')&&headers.has('X-Vision-Project-Key'))throw new Error('Account request leaked a project key');
    if(path==='/account/upgrade'){
     if(options.method==='POST'&&fixtureApproval==='unrequested')window.fixtureApproval='pending';
     return new Response(JSON.stringify({status:fixtureApproval,approved:fixtureApproval==='approved',canAdmin:true,preferences:{transcriptionProvider:fixtureApproval==='approved'?'gemini':'local',frameDescriptionEngine:fixtureApproval==='approved'?'auto':'local',describeFrames:true,includeSoundEvents:false,...fixturePrefs}}));

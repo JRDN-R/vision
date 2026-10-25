@@ -2,7 +2,7 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, codex/account-notifications-20261025, codex/ios-cache-account-upgrades-20261025, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
+    branches: [main, codex/fix-account-upgrade-request-20261025, codex/account-notifications-20261025, codex/ios-cache-account-upgrades-20261025, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
     paths:
       - 'web/**'
       - 'vision-pc/standalone*'
