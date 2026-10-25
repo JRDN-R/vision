@@ -1,17 +1,17 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),{webcrypto}=require('node:crypto');
 const source=fs.readFileSync('web/projects.js','utf8');
 function harness(){
- const elements=new Map(),storage=new Map(),requests=[],remote=new Map();let supported=true;
+ const elements=new Map(),storage=new Map(),requests=[],remote=new Map(),intervals=[];let supported=true;
  class Element{constructor(id=''){this.id=id;this.textContent='';this.dataset={};this.children=[];this.hidden=false;this.open=false;this.onclick=()=>{};this.value='';}set innerHTML(text){for(const m of text.matchAll(/id="([^"]+)"/g))elements.set(m[1],new Element(m[1]));}get innerHTML(){return'';}setAttribute(){}append(...els){this.children.push(...els);}appendChild(el){this.children.push(el);if(el.id)elements.set(el.id,el);}replaceChildren(){this.children=[];}showModal(){this.open=true;}close(){this.open=false;}}
  const el=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id);};
- const context={console,Blob,Headers,URL,AbortController,crypto:webcrypto,Uint8Array,Date,JSON,Promise,Map,Set,Number,String,Array,Error,RegExp,Math,requests,remote,navigator:{onLine:true},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},document:{createElement:()=>new Element(),body:new Element(),addEventListener:()=>{},visibilityState:'visible'},window:{addEventListener:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,$:el,state:{title:'Test board',nodes:[],edges:[],settings:{},view:{},mainPrompt:'Task',consoleSession:null},cloudConfig:{kind:'private-pc',backendUrl:'https://desktop.test.ts.net'},cloudAuth:{accessToken:'a'.repeat(32)},validCloudConfig:x=>/^https:\/\/[a-z.]+\.ts\.net$/.test(x.backendUrl)?x:null,withoutVideoPayloads:x=>x,snapshot:()=>JSON.parse(JSON.stringify(context.state)),markDirty:()=>{context.dirty=true;},validateProject:async raw=>{const {projectCloud,...out}=raw;return out;},dirty:false,busy:false,ioBusy:false,history:[],future:[],selected:null,selectedMark:null,selectedEdge:null,pending:null,action:null,cancelTranscriptionQueue(){},consoleRefreshProject(){},resumeYouTubeImports(){},scheduleTranscriptionQueue(){},renderAll(){},updateRefreshNotice(){},R:{clearImageCache(){}},saveProject(){},openProject:async()=>{},confirm:()=>true,toast:()=>{},cloudFetch:async(path,opts={})=>{
+ const context={console,Blob,Headers,URL,AbortController,crypto:webcrypto,Uint8Array,Date,JSON,Promise,Map,Set,Number,String,Array,Error,RegExp,Math,requests,remote,navigator:{onLine:true},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},document:{createElement:()=>new Element(),body:new Element(),addEventListener:()=>{},visibilityState:'visible'},window:{addEventListener:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},$:el,state:{title:'Test board',nodes:[],edges:[],settings:{},view:{},mainPrompt:'Task',consoleSession:null},cloudConfig:{kind:'private-pc',backendUrl:'https://desktop.test.ts.net'},cloudAuth:{accessToken:'a'.repeat(32)},validCloudConfig:x=>/^https:\/\/[a-z.]+\.ts\.net$/.test(x.backendUrl)?x:null,withoutVideoPayloads:x=>x,snapshot:()=>JSON.parse(JSON.stringify(context.state)),markDirty:()=>{context.dirty=true;},validateProject:async raw=>{const {projectCloud,...out}=raw;return out;},dirty:false,busy:false,ioBusy:false,history:[],future:[],selected:null,selectedMark:null,selectedEdge:null,pending:null,action:null,cancelTranscriptionQueue(){},consoleRefreshProject(){},resumeYouTubeImports(){},scheduleTranscriptionQueue(){},renderAll(){},updateRefreshNotice(){},R:{clearImageCache(){}},saveProject(){},openProject:async()=>{},confirm:()=>true,toast:()=>{},cloudFetch:async(path,opts={})=>{
   requests.push({path,opts});if(path==='/health')return new Response(JSON.stringify({capabilities:{persistentProjects:supported,projectRevision:supported}}));
   const id=path.split('/')[2],saved=remote.get(id),key=new Headers(opts.headers).get('X-Vision-Project-Key');
   if(saved&&key!==saved.key)return new Response(JSON.stringify({error:'bad key'}),{status:403});
   if(opts.method==='PUT'){const data=JSON.parse(opts.body);if(data.revision!==(saved?.revision||0))return new Response(JSON.stringify({error:'newer copy'}),{status:409});const record={...data,key,revision:data.revision+1};remote.set(id,record);return new Response(JSON.stringify({revision:record.revision}));}
   return new Response(JSON.stringify(saved||{error:'missing'}),{status:saved?200:404});
  }};
- vm.createContext(context);vm.runInContext(source,context);return{context,el,requests,remote,storage,run:code=>vm.runInContext(code,context),setSupported:v=>supported=v};
+ vm.createContext(context);vm.runInContext(source,context);return{context,el,requests,remote,storage,intervals,run:code=>vm.runInContext(code,context),setSupported:v=>supported=v};
 }
 (async()=>{
  const h=harness();await Promise.resolve();assert.equal(h.requests.length,0,'empty boot must not save');assert.equal(h.context.state.projectCloud,undefined);
@@ -34,6 +34,20 @@ function harness(){
  dates.run('projectRemember(dateMeta,"Local project",dateEntries[4].updatedAt);renderProjectMenu()');
  assert.equal(dates.el('projectRecentList').children[0].children[1].textContent,'Current · '+localDate,'local ISO recovery date is not converted twice');
  for(const value of [undefined,null,'',false,-1,'-1',NaN,Infinity,{}])assert.equal(dates.context.projectDateText(value),'Date unavailable','invalid project date does not display 1970 or Invalid Date');
+ const reconnect=harness();reconnect.run('markDirty()');await reconnect.run('flushProjectSave()');
+ const fetch=reconnect.context.cloudFetch;let unavailable=true;
+ reconnect.context.cloudFetch=async(...args)=>{if(unavailable)throw Object.assign(new Error('offline'),{code:'VISION_SERVER_UNAVAILABLE'});return fetch(...args);};
+ reconnect.run('projectHealthCache=null');await reconnect.run('projectReconcile()');
+ assert.equal(reconnect.run('projectPending'),false);assert.equal(reconnect.run('projectReconnectNeeded'),true);
+ unavailable=false;reconnect.intervals.find(timer=>timer.ms===15000).fn();await new Promise(resolve=>setImmediate(resolve));assert.equal(reconnect.el('saveState').dataset.projectStatus,'saved');assert.equal(reconnect.run('projectReconnectNeeded'),false);
+ reconnect.context.state.title='Keep local edits';reconnect.run('markDirty()');await reconnect.run('projectReconnect()');
+ assert.equal(reconnect.remote.get(reconnect.context.state.projectCloud.id).project.title,'Keep local edits');
+ const requestCount=reconnect.requests.length;reconnect.run('projectConflict=true');await reconnect.run('projectReconnect()');assert.equal(reconnect.requests.length,requestCount);
+ reconnect.run('projectConflict=false');reconnect.context.document.visibilityState='hidden';await reconnect.run('projectReconnect()');assert.equal(reconnect.requests.length,requestCount);
+ reconnect.context.document.visibilityState='visible';let release;reconnect.context.cloudFetch=()=>new Promise(resolve=>{release=resolve;});
+ const pendingReconnect=reconnect.run('projectReconnect()');await Promise.resolve();assert.equal(reconnect.run('projectReconnectBusy'),true);
+ await reconnect.run('projectReconnect()');release(new Response(JSON.stringify({capabilities:{persistentProjects:false}})));await pendingReconnect;
+ assert.equal(reconnect.run('projectReconnectBusy'),false);
  const base=fs.readFileSync('web/base.js','utf8'),exportCode=base.slice(base.indexOf('async function buildExportFiles('),base.indexOf('async function readProjectInput('));assert.doesNotMatch(exportCode,/JSON\.stringify\(archive\)|projectCloud|\.vision\.json/,'AI package does not emit editable project or project secret');
  console.log('Project smoke: blank boot, identity, revision saves, portable metadata, safe conflicts, fork, origin/ID isolation, old-server fallback, latest PC recovery, project dates, and export-secret isolation passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
