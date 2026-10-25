@@ -301,8 +301,13 @@ def authorize():
             claims = identity.verify(token)
         except IdentityUnavailable:
             raise APIError('Account sign-in verification is temporarily unavailable on FUPCJ Server. Try again.', 503)
-        except InvalidIdentity:
-            raise APIError('Your sign-in has expired or is invalid. Sign in again.', 401)
+        except InvalidIdentity as error:
+            message = {
+                'expired': 'Your sign-in has expired. Sign in again.',
+                'clock': "FUPCJ Server's clock does not match Google. Check automatic date and time on the PC, then try again.",
+                'signing-key': "FUPCJ Server could not verify Google's current signing key. Try again in a minute.",
+            }.get(error.reason, 'Your sign-in has expired or is invalid. Sign in again.')
+            raise APIError(message, 401, 'sign-in-' + error.reason)
         g.uid, g.auth_kind = 'firebase:' + claims['sub'], 'firebase-google'
         if account_admin.blocked(g.uid):
             raise APIError('This Vision account has been removed.', 403, 'account-removed')

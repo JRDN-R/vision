@@ -19,7 +19,7 @@ const accountGoogleLogin=(()=>{
   }).catch(err=>{loading=null;throw err;});
   return loading;
  }
- function request(){
+ function request({selectAccount=false}={}){
   if(pending)return Promise.reject(error('auth/cancelled-popup-request','A sign-in window is already open.'));
   if(!ready())return Promise.reject(error('auth/google-not-ready','Google sign-in is loading. Press Continue with Google again in a moment.'));
   return new Promise((resolve,reject)=>{
@@ -29,7 +29,7 @@ const accountGoogleLogin=(()=>{
    timer=setTimeout(()=>finish(error('auth/google-timeout','Google sign-in expired. Close the Google window and try again.')),180000);
    try{
     const client=window.google.accounts.oauth2.initTokenClient({
-     client_id:clientId,scope:'openid email profile',include_granted_scopes:false,prompt:'',
+     client_id:clientId,scope:'openid email profile',include_granted_scopes:false,prompt:selectAccount?'select_account':'',
      callback:response=>{
       if(response?.error)return finish(error('auth/google-denied','Google sign-in was not completed. Please try again.'));
       if(typeof response?.access_token!=='string'||!response.access_token||response.access_token.length>20000)

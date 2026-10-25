@@ -83,8 +83,8 @@ class FirebaseTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/health', headers={'Authorization': 'Bearer '+password,
                                                                  'Origin': 'https://jrdn-r.github.io'}).status_code, 200)
         invalid = [self.token(aud='another-project'), self.token(iss='https://securetoken.google.com/wrong'),
-                   self.token(exp=int(time.time())-1), self.token(iat=int(time.time())+60),
-                   self.token(auth_time=int(time.time())+60), self.token(auth_time='123'),
+                   self.token(exp=int(time.time())-1), self.token(iat=int(time.time())+120),
+                   self.token(auth_time=int(time.time())+120), self.token(auth_time='123'),
                    self.token(auth_time=float('nan')), self.token(uid=''),
                    self.token(firebase={'sign_in_provider': 'facebook.com'}),
                    jwt.encode({'sub': 'alice'}, 's'*32, algorithm='HS256', headers={'kid': 'test'}),
@@ -97,6 +97,16 @@ class FirebaseTests(unittest.TestCase):
                 response = self.client.get('/api/health', headers={'Authorization': 'Bearer '+token})
                 self.assertEqual(response.status_code, 401)
         self.assertEqual(self.client.get('/api/health', headers={'Authorization': 'Bearer é'}).status_code, 401)
+
+    def test_fresh_login_tolerates_small_pc_clock_delay_without_extending_expiry(self):
+        now = int(time.time())
+        token = self.token(iat=now+30, auth_time=now+30)
+        self.assertEqual(self.identity.verify(token)['sub'], 'alice')
+        response = self.client.get('/api/health', headers={'Authorization': 'Bearer '+token})
+        self.assertEqual(response.status_code, 200, response.json)
+        for changes in ({'iat': now+120}, {'auth_time': now+120}, {'exp': now-1}):
+            with self.subTest(changes=changes), self.assertRaises(firebase_auth.InvalidIdentity):
+                self.identity.verify(self.token(**changes))
 
     def test_public_certificates_are_cached_and_fail_closed(self):
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'test signing key')])
@@ -122,6 +132,45 @@ class FirebaseTests(unittest.TestCase):
         verifier._expires = 0
         with patch.object(firebase_auth.requests, 'get', side_effect=requests.ConnectionError):
             with self.assertRaises(firebase_auth.IdentityUnavailable): verifier.verify(self.token())
+
+    def test_new_signing_key_refreshes_cached_certificates_with_a_global_cooldown(self):
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'rotated signing key')])
+        now = datetime.now(timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                .public_key(self.other_key.public_key()).serial_number(2)
+                .not_valid_before(now-timedelta(days=1)).not_valid_after(now+timedelta(days=1))
+                .sign(self.other_key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM).decode())
+        from unittest.mock import Mock
+        response = Mock(headers={'Cache-Control': 'max-age=3600'})
+        response.json.return_value = {'rotated': cert}
+        claims = jwt.decode(self.token(), options={'verify_signature': False})
+        token = jwt.encode(claims, self.other_key, algorithm='RS256', headers={'kid': 'rotated'})
+        with patch.object(firebase_auth.requests, 'get', return_value=response) as fetch:
+            self.assertEqual(self.identity.verify(token)['sub'], 'alice')
+            self.assertEqual(fetch.call_count, 1)
+            self.identity.verify(token)
+            for index in range(10):
+                unknown = jwt.encode(claims, self.signing_key, algorithm='RS256', headers={'kid': 'bad-'+str(index)})
+                with self.assertRaises(firebase_auth.InvalidIdentity): self.identity.verify(unknown)
+            self.assertEqual(fetch.call_count, 1, 'Unknown key IDs must share one refresh cooldown')
+        # A failing refresh does not turn a fresh login into a permanent 401.
+        self.identity._last_key_fetch -= firebase_auth.KEY_REFRESH_SECONDS
+        with patch.object(firebase_auth.requests, 'get', side_effect=requests.ConnectionError) as fetch:
+            with self.assertRaises(firebase_auth.IdentityUnavailable): self.identity.verify(self.token())
+            with self.assertRaises(firebase_auth.InvalidIdentity): self.identity.verify(self.token())
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(self.identity.verify(token)['sub'], 'alice')
+
+    def test_rejection_explains_clock_and_expiry_without_returning_token_data(self):
+        now = int(time.time())
+        for changes, code in [({'iat': now+120}, 'sign-in-clock'), ({'exp': now-1}, 'sign-in-expired'),
+                              ({'aud': 'another-project'}, 'sign-in-invalid')]:
+            token = self.token(**changes)
+            response = self.client.get('/api/health', headers={'Authorization': 'Bearer '+token})
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.json['code'], code)
+            self.assertNotIn(token, response.get_data(as_text=True))
+            self.assertNotIn('alice', response.get_data(as_text=True))
 
     def test_account_discovery_isolation_and_revision_conflicts(self):
         self.assertEqual(self.save().status_code, 200)
