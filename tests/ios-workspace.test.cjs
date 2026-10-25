@@ -87,7 +87,9 @@ test('native shell keeps the website navigation and has bounded recovery',()=>{
   const root=fs.readFileSync('ios/App/VisionRootView.swift','utf8');
   const web=fs.readFileSync('ios/App/VisionWebView.swift','utf8');
   assert.doesNotMatch(root,/ForEach\(VisionPage|safeAreaInset\(edge:\s*\.bottom|navigationTitle\(web\.page/);
-  assert.match(root,/\.task\s*\{\s*web\.start\(\)/);
+  assert.match(root,/vision\.start\(\)/);
+  assert.match(root,/VisionWebView\(model: vision\)/);
+  assert.match(root,/VisionWebView\(model: vortex\)/);
   assert.match(root,/Button\("Retry"\)/);
   assert.match(web,/Task\.sleep\(nanoseconds: 60_000_000_000\)/);
   assert.match(web,/didFail navigation: WKNavigation!/);

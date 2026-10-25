@@ -1,8 +1,8 @@
 {
-  "title": "A cleaner Vision header",
+  "title": "Faster iPhone workspaces and Account Upgrades",
   "items": [
-    "Vision’s mobile title toolbar now starts folded. Tap the small center handle to expand or collapse it; it stays open while you work in the title.",
-    "The project name uses the space previously occupied by the logo. Find the logo and version together at the top of the Vision menu.",
-    "Automatic project naming is enabled for new projects by default. Manually typed names and projects with naming disabled remain unchanged."
+    "The updated iPhone app saves its app files for faster reopening, checks for updates, and keeps Vision, Venture and Vortex ready when you switch between them.",
+    "Request an Account Upgrade from the menu. Admin approval enables Gemini transcription, Luna screenshot descriptions and Luna project titles. Your transcription and description choices apply across all projects.",
+    "The title bar stays visible. Compact menus keep app shortcuts together at the bottom, and conversation history uses pages instead of scrolling."
   ]
 }

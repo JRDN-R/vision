@@ -53,8 +53,8 @@ def run():
             assert link.locator('img.workspace-vortex-logo').count() == 1
             assert link.locator('img.workspace-vortex-logo').evaluate("el => el.complete && el.naturalWidth > 0 && el.getAttribute('src').startsWith('data:image/png;base64,')")
             assert link.get_attribute('href') == fixture.URL + 'vortex/'
-            assert link.evaluate("el=>el.previousElementSibling.textContent") == 'Help'
-            assert link.evaluate("el=>el.previousElementSibling.previousElementSibling.textContent") == 'Processing activity'
+            assert link.evaluate("el=>el.previousElementSibling.id") == 'runProjectBtn'
+            assert link.evaluate("el=>el.parentElement===document.getElementById('workspaceMenu').lastElementChild")
             assert link.evaluate('el=>el===el.parentElement.lastElementChild')
             assert link.evaluate('el=>getComputedStyle(el).color') != page.locator('#exportBtn').evaluate('el=>getComputedStyle(el).color')
             page.screenshot(path=str(SHOTS / f'vision-menu-{width}.png'))
@@ -86,11 +86,11 @@ def run():
             assert venture.is_visible()
             assert venture.locator('img.workspace-vortex-logo').count() == 1
             assert venture.locator('img.workspace-vortex-logo').evaluate("el => el.complete && el.naturalWidth > 0 && el.getAttribute('src').startsWith('data:image/png;base64,')")
-            assert venture.evaluate("el=>el.nextElementSibling.classList.contains('venture-sidebar-foot')")
+            assert venture.evaluate("el=>el.parentElement===document.getElementById('ventureSidebar').lastElementChild")
             assert venture.evaluate("el=>!el.closest('#ventureHistory')")
             page.evaluate('''document.querySelector('#ventureHistory').innerHTML=Array.from({length:80},(_,i)=>'<div class="venture-history-row"><button class="venture-history-open">Conversation '+i+'</button></div>').join('')''')
             before = venture.bounding_box()
-            assert page.locator('#ventureHistory').evaluate('el=>el.scrollHeight>el.clientHeight')
+            assert page.locator('#ventureHistory').evaluate("el=>getComputedStyle(el).overflowY==='hidden'")
             page.locator('#ventureHistory').evaluate('el=>el.scrollTop=el.scrollHeight')
             assert venture.bounding_box() == before, 'Vortex moved with scrolling conversation history'
             assert before['y'] + before['height'] < 844

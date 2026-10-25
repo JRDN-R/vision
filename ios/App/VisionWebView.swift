@@ -16,6 +16,11 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     private let google = GoogleSignIn()
     private var authenticating = false
     private var downloadURLs: [ObjectIdentifier: URL] = [:]
+    let isVortex: Bool
+    var navigateWorkspace: ((URL) -> Void)?
+    private var navigationGeneration = 0
+    private var pendingWorkspace: String?
+    init(isVortex: Bool = false) { self.isVortex = isVortex; super.init() }
     private var started = false
     private var activeNavigation: WKNavigation?
     private var loadWatchdog: Task<Void, Never>?
@@ -46,12 +51,27 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     func start() {
         guard !started else { return }
         started = true
-        navigate(to: AppConfiguration.workspaceURL)
+        navigate(to: isVortex ? AppConfiguration.webURL.appendingPathComponent("vortex/index.html") : AppConfiguration.workspaceURL)
     }
 
     func reloadWorkspace() {
         let current = webView.url
-        navigate(to: AppConfiguration.isTrustedPage(current) ? current! : AppConfiguration.workspaceURL)
+        let fallback = isVortex ? AppConfiguration.webURL.appendingPathComponent("vortex/index.html") : AppConfiguration.workspaceURL
+        navigate(to: AppConfiguration.isTrustedPage(current) ? current! : fallback)
+        Task { await WorkspaceCache.shared.checkForUpdates(force: true) }
+    }
+
+    func selectWorkspace(_ url: URL) {
+        if !started { start() }
+        guard !isVortex else { return }
+        pendingWorkspace = url.path.contains("/venture") || URLComponents(url: url, resolvingAgainstBaseURL: true)?.queryItems?.contains(where: { $0.name == "view" && $0.value == "venture" }) == true ? "venture" : "vision"
+        applyPendingWorkspace()
+    }
+
+    private func applyPendingWorkspace() {
+        guard bridgeReady, let view = pendingWorkspace else { return }
+        pendingWorkspace = nil
+        Task { _ = try? await webView.callAsyncJavaScript("if (window.VisionNativeSelectWorkspace) window.VisionNativeSelectWorkspace(view);", arguments: ["view": view], in: nil, contentWorld: .page) }
     }
 
     func openWebsite() { UIApplication.shared.open(AppConfiguration.workspaceURL) }
@@ -62,7 +82,20 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             return
         }
         beginLoading()
-        activeNavigation = webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60))
+        navigationGeneration += 1
+        let generation = navigationGeneration
+        Task { [weak self] in
+            guard let self else { return }
+            let data = await WorkspaceCache.shared.cached(vortex: self.isVortex)
+            guard generation == self.navigationGeneration else { return }
+            if let data {
+                let response = URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+                self.activeNavigation = self.webView.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
+            } else {
+                self.activeNavigation = self.webView.load(URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 60))
+            }
+            await WorkspaceCache.shared.checkForUpdates()
+        }
     }
 
     private func beginLoading() {
@@ -133,7 +166,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             replyHandler(nil, "Untrusted Vision message."); return
         }
         switch type {
-        case "ready": bridgeReady = true; loadFailure = nil; finishLoading(); replyHandler(true, nil)
+        case "ready": bridgeReady = true; loadFailure = nil; finishLoading(); applyPendingWorkspace(); replyHandler(true, nil)
         case "signIn": replyHandler(true, nil); Task { await signIn() }
         case "downloads": openDownloads(); replyHandler(true, nil)
         case "settings": showingSettings = true; replyHandler(true, nil)
@@ -212,7 +245,15 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         if (navigationAction.shouldPerformDownload || url.scheme == "blob") && AppConfiguration.isTrustedPage(webView.url) {
             decisionHandler(.download); return
         }
-        if AppConfiguration.isTrustedPage(url) { decisionHandler(.allow); return }
+        if AppConfiguration.isTrustedPage(url) {
+            let targetVortex = AppConfiguration.isVortexPage(url)
+            if targetVortex != isVortex, let navigateWorkspace {
+                decisionHandler(.cancel)
+                navigateWorkspace(url)
+                return
+            }
+            decisionHandler(.allow); return
+        }
         // Keep untrusted content outside the WebKit view holding the native bridge.
         if navigationAction.navigationType == .linkActivated, ["https", "http", "mailto"].contains(url.scheme ?? "") {
             UIApplication.shared.open(url)
@@ -230,7 +271,10 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url {
-            if AppConfiguration.isTrustedPage(url) { navigate(to: url) }
+            if AppConfiguration.isTrustedPage(url) {
+                if AppConfiguration.isVortexPage(url) != isVortex { navigateWorkspace?(url) }
+                else { navigate(to: url) }
+            }
             else if ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
         }
         return nil

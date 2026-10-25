@@ -1010,3 +1010,14 @@ window.MobileMenuSwipe.install({
 void loadMenuAnimation();
 void initAuth(accountChanged).catch(error => { settleAuth(null); $('authStatus').textContent = authError(error); });
 
+
+// History has its own panel so a long download list never scrolls the app menu.
+function installHistoryPanel(){
+ const section=document.querySelector('#navigation .nav-history');if(!section)return;
+ const dialog=document.createElement('dialog');dialog.id='downloadHistoryDialog';dialog.className='modal download-history-dialog';
+ const close=document.createElement('button');close.className='icon-button';close.type='button';close.setAttribute('aria-label','Close download history');close.textContent='×';close.onclick=()=>dialog.close();
+ dialog.append(close,section);document.body.append(dialog);
+ const button=document.createElement('button');button.type='button';button.id='openDownloadHistory';button.className='text-button';button.textContent='Download history';button.onclick=()=>{closeMenu(false);dialog.showModal();};
+ const links=document.querySelector('#navigation nav');links.before(button);links.classList.add('nav-app-links');$('navigation').append(links);
+}
+installHistoryPanel();

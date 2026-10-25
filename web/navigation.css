@@ -99,3 +99,52 @@
 
 /* The shared head lives inside a non-rendering template, not over the hamburger. */
 #visionBrandSource{display:none!important}
+
+/* Fixed title, compact drawers, and a shared pair of app shortcuts. */
+.compact-navigation #appHeader{position:fixed;top:0;left:0;right:0;z-index:40;transform:none;visibility:visible;pointer-events:auto}
+.compact-navigation .app{margin-top:76px}
+.compact-navigation #headerReveal{display:none!important}
+.workspace-menu,.compact-navigation .venture-sidebar{overflow:hidden;padding:12px 14px;gap:4px}
+.workspace-menu-heading,.compact-navigation .venture-sidebar-top{height:52px;min-height:52px;margin-bottom:6px}
+.workspace-menu-actions{flex:1;min-height:0}
+.workspace-menu .top-actions{gap:2px}
+.workspace-menu .top-actions button,.workspace-menu .top-actions .workspace-vortex-link{min-height:38px;padding:6px 12px;font-size:12px;line-height:1.3}
+.workspace-menu-footer,.compact-navigation .venture-sidebar .workspace-menu-footer{padding:5px 8px 0;margin-top:3px;gap:3px}
+.workspace-profile-button,.venture-root .workspace-profile-button{min-height:48px;margin-top:4px;padding:6px 8px}
+.workspace-profile-avatar{width:29px;height:29px}
+.workspace-app-links{display:flex;gap:7px;flex:none;margin-top:6px;width:100%}
+.workspace-app-links button,.workspace-app-links a,.venture-root .workspace-app-links button,.venture-root .workspace-app-links a{display:flex!important;flex:1;align-items:center;justify-content:center;gap:7px;min-width:0;min-height:42px;margin:0;padding:7px;border:1px solid #3b4735;border-radius:10px;color:#d4e4c7;background:#252f22;font:12px/1.4 system-ui,sans-serif;text-decoration:none}
+.workspace-app-links svg,.workspace-app-links img{width:19px;height:19px;object-fit:contain;fill:none;stroke:currentColor;stroke-width:1.6}
+.workspace-app-links a,.venture-root .workspace-app-links a{background:#321e1a;color:#e4b8a8;border-color:#63382a}
+.workspace-menu .top-actions .account-upgrade,.venture-root .account-upgrade{display:flex;align-items:center;gap:12px;width:100%;min-height:38px;padding:6px 12px;border:1px solid #b6914433;border-radius:10px;background:linear-gradient(110deg,#c99a3310,#e4bb5a22,#c99a3310);background-size:220% 100%;color:#d8b66a;font:12px/1.4 system-ui,sans-serif;text-align:left;animation:account-gold 9s ease-in-out infinite}
+.account-upgrade svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.account-upgrade[hidden]{display:none!important}
+.compact-navigation .venture-search{margin:5px 4px}
+.compact-navigation .venture-history-label{margin-bottom:5px}
+.compact-navigation .venture-sidebar-foot{margin-top:3px;padding-top:5px}
+.compact-navigation .venture-history{overflow:hidden}
+.compact-navigation #ventureSidebar .workspace-menu-footer:has([data-vision-native-action]){display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.compact-navigation #ventureSidebar .workspace-menu-footer>.workspace-menu-version,.compact-navigation #ventureSidebar .workspace-menu-footer>.workspace-footer-actions{grid-column:1/-1}
+.compact-navigation #ventureSidebar [data-vision-native-action]{padding:5px;min-height:36px;font-size:10px;gap:5px}
+.compact-navigation #ventureSidebar [data-vision-native-action] svg{width:18px;height:18px}
+.venture-history-pages{display:flex;justify-content:space-between;align-items:center;gap:5px;flex:none;min-height:32px}
+.venture-history-pages button{min-height:32px;padding:4px 9px;font-size:11px;background:transparent;border:0}
+.venture-history-pages span{font-size:10px;color:#aab7a5}
+@keyframes account-gold{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+@media(max-width:760px),(hover:none) and (pointer:coarse){
+ .compact-navigation.mobile-mode #appHeader{transform:none;visibility:visible;pointer-events:auto}
+ .compact-navigation.mobile-mode .app{height:calc(100dvh - 65px - env(safe-area-inset-top,0px));margin-top:calc(65px + env(safe-area-inset-top,0px))}
+ .workspace-menu,.compact-navigation .venture-sidebar{padding-top:max(10px,env(safe-area-inset-top,0px));padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
+}
+@media(max-height:740px){
+ .workspace-menu .top-actions{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+ .workspace-menu .top-actions #accountButton,.workspace-menu .top-actions #accountUpgradeButton{grid-column:1/-1}
+ .workspace-menu .top-actions button,.workspace-menu .top-actions .workspace-vortex-link{padding:6px;gap:6px;font-size:11px}
+ .workspace-menu .top-actions button>svg{width:17px;height:17px;flex-basis:17px}
+ .workspace-menu-heading,.compact-navigation .venture-sidebar-top{height:46px;min-height:46px;margin-bottom:3px}
+ .workspace-profile-text small,.workspace-menu-version{display:none}
+ .compact-navigation #ventureSidebar .venture-sidebar-foot{display:none}
+ .compact-navigation #ventureSidebar .workspace-profile-button{min-height:44px;padding:5px 8px;margin-top:0}
+ .compact-navigation #ventureSidebar .venture-history-label{display:none}
+}
+@media(prefers-reduced-motion:reduce){.workspace-menu .account-upgrade,.venture-root .account-upgrade{animation:none}}

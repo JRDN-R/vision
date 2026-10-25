@@ -130,8 +130,12 @@ function navigationInstall(){
  menu.querySelector('.top-actions').append(navigationAdminsLink('workspaceAdminsLink'));
  extra('Processing activity','retry',openActivity);
  extra('Help','file',()=>$('helpDialog').showModal());
- menu.querySelector('.top-actions').append(navigationVortexLink('workspaceVortexLink'));
- $('ventureSidebar').querySelector('.venture-sidebar-foot').before(navigationVortexLink('ventureVortexLink'));
+ const apps=document.createElement('div');apps.className='workspace-app-links';apps.append($('runProjectBtn'),navigationVortexLink('workspaceVortexLink'));menu.append(apps);
+ // Keep creation and saving together immediately below Account Upgrade.
+ $('newBtn').after($('saveBtn'));
+ const ventureApps=document.createElement('div');ventureApps.className='workspace-app-links';
+ const visionButton=document.createElement('button');visionButton.type='button';visionButton.textContent='Vision';visionButton.onclick=()=>{navigationCloseMenu(false);workspaceSwitch('vision');};
+ ventureApps.append(visionButton,navigationVortexLink('ventureVortexLink'));$('ventureSidebar').append(ventureApps);
  menu.querySelector('.workspace-menu-footer').append(navigationFooterActions('workspaceMenuNews','workspaceMenuSignOut'));
  menu.addEventListener('click',event=>{if(!event.target.closest('.top-actions button'))return;queueMicrotask(()=>{if(!document.querySelector('dialog[open]'))navigationCloseMenu(false);});});
  // Vision branding and release notes now live in the menu, leaving the top

@@ -1,6 +1,7 @@
 """Portable-app settings and node-owned activity, at phone and desktop widths.
 Every network request is blocked; no account or provider calls are made.
 """
+import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 root=Path(__file__).resolve().parents[1]
@@ -9,9 +10,9 @@ index=html.rfind('})();')
 hooks='''
 accountCanUseApp=()=>true;accountUpdateGate();
 window.processingFixture={
- ready:async()=>{await accountReady;await projectRecoverStartup();},
+ ready:async()=>{await accountReady;await projectRecoverStartup();accountSignedIn=()=>true;accountFirebase={currentUser:{uid:'processing-fixture'}};upgradeAccount.uid='processing-fixture';upgradeAccount.status='approved';projectRequest=async(path,options={})=>new Response(JSON.stringify({preferences:JSON.parse(options.body||'{}')}));},
  open:()=>openProcessingSettings(),
- settings:()=>({...state.settings}),
+ settings:()=>({...state.settings,transcriptionProvider:transcriptionProvider(),includeSoundEvents:soundEventsSelected()}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
  switchView:view=>{accountSignedIn=()=>true;ventureScope=()=> 'processing-fixture';navigationMarkSeen();venture.uid=ventureScope();venture.ready=true;ventureSchedule=()=>{};workspaceSwitch(view);},
  ventureWork:active=>{venture.sending=active;venturePaintStatus();},
@@ -30,7 +31,8 @@ window.processingFixture={
 '''
 html=html[:index]+hooks+html[index:]
 with sync_playwright() as pw:
- browser=pw.chromium.launch(headless=True)
+ options={'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}
+ browser=pw.chromium.launch(headless=True,**options)
  for width in (390,1280):
   page=browser.new_page(viewport={'width':width,'height':844});errors=[]
   page.on('pageerror',lambda error:errors.append(str(error)))
@@ -47,6 +49,7 @@ with sync_playwright() as pw:
   page.locator('#projectSounds').check()
   page.locator('#projectAutoName').check()
   page.locator('#saveProcessing').click()
+  expect(page.locator('#processingDialog')).to_be_hidden()
   settings=page.evaluate('processingFixture.settings()')
   assert settings['screenshotDetail']=='maximum' and settings['transcriptionProvider']=='gemini' and settings['includeSoundEvents'],settings
   page.evaluate('processingFixture.restore()')

@@ -35,6 +35,7 @@ from firebase_auth import FirebaseIdentity, InvalidIdentity, IdentityUnavailable
 from audit_logs import AuditLogs
 from trials import Trials
 from gemini_access import GeminiAccess, GeminiUsage
+from account_upgrade import AccountUpgrade
 from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 from vortex import VortexJobs
 from account_administration import AccountAdministration
@@ -116,6 +117,7 @@ def configure(config_path, migrate_gemini=False):
         app.logger.warning('The existing Gemini credential could not be migrated; local processing remains available.')
     app.config['GEMINI_ACCESS'] = GeminiAccess(app, connect_db, wake=transcriptions.wake.set)
     app.config['GEMINI_ACCESS'].initialize()
+    account_upgrade.initialize()
     app.config['GEMINI_USAGE'] = GeminiUsage(app, connect_db)
     app.config['GEMINI_USAGE'].initialize()
     transcriptions.initialize(config, config_path)
@@ -809,6 +811,7 @@ def openai_artifact(container_id, file_id):
     return Response(stream_with_context(chunks()), content_type=response.headers.get('Content-Type', 'application/octet-stream'))
 
 
+account_upgrade = AccountUpgrade(app, connect_db, APIError)
 sessions = Sessions(app, connect_db, APIError, BASE_INSTRUCTIONS)
 transcriptions = LocalTranscription(app, connect_db, APIError, sessions)
 app.config["TRANSCRIPTIONS"] = transcriptions

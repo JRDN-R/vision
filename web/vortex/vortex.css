@@ -224,3 +224,15 @@ body::before {
   }
 }
 
+
+/* Keep the app title visible and the navigation controls on one screen. */
+.topbar{position:sticky;top:0;z-index:15}
+.navigation{overflow:hidden;gap:6px}
+.navigation .nav-heading{margin-bottom:8px}
+.navigation .nav-footer{padding-top:8px}
+.navigation .nav-app-links{display:flex;flex-direction:row;gap:7px;margin-top:auto;flex:none}
+.navigation .nav-app-links a{flex:1;min-width:0;justify-content:center;background:#292320;border:1px solid #57453a}
+#openDownloadHistory{width:100%;text-align:left;min-height:42px;padding:8px 13px}
+.download-history-dialog{max-height:80dvh;overflow:auto}
+.download-history-dialog>.icon-button{float:right}
+.download-history-dialog .nav-history{max-height:none;overflow:visible;margin:0}

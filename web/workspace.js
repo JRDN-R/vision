@@ -10,7 +10,7 @@ const WORKSPACE_NAV_PATHS = {
  exportBtn:'M200-120q-33 0-56.5-23.5T120-200v-160h80v160h560v-560H200v160h-80v-160q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm220-160-56-58 102-102H120v-80h346L364-622l56-58 200 200-200 200Z'
 }; // Google Material Symbols Outlined, Apache-2.0, 24px / weight 400 / fill 0.
 function workspaceNavIcons() {
- const names={accountButton:accountSignedIn()?'Account':'Sign in',newBtn:'New',openBtn:'Projects',saveBtn:'Save project',exportBtn:'Export'};
+ const names={accountButton:accountSignedIn()?'Account':'Sign in',newBtn:'New Project',openBtn:'Projects',saveBtn:'Save Project',exportBtn:'Export'};
  for(const [id,path] of Object.entries(WORKSPACE_NAV_PATHS)) {
   const button=$(id); if(!button)continue;
   button.classList.add('workspace-nav-icon'); button.title=names[id]; button.setAttribute('aria-label',names[id]);

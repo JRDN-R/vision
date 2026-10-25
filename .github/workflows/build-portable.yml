@@ -2,7 +2,7 @@ name: Build portable Vision
 
 on:
   push:
-    branches: [main, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
+    branches: [main, codex/ios-cache-account-upgrades-20261025, feature/qwen-local-rag-20261011, codex/firstupcjax-admins-worker, codex-vision-standalone-20261019, codex/vision-collapsible-title-header-20261019]
     paths:
       - 'web/**'
       - 'vision-pc/standalone*'
@@ -90,7 +90,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Vision.html index.html venture/index.html venture/manifest.webmanifest portable-manifest.json vision-pc/standalone-manifest.json web/vendor
+          git add Vision.html vortex/offline.html ios-cache-manifest.json index.html venture/index.html venture/manifest.webmanifest portable-manifest.json vision-pc/standalone-manifest.json web/vendor
           if ! git diff --cached --quiet; then
             git commit -m 'Build portable Vision from current sources'
             git push origin "HEAD:$GITHUB_REF_NAME"
