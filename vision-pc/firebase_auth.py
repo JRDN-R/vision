@@ -14,10 +14,16 @@ import time
 import requests
 
 CERTIFICATES = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com'
+# Match Firebase's supported maximum clock tolerance for freshly issued tokens.
+# Expiry remains strict; this only accommodates a PC slightly behind Google.
+CLOCK_SKEW_SECONDS = 60
+KEY_REFRESH_SECONDS = 60
 
 
 class InvalidIdentity(Exception):
-    pass
+    def __init__(self, reason='invalid'):
+        self.reason = reason
+        super().__init__(reason)
 
 
 class IdentityUnavailable(Exception):
@@ -31,12 +37,18 @@ class FirebaseIdentity:
         self.project_id = project_id
         self.providers = tuple(providers)
         self._keys, self._expires = {}, 0
+        self._last_key_fetch = float('-inf')
         self._lock = threading.Lock()
 
     def _key(self, kid):
         from cryptography import x509
         with self._lock:
-            if time.monotonic() >= self._expires:
+            now = time.monotonic()
+            # A fresh login can use a newly rotated key while older sessions
+            # still verify. Refresh once, bounded across all unknown key IDs.
+            unknown = kid not in self._keys
+            if now >= self._expires or (unknown and now-self._last_key_fetch >= KEY_REFRESH_SECONDS):
+                self._last_key_fetch = now
                 try:
                     response = requests.get(CERTIFICATES, timeout=(5, 10))
                     try:
@@ -55,8 +67,7 @@ class FirebaseIdentity:
                 self._keys, self._expires = keys, time.monotonic() + max_age
             key = self._keys.get(kid)
             if key is None:
-                # Unknown key IDs do not force a fetch on every unauthenticated request.
-                raise InvalidIdentity()
+                raise InvalidIdentity('signing-key')
             return key
 
     def verify(self, token):
@@ -76,13 +87,15 @@ class FirebaseIdentity:
                                 audience=self.project_id,
                                 issuer='https://securetoken.google.com/' + self.project_id,
                                 options={'require': ['exp', 'iat', 'sub', 'aud', 'iss', 'auth_time'],
-                                         'strict_aud': True})
+                                         'strict_aud': True, 'verify_iat': False})
             now = time.time()
             for field in ('exp', 'iat', 'auth_time'):
                 value = claims[field]
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                     raise InvalidIdentity()
-            if claims['auth_time'] > now or claims['auth_time'] < 0 or claims['iat'] < 0:
+            if claims['auth_time'] > now+CLOCK_SKEW_SECONDS or claims['iat'] > now+CLOCK_SKEW_SECONDS:
+                raise InvalidIdentity('clock')
+            if claims['auth_time'] < 0 or claims['iat'] < 0:
                 raise InvalidIdentity()
             uid = claims['sub']
             if not isinstance(uid, str) or not 1 <= len(uid) <= 128:
@@ -91,5 +104,7 @@ class FirebaseIdentity:
             if not isinstance(firebase, dict) or firebase.get('sign_in_provider') not in self.providers:
                 raise InvalidIdentity()
             return claims
+        except jwt.ExpiredSignatureError:
+            raise InvalidIdentity('expired') from None
         except jwt.PyJWTError:
             raise InvalidIdentity() from None

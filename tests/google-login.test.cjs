@@ -18,6 +18,15 @@ test('opens Google synchronously without browser storage; credentials stay in me
  assert.equal(f.options.prompt,'');assert.match(f.options.client_id,/^150865729216-.*\.apps\.googleusercontent\.com$/);
  f.options.callback({access_token:'google-token'});assert.equal(await result,'google-token');assert.equal(f.timers.size,0);
 });
+test('iPhone reconnect explicitly offers account selection without changing ordinary login',async()=>{
+ const f=fixture(),result=f.api.request({selectAccount:true});
+ assert.equal(f.calls,1);assert.equal(f.options.prompt,'select_account');
+ assert.equal(f.options.login_hint,undefined);
+ f.options.callback({access_token:'selected-account-token'});
+ assert.equal(await result,'selected-account-token');
+ const ordinary=f.api.request();assert.equal(f.options.prompt,'');
+ f.options.callback({access_token:'ordinary-token'});await ordinary;
+});
 test('blocks double clicks, handles cancellation and allows a fresh attempt',async()=>{
  const f=fixture(),first=f.api.request();await assert.rejects(f.api.request(),{code:'auth/cancelled-popup-request'});
  const old=f.options;old.error_callback({type:'popup_closed'});await assert.rejects(first,{code:'auth/popup-closed-by-user'});

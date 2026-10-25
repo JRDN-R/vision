@@ -1,5 +1,49 @@
 # iOS Home Screen sign-in recovery
 
+## Native iPhone reconnect fix (workspace 1.1.0.4)
+
+The native system-browser broker now explicitly requests Google's account
+chooser on each **Continue with Google** tap. Normal browser login keeps its
+existing remembered-account behavior. Previously `prompt: ''` could immediately
+reuse the browser's Google account, so its popup appeared to flash and close.
+
+The observed "Your sign-in has expired or is invalid" text originates in
+FUPCJ's Firebase verification middleware, after Google and Firebase have
+returned a credential. The recording does not identify the failed claim.
+Two reproducible fresh-login failures are corrected: a PC slightly behind
+Google's clock, and a new Google signing key absent from the still-cached
+certificate set. Issue/authentication times allow at most 60 seconds of clock
+skew; token expiry, signature, issuer, audience, provider and account checks
+remain enforced. Unknown signing keys trigger a certificate refresh at most
+once per minute while the existing cache is valid. No account tokens are logged.
+
+The broker refreshes a rejected Firebase token once without opening Google a
+second time, clears its temporary Firebase session on success/failure, and
+distinguishes server clock/key errors from cancelled Google login. The PKCE
+verifier, state, same-Google-account binding and single-use callback code are
+unchanged. The page versions its two broker scripts to avoid mixing old and
+new JavaScript after publication.
+
+After merging and publishing, **update FUPCJ Server on the PC** to install the
+verifier changes. No macOS installer run or iPhone app rebuild is required;
+the existing app opens the hosted broker. Close an already-open sign-in sheet
+and start a new attempt after publication. Workspace version is **1.1.0.4**;
+the native app's version/build is unchanged. Run a PC update after a livestream
+if restarting FUPCJ Server would interrupt its work.
+
+Validation: `tests/ios-signin-browser.py` drives the actual broker, bundled
+Firebase runtime, signed test JWT verification, Flask approval and one-use
+PKCE exchange. It covers cancellation/retry, Alice-to-Bob reconnect, fresh
+tokens with clock skew, one token-refresh retry, large clock errors and account
+mismatch. Google UI/provider HTTP are fixtures, so a real Google account on a
+physical iPhone still needs a post-publication check.
+
+References:
+- https://developers.google.com/identity/oauth2/web/reference/js-reference#TokenClientConfig
+- https://firebase.google.com/docs/reference/admin/python/firebase_admin.auth#verify_id_token
+
+## Shared web account behavior
+
 Vision, Venture and Vortex share the Firebase project `visionboard-api`, account UID,
 and FUPCJ processing server. Google login is started only in response to a user
 click. Saved Firebase identities should be restored from IndexedDB or localStorage;
