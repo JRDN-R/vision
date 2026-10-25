@@ -192,7 +192,7 @@ private final class ShareTransferDelegate: NSObject, URLSessionDownloadDelegate 
             let archive = try TransferCompletion.preserve(location, record: record)
             Task {
                 do {
-                    _ = try await TransferCompletion.finish(recordID: record.id, archive: archive)
+                    if let final = try await TransferCompletion.finish(recordID: record.id, archive: archive) { await CompletionNotification.send(final) }
                     if NativeSession.currentUID == record.uid,
                        let next = try await TransferScheduler.scheduleNext(uid: record.uid, delegate: self) {
                         await MainActor.run { self.followingSessions.append(next) }

@@ -344,7 +344,7 @@ class AccountAdministration:
                                ('account_processing_preferences','uid'),('gemini_access','uid'),('gemini_access_decisions','uid'),
                                ('gemini_usage','uid'),('vortex_jobs','uid'),('title_eyes_jobs','uid'),('responses','uid'),
                                ('jobs','uid'),('owned_source_leases','uid'),('owned_import_receipts','uid'),('owned_assets','uid'),
-                               ('ios_transfer_tokens','uid'),('ios_transfer_leases','uid'),('ios_live_activities','uid'),
+                               ('ios_transfer_tokens','uid'),('ios_transfer_leases','uid'),('ios_live_activities','uid'),('ios_notification_devices','uid'),
                                ('audit_events','uid'),('audit_signins','uid'),
                                ('audit_account_metadata','uid'),('audit_user_apps','uid'),
                                ('audit_users','uid')):

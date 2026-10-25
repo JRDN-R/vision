@@ -14,7 +14,7 @@ function upgradePaint(){
  const approved=upgradeAccount.status==='approved',signed=!!upgradeUID();
  for(const id of ['accountUpgradeButton','ventureUpgradeButton']){
   const button=$(id);if(!button)continue;button.hidden=!signed||approved;
-  button.querySelector('span').textContent=upgradeAccount.status==='pending'?'Upgrade requested':'Account Upgrade';
+  button.querySelector('span').textContent=upgradeAccount.status==='pending'?'Request awaiting approval':'Account Upgrade';
  }
  $('accountUpgradeStatus').textContent=({approved:'Your account is upgraded.',pending:'Your request is waiting for admin approval.',denied:'Your request was declined. Contact your admin.',revoked:'Your upgrade access was revoked. Contact your admin.'})[upgradeAccount.status]||'Request access to Gemini transcription, Luna screenshot descriptions, and Luna project titles.';
  $('requestAccountUpgrade').hidden=['approved','pending','denied','revoked'].includes(upgradeAccount.status);
@@ -64,7 +64,7 @@ function installAccountUpgrade(){
  const make=id=>{const b=document.createElement('button');b.type='button';b.id=id;b.className='account-upgrade';b.innerHTML=navigationSpark+'<span>Account Upgrade</span>';b.onclick=openAccountUpgrade;return b;};
  $('accountButton').after(make('accountUpgradeButton'));
  $('ventureSidebar').querySelector('.venture-sidebar-top').after(make('ventureUpgradeButton'));
- const admin=document.createElement('a');admin.id='manageAccountUpgrades';admin.className='workspace-news-link';admin.href=new URL('activity.html?module=gemini',window.VisionWorkspaceRoute?.rootURL()||'https://jrdn-r.github.io/vision/').href;admin.target='_blank';admin.rel='noopener';admin.textContent='Manage account upgrades';admin.hidden=true;$('ventureAccount').append(admin);
+ const admin=document.createElement('a');admin.id='manageAccountUpgrades';admin.className='workspace-news-link';admin.href='https://jrdn-r.github.io/vision-status/?module=gemini';admin.target='_blank';admin.rel='noopener';admin.textContent='Manage account upgrades';admin.hidden=true;$('ventureAccount').append(admin);
  $('requestAccountUpgrade').onclick=async()=>{
   const uid=upgradeUID(),button=$('requestAccountUpgrade');button.disabled=true;
   try{const data=await projectResponse(await projectRequest('/account/upgrade',{method:'POST'}));if(uid!==upgradeUID())return;upgradeAccount.status=data.status;upgradePaint();}

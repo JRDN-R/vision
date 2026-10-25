@@ -43,6 +43,7 @@ from owned_assets import OwnedAssets
 import standalone
 import ios_companion
 from ios_live_activities import IOSLiveActivities
+from ios_notifications import IOSNotifications
 
 app = Flask(__name__)
 standalone.register(app)
@@ -136,7 +137,9 @@ def configure(config_path, migrate_gemini=False):
     account_admin.initialize(config)
     owned_assets.initialize(config)
     ios.initialize()
+    ios_notifications.close()
     ios_live.initialize(config, config_path)
+    ios_notifications.initialize()
     church_admin.initialize(config)
     church_mcp.initialize()
     app.config['OWNED_ASSETS'] = owned_assets
@@ -827,6 +830,7 @@ account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcr
 ios = ios_companion.IOSCompanion(app, connect_db, APIError, vortex, account_admin)
 app.config['IOS_COMPANION'] = ios
 ios_live = IOSLiveActivities(app, connect_db, APIError, vortex, account_admin, protect_secret, unprotect_secret)
+ios_notifications = IOSNotifications(app, connect_db, APIError, ios_live)
 app.config['TITLE_EYES_ACCOUNT_ADMIN'] = account_admin
 owned_assets = OwnedAssets(app, connect_db, APIError)
 owned_assets.register_routes()
@@ -880,6 +884,7 @@ def main():
         vortex.start()
         ios.start()
         ios_live.start()
+        ios_notifications.start()
         church_admin.start()
         try:
             church_mcp.start()
@@ -894,6 +899,7 @@ def main():
                   clear_untrusted_proxy_headers=True)
         finally:
             ios.wait.set()
+            ios_notifications.close()
             ios_live.close()
             church_admin.stop.set()
             church_admin.wake.set()

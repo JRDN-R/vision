@@ -149,10 +149,13 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
 
     func signOut() async {
         let oldUID = NativeSession.currentUID
+        await AccountNotifications.shared.unregister()
         do {
+            guard NativeSession.currentUID == oldUID else { return }
             if bridgeReady {
                 _ = try await webView.callAsyncJavaScript("if (window.VisionNativeSignOut) return await window.VisionNativeSignOut(); return true;", arguments: [:], in: nil, contentWorld: .page)
             }
+            guard NativeSession.currentUID == oldUID else { return }
             try NativeSession.clear()
             email = ""
             if let oldUID { await DownloadManager.shared.signOut(uid: oldUID) }
@@ -173,6 +176,20 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         case "reload": replyHandler(true, nil); Task { reloadWorkspace() }
         case "sessionError": errorMessage = "Your sign-in could not be shared with Vortex. Reconnect in Vision."; replyHandler(true, nil)
         case "session":
+            if body["signedIn"] as? Bool != true {
+                let oldUID = NativeSession.currentUID
+                Task {
+                    await AccountNotifications.shared.unregister()
+                    do {
+                        // A later sign-in wins over this asynchronous sign-out.
+                        guard NativeSession.currentUID == oldUID else { replyHandler(true, nil); return }
+                        try NativeSession.clear(); email = ""
+                        if let oldUID { await DownloadManager.shared.signOut(uid: oldUID) }
+                        replyHandler(true, nil)
+                    } catch { replyHandler(nil, error.localizedDescription) }
+                }
+                return
+            }
             do {
                 let oldUID = NativeSession.currentUID
                 if body["signedIn"] as? Bool == true {
@@ -182,6 +199,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
                     let email = body["email"] as? String ?? ""
                     try NativeSession.save(FirebaseCredentials(uid: uid, email: email, idToken: token, refreshToken: refresh, expiresAt: Date(timeIntervalSince1970: expires)))
                     self.email = email
+                    Task { await AccountNotifications.shared.refresh() }
                     if let oldUID, oldUID != uid { Task { await DownloadManager.shared.signOut(uid: oldUID) } }
                     Task { await DownloadManager.shared.refresh() }
                 } else {

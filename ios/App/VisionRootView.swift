@@ -2,6 +2,7 @@ import SwiftUI
 import Photos
 import UniformTypeIdentifiers
 import UIKit
+import UserNotifications
 
 private struct ExportItem: Identifiable {
     let id = UUID()
@@ -13,6 +14,8 @@ struct VisionRootView: View {
     @StateObject private var vision = VisionWebModel()
     @StateObject private var vortex = VisionWebModel(isVortex: true)
     @State private var inVortex = false
+    @ObservedObject private var accountNotifications = AccountNotifications.shared
+    @ObservedObject private var notificationRoute = DownloadNotificationRoute.shared
     private var web: VisionWebModel { inVortex ? vortex : vision }
     private let cacheTimer = Timer.publish(every: 300, on: .main, in: .common).autoconnect()
     @ObservedObject private var downloads = DownloadManager.shared
@@ -70,7 +73,17 @@ struct VisionRootView: View {
             vision.navigateWorkspace = switchWorkspace
             vortex.navigateWorkspace = switchWorkspace
             vision.start()
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            openCompletedDownload()
+            while !Task.isCancelled {
+                if scenePhase == .active { await accountNotifications.refresh() }
+                do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { break }
+            }
         }
+        .alert("Account Upgrade", isPresented: $accountNotifications.openApproval) {
+            Button("OK", role: .cancel) { }
+        } message: { Text(accountNotifications.approvalMessage) }
+        .onChange(of: notificationRoute.recordID) { _, _ in openCompletedDownload() }
         .onReceive(cacheTimer) { _ in
             if scenePhase == .active { Task { await WorkspaceCache.shared.checkForUpdates() } }
         }
@@ -89,11 +102,26 @@ struct VisionRootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task { await WorkspaceCache.shared.checkForUpdates(force: true) }
+                Task { await accountNotifications.refresh() }
                 Task { await downloads.refresh(); offerAudioExport() }
             }
         }
         .onOpenURL { url in if ["visionapp", "visioncompanion"].contains(url.scheme ?? ""), url.host == "downloads" { web.openDownloads() } }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("VisionOpenDownloads"))) { _ in web.openDownloads() }
+    }
+
+    private func openCompletedDownload() {
+        guard let id = notificationRoute.recordID,
+              let record = try? DownloadStore.shared.record(id: id), record.uid == NativeSession.currentUID else { return }
+        notificationRoute.recordID = nil
+        if record.savedAssetIdentifier != nil, let photos = URL(string: "photos-redirect://") {
+            // Best-effort app launch; iOS does not provide a public per-asset
+            // Photos deep link. Keep the local file available on failure.
+            UIApplication.shared.open(photos, options: [:]) { opened in
+                if !opened { Task { @MainActor in web.openDownloads() } }
+            }
+        } else if record.canExport { offer(record) }
+        else { web.openDownloads() }
     }
 
     private func switchWorkspace(_ url: URL) {

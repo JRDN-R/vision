@@ -38,6 +38,12 @@ The normal update adds the short-lived login handoff and the owned background
 transfer endpoint. It preserves the existing configuration, projects, accounts,
 and installed model setup. Keep the server awake and connected as usual.
 Optional Apple push configuration is separate and is not required for downloads.
+The free build also supports local download-completion alerts and checks account
+upgrade approvals whenever Vision opens or remains active. For paid background
+approval alerts, enable `--push` and follow the
+[account notification and APNs setup guide](../vision-pc/IOS-APNS.md).
+This release displays workspace version **1.1.0.2**; the native iOS bundle uses
+Apple's three-part version **1.1.0**, build **2**.
 
 ### 3. Run the Mac installer
 
