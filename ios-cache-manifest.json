@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "assets": [
+    {
+      "path": "Vision.html",
+      "sha256": "58728029fa5c05745a2571e93c7c47504043caf5265beb5caf43aa09cb99c29f",
+      "bytes": 20882414
+    },
+    {
+      "path": "vortex/offline.html",
+      "sha256": "7dd7cb381c72e712ad491540f6980901b10db8912b4d2bdd3596533eb8dcc0c4",
+      "bytes": 5748094
+    }
+  ]
+}
