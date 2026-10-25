@@ -35,37 +35,18 @@ function hitMark(n,p){const ratio=n.height/n.width,pt={x:p.x,y:p.y*ratio},tol=.0
 const mobileQuery=window.matchMedia('(max-width:760px), (hover:none) and (pointer:coarse)');
 const appHeader=$('appHeader'),headerReveal=$('headerReveal'),viewportMeta=document.querySelector('meta[name="viewport"]');
 const normalViewport=viewportMeta.content;
-// The mobile title toolbar starts folded. Once the user opens it, only the
-// center handle may fold it again: board touches, scrolling, text blur and
-// upward swipes must not dismiss an explicitly opened title toolbar.
-function hideMobileHeader(){
- if(!mobileQuery.matches)return;
- document.documentElement.classList.remove('header-open');
- appHeader.inert=true;
- headerReveal.setAttribute('aria-expanded','false');
- headerReveal.setAttribute('aria-label','Show top toolbar');
- headerReveal.title='Show top toolbar';
-}
+// The title stays visible on every screen size; menus overlay it temporarily.
+function hideMobileHeader(){showMobileHeader();}
 function showMobileHeader(){
- if(!mobileQuery.matches)return;
- document.documentElement.classList.add('header-open');
- appHeader.inert=false;
- headerReveal.setAttribute('aria-expanded','true');
- headerReveal.setAttribute('aria-label','Hide top toolbar');
- headerReveal.title='Hide top toolbar';
+ document.documentElement.classList.add('header-open');appHeader.inert=false;
+ headerReveal.hidden=true;headerReveal.setAttribute('aria-expanded','true');
 }
 function syncMobileMode(){
- const wasMobile=document.documentElement.classList.contains('mobile-mode'),mobile=mobileQuery.matches;
- const expanded=mobile&&wasMobile&&document.documentElement.classList.contains('header-open');
- document.documentElement.classList.toggle('mobile-mode',mobile);
+ const mobile=mobileQuery.matches;document.documentElement.classList.toggle('mobile-mode',mobile);
  viewportMeta.content=mobile?'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover':normalViewport;
- document.documentElement.classList.toggle('header-open',expanded);
- appHeader.inert=mobile&&!expanded;
- headerReveal.setAttribute('aria-expanded',String(expanded));
- headerReveal.setAttribute('aria-label',expanded?'Hide top toolbar':'Show top toolbar');
- headerReveal.title=expanded?'Hide top toolbar':'Show top toolbar';
+ showMobileHeader();
 }
-headerReveal.onclick=()=>document.documentElement.classList.contains('header-open')?hideMobileHeader():showMobileHeader();
+headerReveal.onclick=showMobileHeader;
 for(const type of ['gesturestart','gesturechange','gestureend'])document.addEventListener(type,e=>{if(mobileQuery.matches)e.preventDefault();},{passive:false});
 for(const type of ['touchstart','touchmove'])document.addEventListener(type,e=>{if(mobileQuery.matches&&e.touches.length>1)e.preventDefault();},{passive:false});
 mobileQuery.addEventListener('change',syncMobileMode);syncMobileMode();
@@ -677,10 +658,10 @@ async function makeContactSheets(frames){
 let asrRuntime=null,asrWakeTimer=null,asrWakeAt=0;
 const LOCAL_ASR_HELP='https://github.com/JRDN-R/vision/tree/main/vision-pc#local-transcription';
 const LOCAL_ASR_MAX_BYTES=100*1024*1024,LOCAL_ASR_SECTION_MAX_BYTES=14000000;
-function transcriptionProvider(){const fallback=state.settings?.transcriptionProvider==='gemini'?'gemini':'local';return state.settings?.processingVersion===1?fallback:typeof importPreference==='function'?importPreference('transcriptionProvider',fallback):fallback;}
+function transcriptionProvider(){if(typeof accountProcessingPreference==='function'&&accountProcessingPreference.ready)return accountProcessingPreference('transcriptionProvider','local');const fallback=state.settings?.transcriptionProvider==='gemini'?'gemini':'local';return state.settings?.processingVersion===1?fallback:typeof importPreference==='function'?importPreference('transcriptionProvider',fallback):fallback;}
 function transcriptionProviderLabel(provider){return provider==='gemini'?'Gemini':'FUPCJ Server · Whisper';}
-function soundEventsSelected(provider=transcriptionProvider()){const fallback=state.settings?.includeSoundEvents===true;return ['local','gemini'].includes(provider)&&(state.settings?.processingVersion===1?fallback:typeof importPreference==='function'?importPreference('includeSoundEvents',fallback):fallback);}
-function setIncludeSoundEvents(value){checkpoint();state.settings.includeSoundEvents=value===true;if(typeof rememberImportPreference==='function')rememberImportPreference('includeSoundEvents',value===true);markDirty();syncTranscriptionProviderUI();}
+function soundEventsSelected(provider=transcriptionProvider()){if(typeof accountProcessingPreference==='function'&&accountProcessingPreference.ready)return accountProcessingPreference('includeSoundEvents',false);const fallback=state.settings?.includeSoundEvents===true;return ['local','gemini'].includes(provider)&&(state.settings?.processingVersion===1?fallback:typeof importPreference==='function'?importPreference('includeSoundEvents',fallback):fallback);}
+function setIncludeSoundEvents(value){if(typeof accountProcessingPreference==='function'&&accountProcessingPreference.ready){void saveAccountProcessing({includeSoundEvents:value===true}).catch(e=>toast(e.message,true));return;}checkpoint();state.settings.includeSoundEvents=value===true;if(typeof rememberImportPreference==='function')rememberImportPreference('includeSoundEvents',value===true);markDirty();syncTranscriptionProviderUI();}
 function soundEventsChoice(id){
  const wrapper=document.createElement('div');wrapper.id=id;wrapper.className='sound-events-choice';
  const label=document.createElement('label');label.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px';
@@ -763,7 +744,7 @@ function providerChoice(value,onchange,label){
  const select=document.createElement('select');select.setAttribute('aria-label',label);select.style.cssText='width:100%;min-height:40px;max-width:100%';
  for(const provider of ['local','gemini']){const option=document.createElement('option');option.value=provider;option.textContent=transcriptionProviderLabel(provider);select.appendChild(option);}select.value=value;select.onchange=()=>onchange(select.value);wrapper.appendChild(select);return wrapper;
 }
-function setTranscriptionProvider(provider){checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';if(typeof rememberImportPreference==='function')rememberImportPreference('transcriptionProvider',state.settings.transcriptionProvider);markDirty();syncTranscriptionProviderUI();}
+function setTranscriptionProvider(provider){if(typeof accountProcessingPreference==='function'&&accountProcessingPreference.ready){void saveAccountProcessing({transcriptionProvider:provider==='gemini'?'gemini':'local'}).catch(e=>toast(e.message,true));return;}checkpoint();state.settings.transcriptionProvider=provider==='gemini'?'gemini':'local';if(typeof rememberImportPreference==='function')rememberImportPreference('transcriptionProvider',state.settings.transcriptionProvider);markDirty();syncTranscriptionProviderUI();}
 function syncTranscriptionProviderUI(){for(const id of ['transcribeProvider','activityProvider','youtubeProvider','vortexImportProvider']){const host=$(id);if(host)host.querySelector('select').value=transcriptionProvider();syncSoundEventsChoice(id+'Sounds');}}
 function addQueueProviderControl(row,job){
  const choice=providerChoice(job.provider||'local',value=>changeQueuedProvider(job.id,value),'Transcription provider for '+job.sourceName);

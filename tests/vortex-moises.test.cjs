@@ -25,7 +25,7 @@ function harness({ios=false, configured=false, storage=new Map()}={}) {
   const elements = new Map(), calls = [], shared = [], saved = [], launched = [];
   if (configured) storage.set('vortex:moises-shortcut:v1','ready');
   const node = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
-  const document = {hidden:false, getElementById:node, querySelectorAll:()=>[], addEventListener() {}, body:element(), createElement:element};
+  const document = {hidden:false, getElementById:node, querySelector:()=>null, querySelectorAll:()=>[], addEventListener() {}, body:element(), createElement:element};
   const sandbox = {URL, Blob, File, AbortController, crypto:{randomUUID}, document,
     navigator:{userAgent:ios?'iPhone':'',canShare:()=>true, share:async data=>shared.push(data)}, matchMedia:()=>({matches:true,addEventListener(){}}),
     setTimeout:()=>1, clearTimeout() {}, request:async (route, options={}) => {

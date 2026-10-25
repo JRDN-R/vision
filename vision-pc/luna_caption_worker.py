@@ -11,7 +11,7 @@ from frame_context import caption_prompt
 from frame_fallback import failover
 from luna_captions import (analyze_batch, estimated_request_usd, paid_amount,
                            extract_captions, LunaCaptionError, CAP_USD, BATCH_SIZE)
-from sessions import unprotect_secret
+from account_upgrade import luna_key
 from uploaded_media import atomic_json
 
 
@@ -21,16 +21,7 @@ def _pause(store, cid, message):
 
 
 def _owner_key(store, project_id):
-    with store.db() as db:
-        row = db.execute("""SELECT ac.openai_key_cipher FROM projects p
-                            JOIN account_credentials ac ON ac.uid=p.owner_uid
-                            WHERE p.id=? AND p.owner_uid IS NOT NULL""", (project_id,)).fetchone()
-    if row is None:
-        raise LunaCaptionError('Save your OpenAI API key in Vision Account Settings while signed in with Google to use Luna.')
-    try:
-        return unprotect_secret(row[0])
-    except Exception:
-        raise LunaCaptionError('FUPCJ Server could not unlock the saved OpenAI key for Luna. Check Vision Account Settings.') from None
+    return luna_key(store, project_id)
 
 
 def work_luna_batch(store, row, video_title, cues):
@@ -82,6 +73,7 @@ def work_luna_batch(store, row, video_title, cues):
         # Only a completed prior batch may influence subsequent frames.
     try:
         if requests:
+            key = _owner_key(store, row['project_id'])  # Recheck revocation at dispatch.
             response = analyze_batch(key, requests)
             amount = paid_amount(response)
             with store.db() as db:

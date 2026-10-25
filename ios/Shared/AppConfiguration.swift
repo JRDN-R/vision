@@ -34,6 +34,11 @@ enum AppConfiguration {
         return routes.contains { candidate.percentEncodedPath == root + $0 }
     }
 
+    static func isVortexPage(_ url: URL) -> Bool {
+        guard isTrustedPage(url) else { return false }
+        return url.path.hasSuffix("/vortex") || url.path.hasSuffix("/vortex/index.html")
+    }
+
     private static func configuredURL(_ key: String, fallback: String) -> URL {
         let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String ?? fallback
         guard let value = URL(string: raw), value.scheme == "https", value.host != nil,

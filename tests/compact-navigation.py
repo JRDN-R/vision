@@ -4,8 +4,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-SHOTS = ROOT / 'tests/venture-screenshots'
-SHOTS.mkdir(exist_ok=True)
+SHOTS = ROOT / '.qa/compact-navigation'
+SHOTS.mkdir(parents=True,exist_ok=True)
 SHELL = (ROOT / 'Vision.html').read_text()
 PROBE = r'''
 window.navSignIn=(uid='fixture')=>{
@@ -59,34 +59,12 @@ def run():
             header_height=page.locator('#appHeader').evaluate('(el)=>el.getBoundingClientRect().height')
             assert header_height==(65 if width<=760 else 76), header_height
             if width<=760:
-                assert not page.evaluate('navTest.header().open'), 'Mobile header should start folded'
-                assert page.evaluate('navTest.header().inert'), 'Folded header should not capture taps'
-                page.locator('#headerReveal').click()
-                assert page.evaluate('navTest.header().open'), 'Center handle did not open header'
-                page.wait_for_timeout(4700 if width==390 else 100)
-                assert page.evaluate('navTest.header().open'), 'Expanded header did not remain open'
-                page.locator('#headerReveal').click()
-                assert not page.evaluate('navTest.header().open'), 'Center handle did not collapse header'
-                page.locator('#headerReveal').click()
-                assert page.evaluate('navTest.header().open'), 'Center handle did not reopen header'
-                assert start['width']==44 and start['height']==44
-                assert page.locator('#projectTitle').bounding_box()['width']>=160
-                assert page.locator('#appHeader .brand').count()==0
-                assert page.locator('#workspaceMenu .workspace-brand-version').count()==1
-                if width==390: page.screenshot(path=str(SHOTS/'compact-header.png'))
-                # Dismissing focus or interacting with the board must NOT close
-                # the title toolbar. Only the center grab handle controls it.
-                page.mouse.click(width/2,400)
-                assert page.evaluate('navTest.header().open'), 'Board click folded explicitly opened header'
+                assert page.evaluate('navTest.header().open'), 'Title must start visible'
+                assert page.locator('#headerReveal').is_hidden()
+                page.locator('#projectTitle').fill('My visible title')
+                page.locator('#board').click(position={'x':100,'y':100})
                 page.mouse.wheel(0,200)
-                assert page.evaluate('navTest.header().open'), 'Board scroll folded explicitly opened header'
-                assert chevron.bounding_box()==start and toggle.bounding_box()==anchor
-                page.locator('#appHeader .project-top').dispatch_event('pointerdown', {'pointerId':7,'pointerType':'touch','clientX':80,'clientY':42,'bubbles':True})
-                page.dispatch_event('body','pointermove',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
-                page.dispatch_event('body','pointerup',{'pointerId':7,'pointerType':'touch','clientX':81,'clientY':9,'bubbles':True})
-                assert page.evaluate('navTest.header().open'), 'Upward swipe folded explicitly opened header'
-                page.locator('#headerReveal').click()
-                assert not page.evaluate('navTest.header().open'), 'Only the center handle should collapse the header'
+                assert page.evaluate('navTest.header().open'), 'Scrolling must not hide the title'
             else:
                 assert chevron.is_visible() and start['width']==44 and start['height']==44
                 assert chevron.evaluate('el=>el.parentElement===document.body')
@@ -137,6 +115,10 @@ def run():
             assert page.evaluate('document.activeElement.id')=='ventureMenuSignOut'
             page.keyboard.press('Tab')
             assert page.evaluate('document.activeElement.id')=='ventureProfileButton'
+            page.keyboard.press('Tab')
+            assert page.evaluate('document.activeElement.textContent')=='Vision'
+            page.keyboard.press('Tab')
+            assert page.evaluate('document.activeElement.id')=='ventureVortexLink'
             page.keyboard.press('Tab')
             expected='workspaceSwitchButton' if width<=760 else 'ventureNew'
             assert page.evaluate('document.activeElement.id')==expected

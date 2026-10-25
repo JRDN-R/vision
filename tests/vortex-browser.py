@@ -865,6 +865,7 @@ def run():
             assert row.locator('.history-source').get_attribute('href') == VIDEO['url']
             page.screenshot(path=str(SHOTS/f'vortex-ready-{width}.png'), full_page=True)
             page.locator('#menuButton').click()
+            page.locator('#openDownloadHistory').click()
             row.locator('.history-actions').click()
             page.locator('#saveFile').wait_for(state='visible')
             assert page.locator('#shareFile').is_hidden(), 'Unavailable native sharing must not be advertised'
@@ -903,7 +904,7 @@ def run():
             row.wait_for(state='detached')
             assert downloaded not in api.jobs['alice']
             assert page.locator(f'#historyList [data-id="{downloaded["id"]}"]').count() == 0
-            page.locator('#closeMenu').click()
+            page.locator('#downloadHistoryDialog > button').click()
 
             # Cancel active work; completed/expired work exposes different actions.
             page.locator('input[name=downloadMode][value=audio]').check()
@@ -935,6 +936,7 @@ def run():
             # Deleting a queued re-export removes both the history record and
             # the pending automatic save instead of leaving a ghost download.
             page.locator('#menuButton').click()
+            page.locator('#openDownloadHistory').click()
             new_row = page.locator(f'#historyList [data-id="{retried["id"]}"]')
             new_row.locator('.history-actions').click()
             assert page.locator('#cancelJob').is_visible() and page.locator('#deleteJob').is_visible()
@@ -942,16 +944,17 @@ def run():
             page.locator('#confirmYes').click()
             new_row.wait_for(state='detached')
             assert retried not in api.jobs['alice']
-            page.locator('#closeMenu').click()
+            page.locator('#downloadHistoryDialog > button').click()
             expired = api.new_job(status='expired', phase='File expired', media={**VIDEO, 'title':'Expired archive'}, expiresAt=time.time()-1)
             refresh(page)
             assert page.locator(f'#activityList [data-id="{expired["id"]}"]').count() == 0
             page.locator('#menuButton').click()
+            page.locator('#openDownloadHistory').click()
             page.locator(f'#historyList [data-id="{expired["id"]}"] .history-actions').click()
             assert page.locator('#saveFile').is_hidden() and page.locator('#cancelJob').is_hidden()
             assert page.locator('#retryJob').is_visible() and page.locator('#deleteJob').is_visible()
             page.locator('#actionDialog .close-dialog').click()
-            page.locator('#closeMenu').click()
+            page.locator('#downloadHistoryDialog > button').click()
 
             # Search results are server data, rendered as text, then re-inspected.
             page.locator('#sourceInput').fill('evening music')
@@ -1040,6 +1043,10 @@ def run():
             page.screenshot(path=str(SHOTS/f'vortex-menu-{width}.png'), full_page=True)
             page.locator('#menuSignOut').focus()
             page.keyboard.press('Tab')
+            assert page.evaluate('document.activeElement.textContent') == 'Vision'
+            page.keyboard.press('Tab')
+            assert page.evaluate('document.activeElement.textContent') == 'Venture'
+            page.keyboard.press('Tab')
             assert page.evaluate('document.activeElement.id') == 'closeMenu'
             page.keyboard.press('Escape')
             assert page.locator('#navigation').is_hidden()
@@ -1057,17 +1064,19 @@ def run():
                     api.new_job(status='cancelled', phase='Cancelled', media={**VIDEO, 'title':f'Older media {index}'})
                 refresh(page)
                 page.locator('#menuButton').click()
+                page.locator('#openDownloadHistory').click()
                 assert page.locator('#loadOlder').is_visible()
                 expected = len([job for job in api.jobs['alice'] if job['kind'] == 'download'])
                 page.locator('#loadOlder').click()
                 page.wait_for_function('count=>document.querySelectorAll("#historyList .history-item").length===count', arg=expected)
                 assert page.locator('#loadOlder').is_hidden()
-                page.locator('#closeMenu').click()
+                page.locator('#downloadHistoryDialog > button').click()
                 refresh(page)
                 page.locator('#menuButton').click()
+                page.locator('#openDownloadHistory').click()
                 assert page.locator('#historyList .history-item').count() == expected, 'Refresh collapsed loaded history'
                 assert page.locator('#activityList .activity-item').count() < expected, 'Older history leaked into main activity'
-                page.locator('#closeMenu').click()
+                page.locator('#downloadHistoryDialog > button').click()
 
             # An in-flight Alice history result must not reappear after switching to Bob.
             # The same boundary must protect a delayed private Vision avatar.

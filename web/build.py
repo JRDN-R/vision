@@ -13,7 +13,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
-SCRIPTS = ['orientation-lock.js', 'base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'google-login.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'processing.js', 'node-activity.js', 'project-naming.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'vortex-import.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-local.js', 'venture-ultra.js', 'venture-images.js', 'venture-funding.js', 'intelligent-context.js', 'rag-export.js', 'venture.js', 'workspace.js', 'mobile-menu-swipe.js', 'navigation.js', 'toolbelt.js', 'account-profile.js']
+SCRIPTS = ['orientation-lock.js', 'base.js', 'cloud.js', 'console.js', 'projects.js', 'launch.js', 'google-login.js', 'auth.js', 'board.js', 'handoff.js', 'imports.js', 'capture.js', 'processing.js', 'node-activity.js', 'project-naming.js', 'video-preview.js', 'key-visibility.js', 'google-sources.js', 'vortex-import.js', 'documents.js', 'run-tools.js', 'local-app.js', 'model-parameters.js', 'venture-controls.js', 'venture-models.js', 'venture-local.js', 'venture-ultra.js', 'venture-images.js', 'venture-funding.js', 'intelligent-context.js', 'rag-export.js', 'venture.js', 'workspace.js', 'mobile-menu-swipe.js', 'navigation.js', 'toolbelt.js', 'account-profile.js', 'account-upgrade.js']
 SCRIPTS.insert(SCRIPTS.index('auth.js'), 'ios-native.js')
 STYLES = ['styles.css', 'console.css', 'projects.css', 'auth.css', 'board.css', 'handoff.css', 'imports.css', 'capture.css', 'video-preview.css', 'google-sources.css', 'vortex-import.css', 'documents.css', 'run-tools.css', 'venture.css', 'rag-export.css', 'workspace.css', 'navigation.css', 'toolbelt.css', 'account-profile.css']
 
@@ -189,6 +189,8 @@ def build():
     for icon in venture_manifest.get('icons', []):
         icon['src'] = '../' + icon['src'].removeprefix('./')
     (venture_dir / 'manifest.webmanifest').write_text(json.dumps(venture_manifest, indent=2) + '\n', encoding='utf-8')
+    from build_ios_cache import build as build_ios_cache
+    build_ios_cache()
     print('Built Vision', release + ':', len(source.encode('utf-8')), 'bytes; SHA256', digest)
 
 

@@ -10,7 +10,11 @@ private struct ExportItem: Identifiable {
 }
 
 struct VisionRootView: View {
-    @StateObject private var web = VisionWebModel()
+    @StateObject private var vision = VisionWebModel()
+    @StateObject private var vortex = VisionWebModel(isVortex: true)
+    @State private var inVortex = false
+    private var web: VisionWebModel { inVortex ? vortex : vision }
+    private let cacheTimer = Timer.publish(every: 300, on: .main, in: .common).autoconnect()
     @ObservedObject private var downloads = DownloadManager.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var export: ExportItem?
@@ -25,11 +29,16 @@ struct VisionRootView: View {
             Color(red: 0.06, green: 0.08, blue: 0.07).ignoresSafeArea()
             // The original website owns the logo, left menus, account UI and
             // Vision/Venture/Vortex navigation. No replacement native tab bar.
-            VisionWebView(model: web)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(web.showingDownloads ? 0 : 1)
-                .allowsHitTesting(!web.showingDownloads)
-                .accessibilityHidden(web.showingDownloads)
+            // Both documents remain mounted; returning to the board preserves
+            // its live JavaScript, drafts, scroll position and running uploads.
+            VisionWebView(model: vision)
+                .opacity(inVortex || web.showingDownloads ? 0 : 1)
+                .allowsHitTesting(!inVortex && !web.showingDownloads)
+                .accessibilityHidden(inVortex || web.showingDownloads)
+            VisionWebView(model: vortex)
+                .opacity(inVortex && !web.showingDownloads ? 1 : 0)
+                .allowsHitTesting(inVortex && !web.showingDownloads)
+                .accessibilityHidden(!inVortex || web.showingDownloads)
             if web.showingDownloads {
                 NavigationStack {
                     downloadsView
@@ -57,8 +66,15 @@ struct VisionRootView: View {
             }
         }
         .tint(green)
-        .task { web.start() }
-        .sheet(isPresented: $web.showingSettings) { settingsView }
+        .task {
+            vision.navigateWorkspace = switchWorkspace
+            vortex.navigateWorkspace = switchWorkspace
+            vision.start()
+        }
+        .onReceive(cacheTimer) { _ in
+            if scenePhase == .active { Task { await WorkspaceCache.shared.checkForUpdates() } }
+        }
+        .sheet(isPresented: Binding(get: { web.showingSettings }, set: { web.showingSettings = $0 })) { settingsView }
         .sheet(item: $export, onDismiss: { Task { @MainActor in offerAudioExport() } }) { item in
             FilesExporter(url: item.url) { saved in
                 if saved, let record = item.record { Task { await downloads.markExported(record) } }
@@ -71,10 +87,20 @@ struct VisionRootView: View {
         .onChange(of: downloads.records) { _, _ in offerAudioExport() }
         .onChange(of: web.exportURL) { _, url in if let url { export = ExportItem(url: url); web.exportURL = nil } }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await downloads.refresh(); offerAudioExport() } }
+            if phase == .active {
+                Task { await WorkspaceCache.shared.checkForUpdates(force: true) }
+                Task { await downloads.refresh(); offerAudioExport() }
+            }
         }
         .onOpenURL { url in if ["visionapp", "visioncompanion"].contains(url.scheme ?? ""), url.host == "downloads" { web.openDownloads() } }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("VisionOpenDownloads"))) { _ in web.openDownloads() }
+    }
+
+    private func switchWorkspace(_ url: URL) {
+        let targetVortex = AppConfiguration.isVortexPage(url)
+        web.webView.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(media => media.pause());", completionHandler: nil)
+        inVortex = targetVortex
+        (targetVortex ? vortex : vision).selectWorkspace(url)
     }
 
     private func connectionFailure(_ message: String) -> some View {
