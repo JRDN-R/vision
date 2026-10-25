@@ -15,6 +15,12 @@ on:
       - 'vision-pc/vortex.py'
       - 'tests/activity_browser_smoke.py'
       - 'tests/test_activity_dashboard.py'
+      - 'web/account-upgrade.js'
+      - 'web/cloud.js'
+      - 'web/projects.js'
+      - 'web/auth.js'
+      - 'tests/account-upgrade-browser.py'
+      - 'tests/account-upgrade-integration.py'
       - '.github/workflows/test-status.yml'
 permissions:
   contents: read
@@ -44,3 +50,8 @@ jobs:
         run: |
           node tests/gemini-admin.test.cjs
           python tests/activity_browser_smoke.py
+      - name: Account upgrades from the real browser request path
+        run: |
+          python web/build.py
+          python tests/account-upgrade-integration.py
+          python tests/account-upgrade-browser.py

@@ -31,7 +31,8 @@ async function upgradeRefresh(force=false){
  if(!uid||!cloudAuth||upgradeAccount.busy||(!force&&Date.now()-upgradeAccount.loadedAt<30000))return;
  const epoch=upgradeAccount.epoch,sequence=upgradeAccount.sequence;upgradeAccount.busy=true;
  try{
-  const data=await projectResponse(await projectRequest('/account/upgrade'));
+  // Account endpoints use Firebase auth directly, without a board identity or key.
+  const data=await projectResponse(await cloudFetch('/account/upgrade'));
   if(uid!==upgradeUID()||epoch!==upgradeAccount.epoch)return;
   upgradeAccount.status=data.status;upgradeAccount.admin=data.canAdmin===true;if(sequence===upgradeAccount.sequence)upgradeAccount.preferences=data.preferences||{};upgradeAccount.loadedAt=Date.now();
   upgradeRemember();upgradePaint();
@@ -47,7 +48,7 @@ async function saveAccountProcessing(patch){
  const sequence=++upgradeAccount.sequence;
  const operation=upgradeAccount.queue.catch(()=>{}).then(async()=>{
   if(uid!==upgradeUID())return null;
-  return projectResponse(await projectRequest('/account/processing-preferences',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(changes)}));
+  return projectResponse(await cloudFetch('/account/processing-preferences',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(changes)}));
  });upgradeAccount.queue=operation.catch(()=>{});
  try{const data=await operation;if(!data||uid!==upgradeUID()||sequence!==upgradeAccount.sequence)return;
   upgradeAccount.preferences=data.preferences;upgradeAccount.pending={};upgradeRemember();upgradePaint();
@@ -67,7 +68,7 @@ function installAccountUpgrade(){
  const admin=document.createElement('a');admin.id='manageAccountUpgrades';admin.className='workspace-news-link';admin.href='https://jrdn-r.github.io/vision-status/?module=gemini';admin.target='_blank';admin.rel='noopener';admin.textContent='Manage account upgrades';admin.hidden=true;$('ventureAccount').append(admin);
  $('requestAccountUpgrade').onclick=async()=>{
   const uid=upgradeUID(),button=$('requestAccountUpgrade');button.disabled=true;
-  try{const data=await projectResponse(await projectRequest('/account/upgrade',{method:'POST'}));if(uid!==upgradeUID())return;upgradeAccount.status=data.status;upgradePaint();}
+  try{const data=await projectResponse(await cloudFetch('/account/upgrade',{method:'POST'}));if(uid!==upgradeUID())return;upgradeAccount.status=data.status;upgradePaint();}
   catch(error){if(uid===upgradeUID())$('accountUpgradeStatus').textContent=error.message;}
   finally{button.disabled=false;}
  };
