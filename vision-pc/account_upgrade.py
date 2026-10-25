@@ -64,7 +64,9 @@ class AccountUpgrade:
         uid = self.identity()
         policy = self.app.config['GEMINI_ACCESS']
         status = policy.request_access(uid) if request.method == 'POST' else policy.status(uid)
-        return jsonify(status=status, approved=status == 'approved', preferences=self.values(uid),
+        with self.db() as db:
+            decision = db.execute('SELECT COALESCE(MAX(id),0) FROM gemini_access_decisions WHERE uid=?', (uid,)).fetchone()[0]
+        return jsonify(status=status, decisionID=decision, approved=status == 'approved', preferences=self.values(uid),
                        canAdmin=allowed(self.app.config, uid, g.auth_kind, request.headers.get('Origin')))
 
     def values(self, uid):

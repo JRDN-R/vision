@@ -338,15 +338,9 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     private func notifyReady(_ record: DownloadRecord) async {
-        guard UIApplication.shared.applicationState != .active else { return }
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Vortex download ready"
-        content.body = record.status == .saved ? "Your video was saved to Photos." : "Open Vision to choose where to save your file."
-        content.userInfo = ["recordID": record.id]
-        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "vortex-" + record.id, content: content, trigger: nil))
+        await CompletionNotification.send(record)
     }
+
 }
 
 extension DownloadManager: URLSessionDownloadDelegate {

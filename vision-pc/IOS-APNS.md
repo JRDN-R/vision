@@ -1,9 +1,11 @@
-# Optional server updates for the iOS Live Activity
+# Optional iOS approval alerts and Live Activity updates
 
 Vision's free Xcode build can display a Live Activity while the app has execution
 time. The app's background URLSession transfer is independent of that display.
 The optional configuration below lets FUPCJ Server send Vortex preparation
 progress through Apple Push Notification service after iOS suspends the app.
+It also sends an ordinary notification when an admin approves a user's account.
+Both use the same optional APNs key and main app bundle identifier below.
 
 This requires a paid Apple Developer membership, an app identifier with Push
 Notifications enabled, a matching signed iOS build, and an APNs authentication
@@ -63,6 +65,44 @@ not be treated as proof that a file is already in Photos.
 Missing/invalid optional push configuration leaves all other Vision services
 available. The capability response gives a short setup message without exposing
 the private key or its contents.
+
+## Account upgrades and completion notifications
+
+Users request an **Account Upgrade** once for their signed-in account. Pending
+requests say **Request awaiting approval**. The admin signs into
+[Vision Status → Account Upgrades](https://jrdn-r.github.io/vision-status/?module=gemini)
+with `rappsongs@gmail.com` and approves, denies, or revokes the account. The
+existing private `activity-admins.json` Firebase UID allowlist remains the
+authority; an email displayed by a browser never grants admin rights. If the
+account is not already authorized, use the portal's existing PC setup steps.
+Approval covers Gemini transcription, Luna descriptions and Luna project titles
+across projects. Preferences remain global and manual overrides are preserved.
+
+Allow notifications when opening the updated iPhone app. The free Personal Team
+build checks approval on launch/foreground and every 30 seconds while active.
+Keeping an app in the app switcher does not guarantee background execution.
+Approval checks resume when the app reopens; this fallback does not continuously
+poll while iOS suspends the app.
+
+After paid membership is enabled, build with `--push`, configure APNs above,
+then sign in and open Vision once to register the device. New approvals can then
+produce an **Account upgrade approved** alert without foreground polling. A
+device registration stores an encrypted APNs token for up to 90 days, renewed
+while active. Sign-out unregisters the device when online; account deletion
+removes its registrations. Failed delivery retries use the durable decision
+journal, and a newer denial or revocation cancels an unsent approval. The push
+contains only the approval message, Firebase UID and decision ID; it grants no
+access. Tapping it fetches current account status. Delivery remains subject to
+iOS notification settings, Focus and Apple's service.
+
+**Vortex download complete** is a local notification in both free and paid
+builds, sent only after the iPhone verifies the downloaded file. A video saved
+to Photos tries to open Photos, falling back to Downloads if the app cannot
+open it. iOS provides no public deep link to that specific Photos asset. Audio
+and videos not saved to Photos open the system Files export picker. The user
+chooses the destination; completion does not claim a file has already been
+exported to Files. Background transfers can finish without Vision on screen,
+but force-quitting the app can stop transfers until it is opened again.
 
 ## What is sent
 

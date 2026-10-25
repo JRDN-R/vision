@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @main
 struct VisionApp: App {
@@ -10,10 +11,11 @@ struct VisionApp: App {
 }
 
 @MainActor
-final class VisionAppDelegate: NSObject, UIApplicationDelegate {
+final class VisionAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private var activityObserver: NSObjectProtocol?
     private var endedObserver: NSObjectProtocol?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
         _ = DownloadManager.shared
         activityObserver = NotificationCenter.default.addObserver(forName: Notification.Name("VisionLiveActivityToken"), object: nil, queue: .main) { note in
             let values = note.userInfo as? [String: String] ?? [:]
@@ -24,6 +26,32 @@ final class VisionAppDelegate: NSObject, UIApplicationDelegate {
             Task { await LiveActivityRegistration.unregister(id) }
         }
         return true
+    }
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        AccountNotifications.shared.receivedToken(deviceToken)
+    }
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // Approval polling and local download alerts still work without APNs.
+        AccountNotifications.shared.registrationFailed()
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        guard notification.request.content.userInfo["uid"] as? String == NativeSession.currentUID else { return [] }
+        if notification.request.trigger is UNPushNotificationTrigger,
+           AccountNotifications.shared.hasSeenApproval(notification.request.content.userInfo) { return [] }
+        AccountNotifications.shared.sawApproval(notification.request.content.userInfo)
+        return [.banner, .sound, .list]
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let uid = response.notification.request.content.userInfo["uid"] as? String,
+              uid == NativeSession.currentUID else { return }
+        let info = response.notification.request.content.userInfo
+        if info["kind"] as? String == "upgrade" {
+            AccountNotifications.shared.sawApproval(info)
+            await AccountNotifications.shared.showApproval()
+        } else if let recordID = info["recordID"] as? String {
+            DownloadNotificationRoute.shared.recordID = recordID
+        }
     }
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
         DownloadManager.shared.handleEvents(identifier: identifier, completion: completionHandler)
@@ -64,4 +92,10 @@ enum LiveActivityRegistration {
             // A temporary push failure must never cancel a real download.
         }
     }
+}
+
+@MainActor
+final class DownloadNotificationRoute: ObservableObject {
+    static let shared = DownloadNotificationRoute()
+    @Published var recordID: String?
 }
