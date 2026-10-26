@@ -6,14 +6,14 @@ import Darwin
 /// the URLSession delegate. This common path prevents a fast download from
 /// losing Apple's temporary file when the share extension is still visible.
 enum TransferCompletion {
-    private static func lock(_ recordID: String) throws -> Int32? {
+    static func lock(_ recordID: String) throws -> Int32? {
         let file = try DownloadStore.shared.directory(for: recordID).appendingPathComponent("finalize.lock")
         let descriptor = open(file.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw VortexClientError.unavailableStorage }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { close(descriptor); return nil }
         return descriptor
     }
-    private static func unlock(_ descriptor: Int32) { flock(descriptor, LOCK_UN); close(descriptor) }
+    static func unlock(_ descriptor: Int32) { flock(descriptor, LOCK_UN); close(descriptor) }
 
     /// Must run synchronously before URLSession's download delegate returns.
     static func preserve(_ location: URL, record: DownloadRecord) throws -> URL {
@@ -97,6 +97,10 @@ enum TransferCompletion {
         // An extension never asks for Photos permission. The main app requests
         // it in the foreground; completion may use an existing grant.
         guard status == .authorized || status == .limited else { return record }
+        try DownloadStore.shared.update(id: record.id) { current in
+            current.photoSaveAttemptAt = Date()
+            current.photoSaveAttempts = (current.photoSaveAttempts ?? 0) + 1
+        }
         do {
             var assetID: String?
             try await PHPhotoLibrary.shared().performChanges {
@@ -112,7 +116,7 @@ enum TransferCompletion {
         } catch {
             return try DownloadStore.shared.update(id: record.id) { current in
                 current.status = .ready
-                current.phase = "Ready to save to Files"
+                current.phase = "Video downloaded · Photos save needs attention"
                 current.lastError = "Photos could not save this file. " + error.localizedDescription
             } ?? record
         }

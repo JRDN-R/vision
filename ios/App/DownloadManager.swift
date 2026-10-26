@@ -124,8 +124,11 @@ final class DownloadManager: NSObject, ObservableObject {
                     if (error as? VortexAPIError)?.statusCode == 401 { errorMessage = error.localizedDescription; break }
                 }
             }
-            for record in try DownloadStore.shared.records(uid: uid) where record.status == .ready && record.lastError == nil {
+            for record in try DownloadStore.shared.records(uid: uid) where record.shouldRetryPhotoSave() {
                 await saveToPhotos(record)
+            }
+            for record in try DownloadStore.shared.records(uid: uid) where record.canExport && record.completionNotificationAt == nil {
+                await CompletionNotification.send(record)
             }
             loadPublished()
             await pump()
@@ -209,7 +212,10 @@ final class DownloadManager: NSObject, ObservableObject {
 
     func saveToPhotos(_ record: DownloadRecord) async {
         do {
-            if let updated = try await TransferCompletion.saveVideo(record) { await LiveActivityManager.shared.update(updated) }
+            if let updated = try await TransferCompletion.saveVideo(record) {
+                await LiveActivityManager.shared.update(updated)
+                await CompletionNotification.send(updated)
+            }
         } catch { errorMessage = error.localizedDescription }
         loadPublished()
     }
@@ -229,9 +235,11 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     func handleEvents(identifier: String, completion: @escaping () -> Void) {
-        guard (try? DownloadStore.shared.record(sessionIdentifier: identifier)) != nil else { completion(); return }
+        guard (try? DownloadStore.shared.record(sessionIdentifier: identifier)) != nil
+                || pendingWork[identifier, default: 0] > 0 || sessions[identifier] != nil else { completion(); return }
         completions[identifier] = completion
         attach(identifier)
+        finishIfReady(identifier)
     }
 
     private func attach(_ identifier: String) {
