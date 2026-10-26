@@ -18,9 +18,46 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     private var downloadURLs: [ObjectIdentifier: URL] = [:]
     let isVortex: Bool
     var navigateWorkspace: ((URL) -> Void)?
-    private var navigationGeneration = 0
+    private(set) var navigationGeneration = 0
     private var pendingWorkspace: String?
     init(isVortex: Bool = false) { self.isVortex = isVortex; super.init() }
+    private var recoveryActive = false
+    private var needsRecovery = false
+    private var recoveryAttempt = 0
+    private var recoveryTask: Task<Void, Never>?
+    private var lastReady: Date?
+
+    func setRecoveryActive(_ active: Bool) {
+        recoveryActive = active
+        if !active {
+            recoveryTask?.cancel(); recoveryTask = nil
+            loadWatchdog?.cancel()
+        } else if needsRecovery && !loading {
+            scheduleRecovery()
+        } else if started && loading {
+            beginLoading()
+        }
+    }
+
+    private func scheduleRecovery() {
+        guard recoveryActive, needsRecovery, !loading, recoveryTask == nil else { return }
+        let delay = min(30.0, pow(2.0, Double(min(recoveryAttempt, 5))))
+        recoveryAttempt += 1
+        recoveryTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.recoveryTask = nil
+            guard self.recoveryActive, self.needsRecovery, !self.loading else { return }
+            self.reloadWorkspace(checkForUpdates: false)
+        }
+    }
+
+    private func recovered() {
+        needsRecovery = false
+        recoveryTask?.cancel(); recoveryTask = nil
+        lastReady = Date()
+    }
+
     private var started = false
     private var activeNavigation: WKNavigation?
     private var loadWatchdog: Task<Void, Never>?
@@ -54,11 +91,11 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         navigate(to: isVortex ? AppConfiguration.webURL.appendingPathComponent("vortex/index.html") : AppConfiguration.workspaceURL)
     }
 
-    func reloadWorkspace() {
+    func reloadWorkspace(checkForUpdates: Bool = true) {
         let current = webView.url
         let fallback = isVortex ? AppConfiguration.webURL.appendingPathComponent("vortex/index.html") : AppConfiguration.workspaceURL
         navigate(to: AppConfiguration.isTrustedPage(current) ? current! : fallback)
-        Task { await WorkspaceCache.shared.checkForUpdates(force: true) }
+        if checkForUpdates { Task { await WorkspaceCache.shared.checkForUpdates(force: true) } }
     }
 
     func selectWorkspace(_ url: URL) {
@@ -81,6 +118,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             failLoading("The workspace address is not an approved Vision page. Reload the workspace to return to Vision.")
             return
         }
+        recoveryTask?.cancel(); recoveryTask = nil
         beginLoading()
         navigationGeneration += 1
         let generation = navigationGeneration
@@ -103,10 +141,11 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         loading = true
         bridgeReady = false
         loadFailure = nil
+        guard recoveryActive else { return }
         loadWatchdog = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
             guard !Task.isCancelled, let self, self.loading else { return }
-            self.failLoading("Vision did not finish loading within 60 seconds. Check the connection, then retry. Your saved account and projects have not been cleared.")
+            self.failLoading("Vision did not finish loading within 60 seconds. Check the connection, then retry. Your saved account and projects have not been cleared.", retry: true)
             self.webView.stopLoading()
         }
     }
@@ -117,10 +156,16 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         loading = false
     }
 
-    private func failLoading(_ message: String) {
+    private func failLoading(_ message: String, retry: Bool = false) {
+        navigationGeneration += 1
+        activeNavigation = nil
         finishLoading()
         bridgeReady = false
         loadFailure = message
+        if let lastReady, Date().timeIntervalSince(lastReady) > 60 { recoveryAttempt = 0 }
+        lastReady = nil
+        needsRecovery = retry
+        scheduleRecovery()
     }
 
     func openDownloads() {
@@ -169,7 +214,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             replyHandler(nil, "Untrusted Vision message."); return
         }
         switch type {
-        case "ready": bridgeReady = true; loadFailure = nil; finishLoading(); applyPendingWorkspace(); replyHandler(true, nil)
+        case "ready": recovered(); bridgeReady = true; loadFailure = nil; finishLoading(); applyPendingWorkspace(); replyHandler(true, nil)
         case "signIn": replyHandler(true, nil); Task { await signIn() }
         case "downloads": openDownloads(); replyHandler(true, nil)
         case "settings": showingSettings = true; replyHandler(true, nil)
@@ -230,6 +275,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         guard navigation === activeNavigation else { return }
         finishLoading()
         loadFailure = nil
+        recovered()
         guard AppConfiguration.isTrustedPage(webView.url) else { return }
         // Also covers a workspace installed by the site's document.write loader.
         webView.evaluateJavaScript(WorkspaceScripts.sidebar, completionHandler: nil)
@@ -249,10 +295,10 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
             finishLoading()
             return
         }
-        failLoading("Vision could not load the workspace (\(value.domain), \(value.code)). Check the connection and retry. Your saved data has not been cleared.")
+        failLoading("Vision could not load the workspace (\(value.domain), \(value.code)). Check the connection and retry. Your saved data has not been cleared. Reconnecting automatically…", retry: true)
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        failLoading("iOS stopped the workspace to free memory. Reload to reconnect to your saved projects.")
+        failLoading("iOS stopped the workspace to free memory. Reconnecting to your saved projects automatically…", retry: true)
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if navigationAction.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
@@ -282,7 +328,7 @@ final class VisionWebModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
-            failLoading("The Vision website returned HTTP \(response.statusCode). Retry or open the website to check its availability.")
+            failLoading("The Vision website returned HTTP \(response.statusCode). Reconnecting when it is available.", retry: response.statusCode >= 500 || [408, 429].contains(response.statusCode))
             decisionHandler(.cancel); return
         }
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)

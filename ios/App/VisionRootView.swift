@@ -72,6 +72,7 @@ struct VisionRootView: View {
         .task {
             vision.navigateWorkspace = switchWorkspace
             vortex.navigateWorkspace = switchWorkspace
+            updateRecoveryActivity()
             vision.start()
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             openCompletedDownload()
@@ -99,7 +100,9 @@ struct VisionRootView: View {
         } message: { Text(web.errorMessage ?? downloads.errorMessage ?? "") }
         .onChange(of: downloads.records) { _, _ in offerAudioExport() }
         .onChange(of: web.exportURL) { _, url in if let url { export = ExportItem(url: url); web.exportURL = nil } }
+        .onChange(of: inVortex) { _, _ in updateRecoveryActivity() }
         .onChange(of: scenePhase) { _, phase in
+            updateRecoveryActivity()
             if phase == .active {
                 Task { await WorkspaceCache.shared.checkForUpdates(force: true) }
                 Task { await accountNotifications.refresh() }
@@ -122,6 +125,11 @@ struct VisionRootView: View {
             }
         } else if record.canExport { offer(record) }
         else { web.openDownloads() }
+    }
+
+    private func updateRecoveryActivity() {
+        vision.setRecoveryActive(scenePhase == .active && !inVortex)
+        vortex.setRecoveryActive(scenePhase == .active && inVortex)
     }
 
     private func switchWorkspace(_ url: URL) {

@@ -316,7 +316,7 @@ def create_project(args, bundle_ids: dict[str, str]) -> tuple[dict, dict]:
                 "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": bundle_ids[name],
                 "INFOPLIST_FILE": f"Generated/{name}-Info.plist", "GENERATE_INFOPLIST_FILE": "NO",
                 "CODE_SIGN_STYLE": "Automatic", "CODE_SIGN_ENTITLEMENTS": f"Generated/{name}.entitlements",
-                "CURRENT_PROJECT_VERSION": "2", "MARKETING_VERSION": "1.1.0", "TARGETED_DEVICE_FAMILY": "1,2",
+                "CURRENT_PROJECT_VERSION": "3", "MARKETING_VERSION": "1.1.1", "TARGETED_DEVICE_FAMILY": "1,2",
                 "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SUPPORTS_MACCATALYST": "NO",
                 "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO", "SWIFT_EMIT_LOC_STRINGS": "YES",
                 "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"] + ([] if name == "Vision" else ["@executable_path/../../Frameworks"]),

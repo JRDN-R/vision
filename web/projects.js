@@ -95,7 +95,10 @@ async function projectStoreGet(id,scope=projectStorageScope){
  try{const db=await projectDatabase();const record=await projectStorageOperation((resolve,reject)=>{const tx=db.transaction('projects'),request=tx.objectStore('projects').get(projectScopedKey(id,scope));request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);tx.onabort=()=>reject(tx.error);return()=>tx.abort();});if(record)return{...record,id};}catch{}
  try{return JSON.parse(projectLocalGet(PROJECT_STORE+':'+id,scope)||'null');}catch{return null;}
 }
+let projectReconnectNeeded=false,projectReconnectBusy=false;
 function projectStatus(message,kind='local'){
+ if(kind==='offline')projectReconnectNeeded=true;
+ else if(['saved','conflict','update','error'].includes(kind))projectReconnectNeeded=false;
  projectMessage=message;const el=$('saveState');if(el){el.textContent=message;el.dataset.projectStatus=kind;el.title='Open projects and save status';}
  if(typeof ventureContextSchedule==='function')ventureContextSchedule();
  const status=$('projectSyncStatus');if(status){status.textContent=message;status.dataset.projectStatus=kind;}
@@ -145,7 +148,7 @@ function projectReportFailure(error){
  if(error.status===409){projectConflict=true;projectStatus('FUPCJ Server copy changed · choose which copy to keep','conflict');}
  else if(error.code==='VISION_PC_UPDATE_REQUIRED')projectStatus(projectLocalOK?'Update FUPCJ Server · project kept on this device':'Update FUPCJ Server · download a project copy','update');
  else if(error.status===413)projectStatus('Project exceeds FUPCJ Server limit of 150 MiB. Download a copy and reduce attached files.','error');
- else if(error.name==='AbortError'||error.code==='VISION_SERVER_UNAVAILABLE'||navigator.onLine===false)projectStatus(projectLocalOK?'Saved on this device · FUPCJ Server offline, will retry':'FUPCJ Server offline · download a project copy','offline');
+ else if(error.name==='AbortError'||error.code==='VISION_SERVER_UNAVAILABLE'||error.status>=500||error.status===429||navigator.onLine===false)projectStatus(projectLocalOK?'Saved on this device · FUPCJ Server offline, will retry':'FUPCJ Server offline · download a project copy','offline');
  else projectStatus(error.message,'error');
 }
 async function projectPerformSave(){
@@ -320,9 +323,17 @@ async function projectRecoverStartup(){
  const epoch=projectEpoch,generation=projectGeneration;
  try{const savedMeta=await projectStoreGet('__active__');if(savedMeta?.recents)projectRecentMemory=savedMeta.recents.filter(r=>validProjectIdentity(r));const id=projectLocalGet(PROJECT_ACTIVE)??savedMeta?.activeId;if(!id)return;const record=await projectStoreGet(id);if(!record?.project||epoch!==projectEpoch||generation!==projectGeneration||state.nodes.length||state.projectCloud)return;await projectApply(record.project,{pendingSave:record.pending===true});await projectReconcile();}catch(error){projectReportFailure(error);}
 }
-window.addEventListener('online',()=>{if(state.projectCloud){projectHealthCache=null;if(projectPending)void flushProjectSave().catch(()=>{});else void projectReconcile();}});
+// Retry the saved-but-offline board too, not only boards with pending edits.
+async function projectReconnect(){
+ if(projectReconnectBusy||projectSyncPromise||projectLoading||projectAccountSwitching||projectConflict||projectIsTemporary()||navigator.onLine===false||document.visibilityState==='hidden'||!state.projectCloud)return;
+ if(!projectAccountCanAccess(state.projectCloud)||projectNeedsAccountClaim())return;
+ projectReconnectBusy=true;projectHealthCache=null;
+ try{if(projectPending)await flushProjectSave();else await projectReconcile();}
+ catch{}finally{projectReconnectBusy=false;}
+}
+window.addEventListener('online',()=>void projectReconnect());
 window.addEventListener('pagehide',()=>{clearTimeout(projectBackupTimer);void projectBackup();});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearTimeout(projectBackupTimer);void projectBackup();}else if(state.projectCloud){if(projectPending)void flushProjectSave().catch(()=>{});else void projectReconcile();}});
-setInterval(()=>{if(!projectAccountSwitching&&projectPending&&!projectConflict&&navigator.onLine!==false&&!projectSyncPromise)void flushProjectSave().catch(()=>{});},30000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearTimeout(projectBackupTimer);void projectBackup();}else void projectReconnect();});
+setInterval(()=>{if(projectPending||projectReconnectNeeded)void projectReconnect();},15000);
 // Defer until the complete app has installed its renderers and handlers.
 Promise.resolve().then(async()=>{await projectRecoverStartup();if(state.projectCloud)void projectReconcile();});

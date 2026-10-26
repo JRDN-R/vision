@@ -60,4 +60,29 @@ final class WorkspaceNavigationTests: XCTestCase {
             XCTAssertTrue(model.loadFailure?.contains(String(NSURLErrorNotConnectedToInternet)) == true)
         }
     }
+    @MainActor
+    func testTerminatedWorkspaceRetriesOnlyWhenSelectedAndActive() async throws {
+        let model = VisionWebModel()
+        model.webViewWebContentProcessDidTerminate(model.webView)
+        let failedGeneration = model.navigationGeneration
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(model.navigationGeneration, failedGeneration)
+        model.setRecoveryActive(true)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertGreaterThan(model.navigationGeneration, failedGeneration)
+        model.setRecoveryActive(false)
+        model.webView.stopLoading()
+    }
+
+    @MainActor
+    func testBackgroundingCancelsScheduledRecovery() async throws {
+        let model = VisionWebModel()
+        model.setRecoveryActive(true)
+        model.webViewWebContentProcessDidTerminate(model.webView)
+        let generation = model.navigationGeneration
+        model.setRecoveryActive(false)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(model.navigationGeneration, generation)
+    }
+
 }
