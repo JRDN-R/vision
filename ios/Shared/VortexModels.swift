@@ -43,6 +43,11 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var updatedAt: Date
     var savedAssetIdentifier: String?
     var pendingArchiveFilename: String?
+    var completionNotificationPending: Bool?
+    var completionNotificationAt: Date?
+    var notificationError: String?
+    var photoSaveAttemptAt: Date?
+    var photoSaveAttempts: Int?
     var retryAttempt: Int
 
     init(uid: String, url: URL, selection: DownloadSelection, videoFormat: String) {
@@ -58,6 +63,11 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
         createdAt = Date()
         updatedAt = createdAt
         retryAttempt = 0
+    }
+
+    func shouldRetryPhotoSave(now: Date = Date()) -> Bool {
+        status == .ready && mode == .video && savedAssetIdentifier == nil && ["mp4", "mov"].contains(((localFilename ?? "") as NSString).pathExtension.lowercased())
+            && (photoSaveAttempts ?? 0) < 3 && now.timeIntervalSince(photoSaveAttemptAt ?? .distantPast) >= 60
     }
 
     var requestID: String { "ios-" + id + "-" + String(retryAttempt) }

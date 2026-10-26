@@ -207,6 +207,7 @@ struct VisionRootView: View {
                 if let progress = record.progress { ProgressView(value: progress).tint(green); Text("\(Int(progress * 100))% · " + record.phase).font(.caption).foregroundStyle(.secondary) }
                 else { ProgressView().tint(green) }
             }
+            if let error = record.notificationError { Text(error).font(.footnote).foregroundStyle(.orange) }
             if let error = record.lastError { Text(error).font(.footnote).foregroundStyle(.orange) }
             HStack {
                 if record.canExport {
