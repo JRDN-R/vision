@@ -127,7 +127,7 @@ final class DownloadManager: NSObject, ObservableObject {
             for record in try DownloadStore.shared.records(uid: uid) where record.shouldRetryPhotoSave() {
                 await saveToPhotos(record)
             }
-            for record in try DownloadStore.shared.records(uid: uid) where record.canExport && record.completionNotificationAt == nil {
+            for record in try DownloadStore.shared.records(uid: uid) where record.canExport && record.completionNotificationPending == true && record.completionNotificationAt == nil {
                 await CompletionNotification.send(record)
             }
             loadPublished()

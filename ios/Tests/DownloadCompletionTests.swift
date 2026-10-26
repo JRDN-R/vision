@@ -43,7 +43,9 @@ final class DownloadCompletionTests: XCTestCase {
         let old = try encoder.encode(record)
         let restored = try decoder.decode(DownloadRecord.self, from: old)
         XCTAssertNil(restored.completionNotificationAt)
+        XCTAssertNil(restored.completionNotificationPending, "Do not replay alerts for historical downloads")
         XCTAssertTrue(restored.shouldRetryPhotoSave())
+        record.completionNotificationPending = false
         record.completionNotificationAt = Date(timeIntervalSince1970: 1234)
         record.photoSaveAttempts = 2
         record.photoSaveAttemptAt = Date(timeIntervalSince1970: 1200)

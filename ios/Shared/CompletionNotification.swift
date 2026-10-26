@@ -9,7 +9,7 @@ enum CompletionNotification {
         guard let descriptor = try? TransferCompletion.lock(record.id) else { return }
         defer { TransferCompletion.unlock(descriptor) }
         guard let current = try? DownloadStore.shared.record(id: record.id),
-              current.uid == NativeSession.currentUID, current.canExport, current.completionNotificationAt == nil else { return }
+              current.uid == NativeSession.currentUID, current.canExport, current.completionNotificationPending == true, current.completionNotificationAt == nil else { return }
         let record = current
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
@@ -26,6 +26,7 @@ enum CompletionNotification {
             try await center.add(UNNotificationRequest(identifier: "vortex-" + record.id, content: content, trigger: nil))
             try DownloadStore.shared.update(id: record.id) { current in
                 current.completionNotificationAt = Date()
+                current.completionNotificationPending = false
                 current.notificationError = nil
             }
         } catch {

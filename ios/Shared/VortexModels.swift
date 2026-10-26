@@ -43,6 +43,7 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var updatedAt: Date
     var savedAssetIdentifier: String?
     var pendingArchiveFilename: String?
+    var completionNotificationPending: Bool?
     var completionNotificationAt: Date?
     var notificationError: String?
     var photoSaveAttemptAt: Date?

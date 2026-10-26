@@ -54,6 +54,7 @@ enum TransferCompletion {
                 return nil
             }
             guard let updated = try DownloadStore.shared.update(id: recordID, { current in
+                current.completionNotificationPending = true
                 current.localFilename = result.filename
                 if result.isAudio { current.mode = .audio }
                 current.status = .ready
@@ -108,6 +109,7 @@ enum TransferCompletion {
             }
             guard let assetID else { throw VortexClientError.invalidArchive("Photos could not import this video; use Save to Files instead") }
             return try DownloadStore.shared.update(id: record.id) { current in
+                if current.completionNotificationAt == nil { current.completionNotificationPending = true }
                 current.savedAssetIdentifier = assetID
                 current.status = .saved
                 current.phase = "Saved to Photos"
