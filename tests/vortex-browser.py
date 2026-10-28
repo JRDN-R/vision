@@ -161,7 +161,9 @@ class Fixture:
             return
         if request.url.startswith(BACKEND + '/api/'):
             self.vision_calls.append(url.path)
-            if url.path == '/api/venture/workspace-preferences':
+            if url.path == '/api/account/membership':
+                self.respond(route, dict(approved=True,status='approved',admin=False))
+            elif url.path == '/api/venture/workspace-preferences':
                 self.respond(route, dict(launchView='venture', swipeNoticeVersion=1))
             elif url.path == '/api/health':
                 self.respond(route, dict(capabilities=dict(accountProjects=True, persistentProjects=True, ventureV2=True)))

@@ -6,6 +6,8 @@ const ACCOUNT_PC='https://desktop-vjt2br2.tail385c9d.ts.net',ACCOUNT_MODE='visio
 const accountContinueURL=(()=>{try{const url=new URL(location.href),dest=url.searchParams.get('continue');if(!/^https?:$/.test(url.protocol)||!['vortex','admins'].includes(dest))return '';const target=new URL('./'+dest+'/',window.VisionWorkspaceRoute?.rootURL()||url),connect=url.searchParams.get('connect');if(dest==='admins'&&/^[A-Za-z0-9_-]{43}$/.test(connect||''))target.searchParams.set('connect',connect);return target.href;}catch{return '';}})();
 const accountContinueName=accountContinueURL?(new URL(accountContinueURL).pathname.endsWith('/admins/')?'FirstUPCJax Admins':'Vortex'):'';
 let accountForwarding=false;
+let accountMembership=null,accountMembershipTimer=0;
+let accountEmailExpanded=false;
 let accountRestoring=true,accountRestoreFailed=false,accountObserver=null;
 let accountSDK=null,accountFirebase=null,accountLoadPromise=null,accountAuthEpoch=0,accountTransition=Promise.resolve(),accountLastUID=null,accountBusy=false,accountError='',accountKeyTimer=0,accountKeyEpoch=0,accountKeyWrites=Promise.resolve(),accountGateLocked=true;
 async function accountWait(promise,message,timeoutMs=12000){
@@ -17,26 +19,34 @@ function accountContinue(user){
  if(!accountForwarding){accountForwarding=true;accountGateLocked=true;accountUpdateGate();location.replace(accountContinueURL);}
  return true;
 }
-function accountSignedIn(){return !!(!accountGateLocked&&accountFirebase?.currentUser?.uid&&cloudAuth?.kind==='firebase-google'&&cloudAuth.uid===accountFirebase.currentUser.uid);}
+function accountSignedIn(){return !!(accountMembership?.approved&&!accountGateLocked&&accountFirebase?.currentUser?.uid&&cloudAuth?.kind==='firebase-google'&&cloudAuth.uid===accountFirebase.currentUser.uid);}
 function accountUpdateGate(){
  const gate=$('accountGate');if(!gate)return;const locked=!accountCanUseApp();
  document.documentElement.classList.toggle('account-locked',locked);gate.hidden=!locked;
  document.documentElement.classList.toggle('account-restoring',accountRestoring);
  document.documentElement.classList.toggle('account-restore-failed',accountRestoreFailed);
  gate.setAttribute('aria-busy',String(accountRestoring));
+ const waiting=!!accountFirebase?.currentUser&&!accountMembership?.approved;
+ gate.classList.toggle('membership-waiting',waiting);
+ $('accountMembership').hidden=!waiting;
+ $('accountGateEmailToggle').hidden=waiting||accountRestoring||accountRestoreFailed;
+ $('accountGateEmailArea').hidden=waiting||!accountEmailExpanded;
+ $('accountMembershipTitle').textContent=!accountMembership?'Checking account access':accountMembership.status==='denied'?'Account request not approved':'Awaiting account approval';
+ $('accountMembershipMessage').textContent=!accountMembership?'Your account is signed in. Connect to FUPCJ Server to check your access.':accountMembership.status==='denied'?'Your request was not approved. You can sign out or check again later.':'Thank you for your request. Your account has been created. An administrator must approve it before you can enter Vision.';
  for(const el of document.querySelectorAll('body > :not(script):not(#accountGate)')){
   if(locked){if(!el.hasAttribute('data-account-inert'))el.setAttribute('data-account-inert',el.inert?'true':'false');el.inert=true;}
   else if(el.hasAttribute('data-account-inert')){el.inert=el.getAttribute('data-account-inert')==='true';el.removeAttribute('data-account-inert');}
  }
  if(locked)for(const dialog of document.querySelectorAll('dialog[open]:not(#whyVisionDialog)'))dialog.close();
- $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening '+accountContinueName+'…':accountRestoring?'Opening your workspace…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to '+accountContinueName+'.':'Sign in to save your work, or explore without an account.');
+ $('accountGateStatus').textContent=accountError||(accountForwarding?'Opening '+accountContinueName+'…':accountRestoring?'Opening your workspace…':trialStarting?'Starting your five-minute trial…':accountBusy?'Signing in…':accountContinueURL?'Sign in or create an account to continue to '+accountContinueName+'.':waiting?'':'New accounts require administrator approval.');
  $('accountGateRetry').hidden=!accountRestoreFailed;
  for(const id of ['accountGateSignIn','accountGateEmailSignIn','accountGateEmailCreate','accountGatePasswordReset']){const el=$(id);if(el)el.disabled=accountBusy||trialStarting||accountRestoring||accountRestoreFailed;}
- trialPaint();$('accountGateSignIn').hidden=false;$('accountGateEmailArea').hidden=false;
+ trialPaint();$('accountGateSignIn').hidden=false;$('accountGateEmailArea').hidden=waiting||!accountEmailExpanded;
  $('accountGateOnline').hidden=true;
  $('accountGateDetail').textContent=location.protocol==='file:'?'The interface is stored in this HTML file. Connect online to sign in and use your FUPCJ Server projects. Google opens a secure sign-in window; the workspace stays here.':'Your projects, files, and saved settings are stored on FUPCJ Server. Sign in with Google or email/password.';
  if(accountContinueURL){$('accountGateTitle').textContent='Continue to '+accountContinueName;$('accountGateDetail').textContent=accountContinueName==='Vortex'?'One Vision account for Vision, Venture, and Vortex. After sign-in, you’ll return to Vortex.':'Use your invited Vision account. After sign-in, you’ll return to FirstUPCJax Admins.';}
- if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountRestoring||accountBusy?gate:accountRestoreFailed?$('accountGateRetry'):$('accountGateSignIn');target.focus({preventScroll:true});}
+ if(waiting){$('accountGateSignIn').hidden=true;$('accountGateRetry').hidden=true;}
+ if(locked&&!gate.contains(document.activeElement)){gate.tabIndex=-1;const target=accountRestoring||accountBusy?gate:waiting?$('accountMembershipRefresh'):accountRestoreFailed?$('accountGateRetry'):$('accountGateSignIn');target.focus({preventScroll:true});}
 }
 function accountUsesGoogle(){try{return localStorage.getItem(ACCOUNT_MODE)==='google';}catch{return cloudAuth?.kind==='firebase-google';}}
 function accountMode(value){try{if(value)localStorage.setItem(ACCOUNT_MODE,value);else localStorage.removeItem(ACCOUNT_MODE);}catch{}}
@@ -64,13 +74,11 @@ function accountClearRunKey(){
  $('accountKeyStatus').textContent='';
 }
 async function accountSetUser(user){
- // Hand back a restored or newly persisted Firebase identity before loading
- // board recovery, preferences, projects, or welcome dialogs for another app.
- if(accountContinue(user))return;
+ // Keep every workspace destination locked until the server confirms membership.
  const uid=user?.uid||'';
- if(accountLastUID===uid)return;
+ if(accountLastUID===uid&&(!user||accountMembership?.approved))return;
  if(user&&(trialSession||cloudAuth?.kind==='trial'))await trialFinish({message:''});
- accountAuthEpoch++;accountGateLocked=true;accountUpdateGate();
+ const transitionEpoch=++accountAuthEpoch;accountMembership=null;clearTimeout(accountMembershipTimer);accountGateLocked=true;accountUpdateGate();
  if(typeof cancelGoogleSources==='function')cancelGoogleSources();
  if(typeof cancelVortexImportDialog==='function')cancelVortexImportDialog();
  accountClearRunKey();
@@ -80,7 +88,16 @@ async function accountSetUser(user){
  projectHealthCache=null;
  // Change the local recovery scope before any account requests resume.
  await projectSwitchAccountScope(user?uid:'signed-out');
+ if(transitionEpoch!==accountAuthEpoch)return;
  accountLastUID=uid;
+ if(user){
+  accountLastUID=null;
+  await accountCheckMembership(user);
+  if(transitionEpoch!==accountAuthEpoch)return;
+  if(!accountMembership?.approved){accountPaint();return;}
+  accountLastUID=uid;
+  if(accountContinue(user))return;
+ }
  accountGateLocked=false;
  if(!user&&location.protocol!=='file:')void accountGoogleLogin.prepare().catch(()=>{});
  accountPaint();
@@ -109,9 +126,9 @@ async function accountLoad(){
   if(!accountObserver)accountObserver=authSDK.onAuthStateChanged(accountFirebase,user=>{
    if(accountLastUID===(user?.uid||''))return;
    accountGateLocked=true;accountUpdateGate();accountTransition=accountTransition.catch(()=>{}).then(()=>accountSetUser(user));
-   void accountTransition.then(()=>{if(user&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
+   void accountTransition.then(()=>{if(user&&!accountForwarding&&accountSignedIn()){void projectRefreshAccountList();void accountRestoreRunKey();if(state.projectCloud)void projectReconcile();}}).catch(error=>{accountError=accountErrorText(error);accountPaint();});
   });
-  if(accountFirebase.currentUser&&!accountForwarding){void projectRefreshAccountList();void accountRestoreRunKey();}
+  if(accountFirebase.currentUser&&!accountForwarding&&accountSignedIn()){void projectRefreshAccountList();void accountRestoreRunKey();}
   return accountFirebase;
  })().catch(error=>{accountLoadPromise=null;accountRestoreFailed=true;accountError=accountErrorText(error);throw error;}).finally(()=>{accountRestoring=false;accountPaint();});
  return accountLoadPromise;
@@ -145,11 +162,43 @@ async function accountGoogleSignIn(){
    const result=await accountSDK.signInWithCredential(auth,accountSDK.GoogleAuthProvider.credential(credential.idToken||null,credential.accessToken));
    await accountTransition;await accountSetUser(result.user);
   }
-  if(accountForwarding)return;
+  if(accountForwarding||!accountSignedIn())return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
  }catch(error){if(location.protocol==='file:'&&localBridgeCancel)localBridgeCancel();accountError=accountErrorText(error);}
  finally{accountBusy=false;accountPaint();}
 }
+
+async function accountCheckMembership(user){
+ const uid=user.uid,epoch=accountAuthEpoch;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  const token=await user.getIdToken();
+  const response=await fetch(ACCOUNT_PC+'/api/account/membership',{headers:{Authorization:'Bearer '+token},signal:controller.signal,credentials:'omit',cache:'no-store'});
+  const value=await response.json();
+  if(epoch!==accountAuthEpoch||accountFirebase.currentUser?.uid!==uid)return;
+  if(!response.ok)throw new Error(value.error||'Could not check account approval. Please retry.');
+  if(!['pending','approved','denied'].includes(value.status)||value.approved!==(value.status==='approved'))throw new Error('Update FUPCJ Server to check account approval.');
+  accountMembership=value;accountError='';
+ }catch(error){if(epoch!==accountAuthEpoch)return;accountError=error.name==='AbortError'?'FUPCJ Server did not respond. Check approval status to retry.':error.message;}
+ finally{
+  clearTimeout(timer);
+  if(epoch===accountAuthEpoch&&!accountMembership?.approved){
+   clearTimeout(accountMembershipTimer);
+   accountMembershipTimer=setTimeout(()=>{if(!document.hidden)void accountRetryMembership();else accountMembershipTimer=setTimeout(()=>void accountRetryMembership(),15000);},15000);
+  }
+ }
+}
+async function accountRetryMembership(){
+ if(accountBusy||accountRestoring||!accountFirebase?.currentUser)return;
+ accountBusy=true;accountError='';accountPaint();
+ try{await accountSetUser(accountFirebase.currentUser);if(accountSignedIn()){void projectRefreshAccountList();void accountRestoreRunKey();}}
+ catch(error){accountError=accountErrorText(error);}
+ finally{accountBusy=false;accountPaint();}
+}
+$('accountGateEmailToggle').onclick=()=>{accountEmailExpanded=!accountEmailExpanded;$('accountGateEmailToggle').setAttribute('aria-expanded',String(accountEmailExpanded));accountPaint();if(accountEmailExpanded)$('accountGateEmail').focus();};
+$('accountMembershipRefresh').onclick=()=>void accountRetryMembership();
+$('accountMembershipSignOut').onclick=()=>void accountGoogleSignOut();
+
 function accountEmailFields(prefix){
  const email=$(prefix+'Email')?.value.trim()||'',password=$(prefix+'Password')?.value||'';
  if(!email)throw new Error('Enter your email.');
@@ -163,14 +212,14 @@ async function accountEmailAction(action,prefix){
   if(password.length<6)throw new Error('Enter a password with at least 6 characters.');
   const result=action==='create'?await accountSDK.createUserWithEmailAndPassword(auth,email,password):await accountSDK.signInWithEmailAndPassword(auth,email,password);
   await accountTransition;await accountSetUser(result.user);
-  if(accountForwarding)return;
+  if(accountForwarding||!accountSignedIn())return;
   $('accountDialog').close();openProjectsMenu();void accountRestoreRunKey();
  }catch(error){accountError=accountErrorText(error);}finally{if($(prefix+'Password'))$(prefix+'Password').value='';accountBusy=false;accountPaint();}
 }
 async function accountGoogleSignOut(){
  if(accountBusy)return;accountBusy=true;accountGateLocked=true;accountPaint();
  try{accountClearRunKey();await projectBackup();await accountSDK.signOut(accountFirebase);await accountTransition;await accountSetUser(null);accountError='Signed out. Your projects remain on FUPCJ Server and in this account’s device recovery.';}
- catch(error){accountError=accountErrorText(error);}finally{accountBusy=false;accountGateLocked=false;accountPaint();}
+ catch(error){accountError=accountErrorText(error);}finally{accountBusy=false;accountGateLocked=!accountMembership?.approved;accountPaint();}
 }
 async function accountRestoreRunKey(){
  const uid=projectAccountUID(),epoch=++accountKeyEpoch;if(!uid)return;

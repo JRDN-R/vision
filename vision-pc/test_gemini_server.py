@@ -32,6 +32,8 @@ class GeminiServerTests(unittest.TestCase):
             'token': 'a' * 48, 'diagnosticToken': 'd' * 48, 'publicAccess': True,
             'firebaseAuth': {'enabled': True, 'projectId': 'visionboard-api'},
         }))
+        # Existing-account fixtures; test_membership covers new applicants and Firebase age lookup.
+        self.membership_lookup = self.enterContext(patch.object(server.membership, 'created_before_cutoff', return_value=True))
         self.configure()
         self.client = server.app.test_client()
         self.service = server.transcriptions

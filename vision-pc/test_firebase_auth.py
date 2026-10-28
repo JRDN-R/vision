@@ -33,6 +33,8 @@ class FirebaseTests(unittest.TestCase):
         self.config = self.root / 'config.json'
         self.config.write_text(json.dumps({'token': 'a'*48, 'diagnosticToken': 'd'*48, 'publicAccess': True,
                                            'firebaseAuth': {'enabled': True, 'projectId': 'visionboard-api'}}))
+        # Existing-account fixtures; test_membership covers new applicants and Firebase age lookup.
+        self.membership_lookup = self.enterContext(patch.object(server.membership, 'created_before_cutoff', return_value=True))
         server.configure(self.config)
         server.app.config['TESTING'] = True
         self.client = server.app.test_client()

@@ -89,8 +89,15 @@ class AccountAdministration:
 
     def administrators(self):
         path = Path(self.app.config['DATA_DIR']) / 'activity-admins.json'
-        value = json.loads(path.read_text(encoding='utf-8-sig'))
-        return set(value['uids'])
+        try:
+            value = json.loads(path.read_text(encoding='utf-8-sig'))
+            uids = set(value['uids'])
+        except (OSError, ValueError, KeyError, TypeError):
+            uids = set()
+        owner = self.app.config.get('MEMBERSHIP_OWNER_UID')
+        if owner:
+            uids.add(owner)
+        return uids
 
     def firebase(self):
         if self.firebase_app is not None:
@@ -341,7 +348,7 @@ class AccountAdministration:
                                ('venture_funding','uid'),('venture_calibrations','uid'),
                                ('venture_ledger','uid'),('venture_container_costs','uid'),
                                ('venture_dictation_requests','uid'),('account_credentials','uid'),
-                               ('account_processing_preferences','uid'),('gemini_access','uid'),('gemini_access_decisions','uid'),
+                               ('memberships','uid'),('membership_decisions','uid'),('account_processing_preferences','uid'),('gemini_access','uid'),('gemini_access_decisions','uid'),
                                ('gemini_usage','uid'),('vortex_jobs','uid'),('title_eyes_jobs','uid'),('responses','uid'),
                                ('jobs','uid'),('owned_source_leases','uid'),('owned_import_receipts','uid'),('owned_assets','uid'),
                                ('ios_transfer_tokens','uid'),('ios_transfer_leases','uid'),('ios_live_activities','uid'),('ios_notification_devices','uid'),

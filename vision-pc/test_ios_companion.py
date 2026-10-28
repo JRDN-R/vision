@@ -31,6 +31,8 @@ class IOSCompanionTests(unittest.TestCase):
         config.write_text(json.dumps(dict(token='a' * 48, publicAccess=True, ffmpeg=str(ffmpeg),
             backendUrl='https://desktop-vjt2br2.tail385c9d.ts.net',
             firebaseAuth=dict(enabled=True, projectId='visionboard-api'))))
+        # Existing-account fixtures; test_membership covers new applicants and Firebase age lookup.
+        self.membership_lookup = self.enterContext(patch.object(server.membership, 'created_before_cutoff', return_value=True))
         server.configure(config)
         server.app.config['TESTING'] = True
         identity = server.app.config['FIREBASE_IDENTITY']

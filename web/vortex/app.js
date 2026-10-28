@@ -52,7 +52,7 @@ function settleAuth(identity) {
   $('application').inert = !identity;
   $('application').removeAttribute('aria-busy');
 }
-function accountChanged(identity) {
+async function accountChanged(identity) {
   resetMoisesHandoff();
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
@@ -71,6 +71,17 @@ function accountChanged(identity) {
   renderDownloadStatus();
   showServerVersion();
   notice();
+  if(identity){
+    const generation=accountEpoch(),controller=new AbortController(),deadline=setTimeout(()=>controller.abort(),12000);
+    try {
+      const token=await identity.getIdToken();
+      const response=await fetch(BACKEND+'/api/account/membership',{headers:{Authorization:'Bearer '+token},credentials:'omit',cache:'no-store',signal:controller.signal});
+      const membership=await response.json();
+      if(generation!==accountEpoch())return;
+      if(!response.ok||membership.approved!==true){location.replace($('visionSignIn').href);return;}
+    } catch {if(generation===accountEpoch())location.replace($('visionSignIn').href);return;}
+    finally{clearTimeout(deadline);}
+  }
   settleAuth(identity);
   if (!identity) {
     $('authGate').hidden = true;

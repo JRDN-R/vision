@@ -39,6 +39,7 @@ from account_upgrade import AccountUpgrade
 from gemini_credentials import GeminiCredentials, GeminiCredentialUnavailable
 from vortex import VortexJobs
 from account_administration import AccountAdministration
+from membership import Membership
 from owned_assets import OwnedAssets
 import standalone
 import ios_companion
@@ -131,10 +132,11 @@ def configure(config_path, migrate_gemini=False):
     sessions.venture.documents = documents
     sessions.venture.transcription = transcriptions
     sessions.context.initialize(config)
-    app.config['TRIAL_ENABLED'] = config.get('anonymousTrialEnabled', True) is True
+    app.config['TRIAL_ENABLED'] = False
     app.config['TRIALS'] = trials
     trials.initialize()
     account_admin.initialize(config)
+    membership.initialize()
     owned_assets.initialize(config)
     ios.initialize()
     ios_notifications.close()
@@ -269,16 +271,14 @@ def authorize():
         if not account_admin.begin_request(g.uid):
             raise APIError('This Vision account has been removed.', 403, 'account-removed')
         g.account_admin_tracked = True
+        membership.require(g.uid)
         return
     header = request.headers.get('Authorization', '')
     token = header[7:] if header.startswith('Bearer ') else ''
     if request.path == '/api/trial/start' and request.method == 'POST':
-        return
+        raise APIError('Create an account and wait for approval to use Vision.', 403, 'membership-required')
     if token.startswith('trial_'):
-        if request.path.startswith(('/api/vortex/', '/api/title-eyes/')):
-            raise APIError('Sign in to use this tool.', 401)
-        trials.authorize(token)
-        return
+        raise APIError('Create an account and wait for approval to use Vision.', 403, 'membership-required')
     expected = app.config.get('CONNECTION_TOKEN', '')
     identity = app.config.get('FIREBASE_IDENTITY')
     if expected and hmac.compare_digest(token.encode('utf-8'), expected.encode('utf-8')):
@@ -312,8 +312,12 @@ def authorize():
         if account_admin.blocked(g.uid):
             raise APIError('This Vision account has been removed.', 403, 'account-removed')
         g.identity_claims = claims
+        membership.observe(g.uid, claims, token)
         app.config['AUDIT_LOGS'].identity(g.uid, claims,
             app='vortex' if request.path.startswith('/api/vortex/') else '' if request.path.startswith('/api/admin/') else 'vision')
+        if not ((request.path == '/api/account/membership' and request.method == 'GET')
+                or (request.path == '/api/ios/auth/approve' and request.method == 'POST')):
+            membership.require(g.uid)
         return
     raise APIError('Sign in or connect this device to your Vision processing server first.', 401)
 
@@ -832,6 +836,7 @@ documents = DocumentJobs(app, connect_db, APIError, sessions)
 vortex = VortexJobs(app, connect_db, APIError)
 trials = Trials(app, connect_db, APIError, sessions, transcriptions, uploaded_media, YOUTUBE_WORKER_LOCK, documents=documents)
 account_admin = AccountAdministration(app, connect_db, sessions, vortex, transcriptions, uploaded_media, documents)
+membership = Membership(app, connect_db, APIError, account_admin)
 ios = ios_companion.IOSCompanion(app, connect_db, APIError, vortex, account_admin)
 app.config['IOS_COMPANION'] = ios
 ios_live = IOSLiveActivities(app, connect_db, APIError, vortex, account_admin, protect_secret, unprotect_secret)

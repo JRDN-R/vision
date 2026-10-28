@@ -33,6 +33,7 @@ class VortexAccountTests(unittest.TestCase):
         cls.signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     def setUp(self):
+        self.enterContext(patch.object(server.membership, 'created_before_cutoff', return_value=True))
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.ffmpeg = self.root / 'ffmpeg'
@@ -123,8 +124,8 @@ class VortexAccountTests(unittest.TestCase):
         trial = self.client.post('/api/trial/start', json={'deviceId': 'd' * 64},
                                  headers={'Origin': 'https://jrdn-r.github.io'},
                                  environ_base={'REMOTE_ADDR': '198.51.100.4'})
-        self.assertEqual(trial.status_code, 201, trial.json)
-        guest = {'Authorization': 'Bearer ' + trial.json['token']}
+        self.assertEqual(trial.status_code, 403, trial.json)
+        guest = {'Authorization': 'Bearer trial_retired'}
         endpoints = [
             ('get', '/api/vortex/capabilities', None),
             ('get', '/api/vortex/jobs', None),
