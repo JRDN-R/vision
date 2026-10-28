@@ -3,13 +3,13 @@
   "assets": [
     {
       "path": "Vision.html",
-      "sha256": "a813a7b75cce7741d85654c79ddda916e05728a3bbb594f0048a56ce032399ff",
-      "bytes": 20883044
+      "sha256": "84577b20d6312de85c7cc600ed8385e9dec5a9cfaa86f31033ab11076d68a0b8",
+      "bytes": 20895260
     },
     {
       "path": "vortex/offline.html",
-      "sha256": "7dd7cb381c72e712ad491540f6980901b10db8912b4d2bdd3596533eb8dcc0c4",
-      "bytes": 5748094
+      "sha256": "796dc6cd56d5c7971c2bc2702eb5f50ba32013321d0a6a99284a2e08905a7615",
+      "bytes": 5749004
     }
   ]
 }

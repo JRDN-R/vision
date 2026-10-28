@@ -3027,7 +3027,8 @@ function settleAuth(identity) {
   $('application').inert = !identity;
   $('application').removeAttribute('aria-busy');
 }
-function accountChanged(identity) {
+async function accountChanged(identity) {
+  state.memberUID='';$('application').inert=true;$('application').hidden=true;$('authRestoring').hidden=false;
   resetMoisesHandoff();
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
@@ -3046,6 +3047,18 @@ function accountChanged(identity) {
   renderDownloadStatus();
   showServerVersion();
   notice();
+  if(identity){
+    const generation=accountEpoch(),controller=new AbortController(),deadline=setTimeout(()=>controller.abort(),12000);
+    try {
+      const token=await identity.getIdToken();
+      const response=await fetch(BACKEND+'/api/account/membership',{headers:{Authorization:'Bearer '+token},credentials:'omit',cache:'no-store',signal:controller.signal});
+      const membership=await response.json();
+      if(generation!==accountEpoch())return;
+      if(!response.ok||membership.approved!==true){location.replace($('visionSignIn').href);return;}
+    } catch {if(generation===accountEpoch())location.replace($('visionSignIn').href);return;}
+    finally{clearTimeout(deadline);}
+  }
+  state.memberUID=identity?.uid||'';
   settleAuth(identity);
   if (!identity) {
     $('authGate').hidden = true;
@@ -3060,7 +3073,7 @@ function accountChanged(identity) {
   void refresh(); void loadProfile();
 }
 async function loadProfile() {
-  if (!user() || state.profileLoading) return;
+  if (!user() || state.memberUID!==user().uid || state.profileLoading) return;
   const epoch = accountEpoch(); state.profileLoading = true;
   try {
     const profile = await request('/venture/profile');
@@ -3118,7 +3131,7 @@ async function signOutAction() { closeMenu(false); if (!await confirmAction('Sig
 
 function scheduleRefresh(delay) { clearTimeout(state.timer); if (user() && !document.hidden) state.timer = setTimeout(() => void refresh(), delay); }
 async function refresh() {
-  if (!user() || state.polling) return;
+  if (!user() || state.memberUID!==user().uid || state.polling) return;
   state.polling = true; const epoch = accountEpoch(), generation = state.pollEpoch, revision = state.revision;
   $('refreshButton').disabled = true;
   try {
