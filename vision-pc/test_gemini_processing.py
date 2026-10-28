@@ -108,6 +108,7 @@ class GeminiPureTests(unittest.TestCase):
 class GeminiQueueTests(unittest.TestCase):
     def setUp(self):
         existing_local.TranscriptionTests.setUp(self)
+        self.enterContext(patch.object(server.membership, "created_before_cutoff", return_value=True))
         self.identity = SimpleNamespace(project_id='visionboard-api', verify=lambda token: {
             'sub': token, 'name': token.title(), 'email': token+'@example.com', 'auth_time': 1})
         server.app.config['FIREBASE_IDENTITY'] = self.identity

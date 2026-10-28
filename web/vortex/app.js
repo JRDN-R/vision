@@ -53,6 +53,7 @@ function settleAuth(identity) {
   $('application').removeAttribute('aria-busy');
 }
 async function accountChanged(identity) {
+  state.memberUID='';$('application').inert=true;$('application').hidden=true;$('authRestoring').hidden=false;
   resetMoisesHandoff();
   state.lookupGeneration++; resetSearch(); state.downloadMode = 'video'; state.videoFormat = 'mp4'; state.audioFormat = 'm4a';
   clearTimeout(state.timer); clearTimeout(state.terminalTimer); state.pollEpoch++; state.polling = false;
@@ -82,6 +83,7 @@ async function accountChanged(identity) {
     } catch {if(generation===accountEpoch())location.replace($('visionSignIn').href);return;}
     finally{clearTimeout(deadline);}
   }
+  state.memberUID=identity?.uid||'';
   settleAuth(identity);
   if (!identity) {
     $('authGate').hidden = true;
@@ -96,7 +98,7 @@ async function accountChanged(identity) {
   void refresh(); void loadProfile();
 }
 async function loadProfile() {
-  if (!user() || state.profileLoading) return;
+  if (!user() || state.memberUID!==user().uid || state.profileLoading) return;
   const epoch = accountEpoch(); state.profileLoading = true;
   try {
     const profile = await request('/venture/profile');
@@ -153,7 +155,7 @@ async function signOutAction() { closeMenu(false); if (!await confirmAction('Sig
 
 function scheduleRefresh(delay) { clearTimeout(state.timer); if (user() && !document.hidden) state.timer = setTimeout(() => void refresh(), delay); }
 async function refresh() {
-  if (!user() || state.polling) return;
+  if (!user() || state.memberUID!==user().uid || state.polling) return;
   state.polling = true; const epoch = accountEpoch(), generation = state.pollEpoch, revision = state.revision;
   $('refreshButton').disabled = true;
   try {

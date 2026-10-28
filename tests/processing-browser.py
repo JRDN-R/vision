@@ -10,7 +10,7 @@ index=html.rfind('})();')
 hooks='''
 accountCanUseApp=()=>true;accountUpdateGate();
 window.processingFixture={
- ready:async()=>{await accountReady;await projectRecoverStartup();accountSignedIn=()=>true;accountFirebase={currentUser:{uid:'processing-fixture'}};upgradeAccount.uid='processing-fixture';upgradeAccount.status='approved';projectRequest=async(path,options={})=>new Response(JSON.stringify({preferences:JSON.parse(options.body||'{}')}));},
+ ready:async()=>{await accountReady;await projectRecoverStartup();accountSignedIn=()=>true;accountFirebase={currentUser:{uid:'processing-fixture'}};upgradeAccount.uid='processing-fixture';upgradeAccount.status='approved';cloudAuth={kind:'firebase-google',uid:'processing-fixture'};cloudFetch=projectRequest=async(path,options={})=>new Response(JSON.stringify(path==='/account/upgrade'?{status:'approved',approved:true,preferences:upgradeAccount.preferences}:{preferences:JSON.parse(options.body||'{}')}));},
  open:()=>openProcessingSettings(),
  settings:()=>({...state.settings,transcriptionProvider:transcriptionProvider(),includeSoundEvents:soundEventsSelected()}),
  restore:async()=>{state=await validateProject({format:'Vision',version:4,...snapshot()});},
