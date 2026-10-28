@@ -19,6 +19,7 @@ from activity_dashboard import public_id
 
 class AccountAdministrationTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.object(server.membership, 'created_before_cutoff', return_value=True))
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)

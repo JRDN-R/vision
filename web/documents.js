@@ -32,8 +32,8 @@ async function documentRequest(r,suffix='',options={}){
  return projectResponse(response);
 }
 function collectDocumentSources(){
- if(projectAccountSwitching||projectLoading||typeof accountReady==='undefined'||(!projectAccountUID()&&!(typeof trialActive==='function'&&trialActive())))return;
- let changed=false;const meta=ensureProjectIdentity();
+ if((typeof accountCanUseApp==='function'&&!accountCanUseApp())||projectAccountSwitching||projectLoading||typeof accountReady==='undefined'||(!projectAccountUID()&&!(typeof trialActive==='function'&&trialActive())))return;
+ let changed=false;
  for(const n of state.nodes){
   // Image-only modules also get OCR; the original board image stays intact.
   if(n.kind==='image'&&!n.attachments.some(a=>a.role==='document-source')&&/^data:image\//.test(n.src)){
@@ -42,6 +42,7 @@ function collectDocumentSources(){
   }
   for(const a of n.attachments){
    if(!documentSupported(a)||a.documentJob)continue;
+   const meta=ensureProjectIdentity();
    a.documentJob={requestId:'doc-'+uid(),projectId:meta.id,backendUrl:meta.backendUrl||cloudConfig?.backendUrl||'',id:'',status:a.size>50*1024*1024?'error':'waiting',phase:'Waiting to upload for document processing',error:a.size>50*1024*1024?'Automatic extraction supports files up to 50 MB. Original retained.':'',nextAttempt:0};changed=true;
   }
   renderDocumentStatus(n);
@@ -49,6 +50,7 @@ function collectDocumentSources(){
  if(changed){markDirty();if(typeof renderActivity==='function')renderActivity();}
 }
 async function pumpDocuments(){
+ if(typeof accountCanUseApp==='function'&&!accountCanUseApp()){scheduleDocuments(2000);return;}
  for(const [id,r]of documentWorkers)if(!documentCurrent(r)){r.controller.abort();documentWorkers.delete(id);}
  collectDocumentSources();
  if(!documentWorkers.size&&!projectAccountSwitching&&!projectLoading){

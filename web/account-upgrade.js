@@ -19,6 +19,7 @@ function upgradePaint(){
  $('accountUpgradeStatus').textContent=({approved:'Your account is upgraded.',pending:'Your request is waiting for admin approval.',denied:'Your request was declined. Contact your admin.',revoked:'Your upgrade access was revoked. Contact your admin.'})[upgradeAccount.status]||'Request access to Gemini transcription, Luna screenshot descriptions, and Luna project titles.';
  $('requestAccountUpgrade').hidden=['approved','pending','denied','revoked'].includes(upgradeAccount.status);
  $('manageAccountUpgrades').hidden=!upgradeAccount.admin;
+ $('manageVisionMemberships').hidden=!upgradeAccount.admin;
  if(typeof syncTranscriptionProviderUI==='function')syncTranscriptionProviderUI();
 }
 async function upgradeRefresh(force=false){
@@ -66,6 +67,7 @@ function installAccountUpgrade(){
  $('accountButton').after(make('accountUpgradeButton'));
  $('ventureSidebar').querySelector('.venture-sidebar-top').after(make('ventureUpgradeButton'));
  const admin=document.createElement('a');admin.id='manageAccountUpgrades';admin.className='workspace-news-link';admin.href='https://jrdn-r.github.io/vision-status/?module=gemini';admin.target='_blank';admin.rel='noopener';admin.textContent='Manage account upgrades';admin.hidden=true;$('ventureAccount').append(admin);
+ const memberships=admin.cloneNode();memberships.id='manageVisionMemberships';memberships.href='https://jrdn-r.github.io/vision-status/?module=memberships';memberships.textContent='Approve new Vision accounts';$('ventureAccount').append(memberships);
  $('requestAccountUpgrade').onclick=async()=>{
   const uid=upgradeUID(),button=$('requestAccountUpgrade');button.disabled=true;
   try{const data=await projectResponse(await cloudFetch('/account/upgrade',{method:'POST'}));if(uid!==upgradeUID())return;upgradeAccount.status=data.status;upgradePaint();}

@@ -62,6 +62,7 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(self.client.get(self.base+'/documents/request/document1',headers=self.headers).json['id'],job)
 
     def test_google_account_ownership(self):
+        self.enterContext(patch.object(server.membership, "created_before_cutoff", return_value=True))
         class Identity:
             project_id='test'
             def verify(self,token): return {'sub':token,'email':token+'@example.test','name':token,'auth_time':int(time.time())}

@@ -25,6 +25,7 @@ window.upgradeIntegration={
   accountFirebase={currentUser:{uid,email:uid+'@example.test',getIdToken:async()=>token}};
   cloudConfig={kind:'private-pc',backendUrl:BACKEND,publicAccess:true};
   cloudAuth={kind:'firebase-google',uid,backendUrl:BACKEND};
+  await accountCheckMembership(accountFirebase.currentUser);
   projectAccountSwitching=false;delete state.projectCloud;
   document.querySelectorAll('[data-account-inert]').forEach(el=>{el.inert=false;delete el.dataset.accountInert;});
   document.documentElement.classList.remove('account-locked');$('accountGate').hidden=true;

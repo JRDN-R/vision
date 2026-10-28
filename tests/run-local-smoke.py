@@ -25,6 +25,7 @@ with sync_playwright() as pw:
             page.set_content(shell,wait_until='load')
         page.wait_for_timeout(900)
         assert page.evaluate('!!window.VisionFirebaseSDK'), 'Firebase runtime is missing'
+        page.locator('#accountGateEmailToggle').click()
         assert page.locator('#accountGateEmailArea').is_visible(), 'Local email sign-in is hidden'
         assert page.locator('#accountGateSignIn').is_visible(), 'Local Google sign-in is hidden'
         assert not any(t in ('script','stylesheet','font') for t,_ in remote), remote

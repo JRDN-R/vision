@@ -61,6 +61,8 @@ def allowed(config, uid, auth_kind, origin=None):
     origins = {'https://jrdn-r.github.io', config.get('BACKEND_URL', '')}
     if origin and origin not in origins:
         return False
+    if uid == config.get('MEMBERSHIP_OWNER_UID'):
+        return True
     try:
         path = Path(config['DATA_DIR']) / 'activity-admins.json'
         if path.is_symlink() or path.stat().st_size > 65536:

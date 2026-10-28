@@ -8,13 +8,15 @@
 <link rel="icon" type="image/png" sizes="192x192" href="{{VISION_ASSET_e54ba9abfb4f76577398691e7bcccd6f688820559b38075c25f4c48d7f0ab7e6}}"><link rel="apple-touch-icon" sizes="180x180" href="{{VISION_ASSET_51b99f430d7b4d09e5036b3969328c31066ad3bd43fe7aa13216128482fe0dd2}}">
 <script>{{VISION_WORKSPACE_ROUTE}}</script>
 <style>{{VISION_STYLES}}</style></head><body><section id="accountGate" class="account-gate" aria-labelledby="accountGateTitle">
+ <div class="login-background" aria-hidden="true"><canvas id="loginFluid"></canvas><div class="login-sheen"></div><div class="login-grain"></div></div>
  <div class="account-gate-card">
-  <img class="account-gate-logo" src="{{VISION_ASSET_77187dc76a61545b317d80ad11f628d36f69d191e16fd2ca9c55263aad5b7b66}}" alt="Vision" width="96" height="30">
-  <button id="whyVisionButton" class="why-vision-button" type="button" aria-haspopup="dialog" aria-controls="whyVisionDialog">Why use Vision? <span aria-hidden="true">↗</span></button>
-  <h1 id="accountGateTitle">Your workspace, connected.</h1>
-  <p id="accountGateDetail">Your projects, files, and saved settings are stored on FUPCJ Server. Sign in with Google or email/password.</p>
-  <button id="accountGateSignIn" type="button" class="primary">Continue with Google</button>
-  <div id="accountGateEmailArea" class="account-email-area">
+  <img class="account-gate-logo" src="{{VISION_LOGIN_LOGO}}" alt="Vision" width="230" height="80">
+  <button id="whyVisionButton" class="why-vision-button" type="button" aria-haspopup="dialog" aria-controls="whyVisionDialog" aria-label="Why use Vision?">?</button>
+  <h1 id="accountGateTitle" class="login-sr-only">Welcome to Vision</h1>
+  <p id="accountGateDetail" class="login-sr-only">Sign in or create an account to request access to Vision.</p>
+  <button id="accountGateSignIn" type="button" class="primary"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11c-.5 2.5-1.9 4.7-4.1 6.1v5h6.6c3.9-3.6 6.1-8.8 6.1-14.8z"/><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.6-5c-1.8 1.2-4.1 1.9-6.9 1.9-5.3 0-9.7-3.6-11.3-8.4H5.9v5.2C9.3 39.4 16.1 44 24 44z"/><path fill="#FBBC05" d="M12.7 27.6a12 12 0 0 1 0-7.2v-5.2H5.9a20 20 0 0 0 0 17.6z"/><path fill="#EA4335" d="M24 12c3 0 5.6 1 7.7 3l5.8-5.8C34 6 29.5 4 24 4 16.1 4 9.3 8.6 5.9 15.2l6.8 5.2C14.3 15.6 18.7 12 24 12z"/></svg><span>Sign in with Google</span></button>
+  <button id="accountGateEmailToggle" type="button" aria-expanded="false" aria-controls="accountGateEmailArea">Create an account or sign in</button>
+  <div id="accountGateEmailArea" class="account-email-area" hidden>
    <div class="account-login-divider"><span>or</span></div>
    <form id="accountGateEmailForm" class="account-email-form">
     <label>Email<input id="accountGateEmail" type="email" autocomplete="email" inputmode="email" required></label>
@@ -28,6 +30,7 @@
   <p id="accountTrialWarning" class="account-trial-warning">No projects are saved on temporary accounts. The one-time timer starts when you enter, including processing time. Trial work is cleared when time runs out or you sign in.</p>
   <a id="accountGateOnline" class="account-gate-online" href="https://jrdn-r.github.io/vision/" hidden>Open Vision online to sign in ↗</a>
   <button id="accountGateRetry" type="button" class="primary" hidden>Retry connection</button>
+  <div id="accountMembership" hidden><h2 id="accountMembershipTitle">Awaiting account approval</h2><p id="accountMembershipMessage">Thank you for your request. Your account has been created. An administrator must approve it before you can enter Vision.</p><button id="accountMembershipRefresh" type="button">Check approval status</button><button id="accountMembershipSignOut" type="button">Sign out</button></div>
   <p id="accountGateStatus" role="status" aria-live="polite">Checking sign-in…</p>
   <details class="trial-details"><summary>About the one-time trial</summary><p>A browser receipt and a protected network identifier help prevent repeat trials. Shared Wi-Fi can share one trial. Account sign-in is not affected. Processing requires FUPCJ Server to be online.</p></details>
  </div>
@@ -37,7 +40,7 @@
   <p class="why-vision-lead">Give AI the whole picture.<br>Not one overwhelming prompt.</p>
   <p>Map your files, videos, links, and notes, then show how they connect. Vision turns your project into organized, AI-ready context for ChatGPT, Claude, Gemini, or your model of choice.</p>
   <p>Process videos and YouTube links into transcripts and timestamped screenshots, with optional sound descriptions. Give your AI clearer evidence so it can focus on the actual task.</p>
-  <p>Run AI inside your project with your own API key. Sign in with Google or email/password to save projects to FUPCJ Server for free and pick up on another computer. Google Drive requires Google sign-in, and YouTube search stays inside Vision.</p>
+  <p>Run AI inside your project with your own API key. Sign in with Google or email/password to request access. Once approved, save projects to FUPCJ Server and pick up on another computer. Account Upgrade approval is separate. Google Drive requires Google sign-in, and YouTube search stays inside Vision.</p>
   <p class="why-vision-note">Firebase handles sign-in. Google Drive access uses Google. FUPCJ Server stores and processes your project data; connected AI providers receive what you submit to them. API usage may have provider charges.</p>
   <button id="whyVisionDone" type="button" class="primary">Explore Vision</button>
  </dialog>

@@ -161,7 +161,9 @@ class Fixture:
             return
         if request.url.startswith(BACKEND + '/api/'):
             self.vision_calls.append(url.path)
-            if url.path == '/api/venture/workspace-preferences':
+            if url.path == '/api/account/membership':
+                self.respond(route, dict(approved=True,status='approved',admin=False))
+            elif url.path == '/api/venture/workspace-preferences':
                 self.respond(route, dict(launchView='venture', swipeNoticeVersion=1))
             elif url.path == '/api/health':
                 self.respond(route, dict(capabilities=dict(accountProjects=True, persistentProjects=True, ventureV2=True)))
@@ -206,6 +208,7 @@ def sign_in(page, method='google'):
     if method == 'google':
         page.locator('#accountGateSignIn').click()
     else:
+        page.locator('#accountGateEmailToggle').click()
         page.locator('#accountGateEmail').fill('alice@example.test')
         page.locator('#accountGatePassword').fill('fixture-password')
         page.locator('#accountGateEmailCreate' if method == 'create' else '#accountGateEmailSignIn').click()
@@ -472,6 +475,7 @@ def verify_login_gateway(browser):
 
         # A reset request and a failed login leave the destination intact.
         if method == 'signin':
+            page.locator('#accountGateEmailToggle').click()
             page.locator('#accountGateEmail').fill('alice@example.test')
             page.locator('#accountGatePasswordReset').click()
             page.locator('#accountGateStatus').get_by_text('Password reset email sent', exact=False).wait_for()
@@ -484,7 +488,7 @@ def verify_login_gateway(browser):
         page.reload()
         sign_in(page, method)
         assert page.locator('#authGate').is_hidden()
-        assert not api.vision_calls, 'Vortex login opened Vision projects or preferences'
+        assert all(path=='/api/account/membership' for path in api.vision_calls), 'Vortex login opened Vision projects or preferences'
         assert page.evaluate("window.__authInitOptions?.persistence") == ['INDEXED', 'LOCAL']
         assert page.evaluate("localStorage.getItem('__fixturePersistence')") is None
 
@@ -555,8 +559,9 @@ def verify_login_gateway(browser):
         page = context.new_page()
         target = URL.replace('vortex/', query)
         page.goto(target)
-        page.locator('#workspaceLoginView').wait_for(state='visible')
-        assert page.locator('#accountGateTrial').is_visible()
+        page.locator('#accountGateEmailToggle').wait_for(state='visible')
+        assert page.locator('#workspaceLoginView').is_hidden()
+        assert page.locator('#accountGateTrial').is_hidden()
         page.locator('#accountGateSignIn').click()
         page.locator('#accountGate').wait_for(state='hidden')
         # Ignored redirect parameters cannot override the saved Venture preference.
