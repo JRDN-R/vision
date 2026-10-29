@@ -104,6 +104,7 @@ final class DownloadManager: NSObject, ObservableObject {
                             current.status = job.status == "cancelled" ? .cancelled : .failed
                             current.phase = job.phase
                             current.lastError = job.error ?? "This server file is unavailable. Retry to create a new download."
+                            current.progress = nil
                         } else if job.status == "complete" {
                             current.phase = current.sessionIdentifier == nil ? "Ready for transfer to iPhone" : "Transferring to iPhone"
                             current.progress = nil
@@ -401,21 +402,19 @@ extension DownloadManager: URLSessionDownloadDelegate {
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let identifier = session.configuration.identifier else { return }
+        guard let error, let identifier = session.configuration.identifier else { return }
         DispatchQueue.main.async {
-            guard let record = try? DownloadStore.shared.record(sessionIdentifier: identifier) else { return }
-            if let error {
-                try? DownloadStore.shared.update(id: record.id) { current in
-                    guard current.sessionIdentifier == identifier else { return }
-                    current.sessionIdentifier = nil
-                    if current.status != .cancelled {
-                        current.status = .failed
-                        current.phase = "Open Vision to retry the transfer"
-                        current.lastError = error.localizedDescription
-                    }
+            self.pendingWork[identifier, default: 0] += 1
+            Task { @MainActor in
+                defer {
+                    self.pendingWork[identifier, default: 0] -= 1
+                    self.finishIfReady(identifier)
+                }
+                if let updated = await TransferFailure.reconcile(error, sessionIdentifier: identifier) {
+                    await LiveActivityManager.shared.update(updated)
                 }
                 self.loadPublished()
-                Task { await self.pump() }
+                await self.pump()
             }
         }
     }
