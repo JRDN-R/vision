@@ -213,14 +213,9 @@ private final class ShareTransferDelegate: NSObject, URLSessionDownloadDelegate 
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error, let identifier = session.configuration.identifier,
-              let record = try? DownloadStore.shared.record(sessionIdentifier: identifier) else { return }
-        try? DownloadStore.shared.update(id: record.id) { current in
-            current.sessionIdentifier = nil
-            guard current.status != .cancelled else { return }
-            current.status = .failed
-            current.phase = "Open Vision to retry the transfer"
-            current.lastError = error.localizedDescription
+        guard let error, let identifier = session.configuration.identifier else { return }
+        Task {
+            _ = await TransferFailure.reconcile(error, sessionIdentifier: identifier)
         }
     }
 
