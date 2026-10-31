@@ -39,7 +39,7 @@ class SpotifyRecoveryTests(unittest.TestCase):
     def test_public_track_uses_matcher_without_spotify_api_credentials(self):
         metadata = spotify.parse_track(self.embed(), self.track_id)
         source = 'https://www.youtube.com/watch?v=abcdefghijk'
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True), \
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'VORTEX_SPOTIFY_CLIENT_ID': '', 'VORTEX_SPOTIFY_CLIENT_SECRET': ''}), \
                 patch.object(worker, 'EVENT_STREAM', io.StringIO()), \
                 patch.object(worker, 'configure_ytdlp_safety'), \
                 patch.object(worker, 'safe_url', side_effect=lambda value: value), \
@@ -64,7 +64,7 @@ class SpotifyRecoveryTests(unittest.TestCase):
             self.assertEqual(matcher.call_args.kwargs['settings']['audio_providers'], ['youtube'])
 
     def test_search_without_credentials_and_unsupported_links_are_actionable(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True), \
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'VORTEX_SPOTIFY_CLIENT_ID': '', 'VORTEX_SPOTIFY_CLIENT_SECRET': ''}), \
                 patch.object(worker, 'EVENT_STREAM', io.StringIO()), patch.object(worker, 'configure_ytdlp_safety'):
             for value, category in [('spotify:example song', 'spotify_configuration'),
                                     ('https://open.spotify.com/playlist/' + self.track_id, 'spotify_link')]:
