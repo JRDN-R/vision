@@ -269,7 +269,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 } else {
                     tasks.filter { $0.state == .suspended }.forEach { $0.resume() }
                     if tasks.isEmpty, self.pendingWork[identifier, default: 0] == 0,
-                       let record, record.status.isActive, Date().timeIntervalSince(record.updatedAt) > 60 {
+                       let record, record.isMissingTransferOverdue() {
                         try? DownloadStore.shared.update(id: record.id) { current in
                             current.sessionIdentifier = nil
                             current.status = .failed

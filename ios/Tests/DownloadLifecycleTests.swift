@@ -60,6 +60,21 @@ final class DownloadLifecycleTests: XCTestCase {
         XCTAssertFalse(r.canStartLiveActivity)
     }
 
+    func testStatusPollingCannotKeepAMissingTransferAliveForever() {
+        var r = record()
+        let start = Date()
+        r.sessionIdentifier = "session"
+        r.transferStartedAt = start
+        XCTAssertFalse(r.isMissingTransferOverdue(now: start.addingTimeInterval(59)))
+        r.updatedAt = start.addingTimeInterval(120) // A fresh server poll is not a phone task.
+        XCTAssertTrue(r.isMissingTransferOverdue(now: start.addingTimeInterval(120)))
+        r.pendingArchiveFilename = "pending.vtx"
+        XCTAssertFalse(r.isMissingTransferOverdue(now: start.addingTimeInterval(120)))
+        r.pendingArchiveFilename = nil
+        r.status = .saved
+        XCTAssertFalse(r.isMissingTransferOverdue(now: start.addingTimeInterval(120)))
+    }
+
     func testFailureAlertsAreOncePerAttemptAndDoNotReplayHistoricalErrors() throws {
         var r = record(.failed)
         let restored = try JSONDecoder().decode(DownloadRecord.self, from: JSONEncoder().encode(r))

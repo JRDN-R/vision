@@ -48,6 +48,7 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var failureNotificationAt: Date?
     var failureNotificationPending: Bool?
     var liveActivityJobID: String?
+    var transferStartedAt: Date?
     var notificationError: String?
     var photoSaveAttemptAt: Date?
     var photoSaveAttempts: Int?
@@ -79,6 +80,11 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var canExport: Bool { localFilename != nil && [.ready, .saved].contains(status) }
     var needsFailureNotification: Bool { status == .failed && failureNotificationPending == true && failureNotificationAt == nil }
     var canStartLiveActivity: Bool { status.isActive && jobID != nil && liveActivityJobID != jobID }
+
+    func isMissingTransferOverdue(now: Date = Date()) -> Bool {
+        status.isActive && sessionIdentifier != nil && pendingArchiveFilename == nil
+            && now.timeIntervalSince(transferStartedAt ?? createdAt) > 60
+    }
 
     mutating func trackStatusChange(from previous: DownloadStatus) {
         guard previous != status else { return }

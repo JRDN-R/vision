@@ -114,6 +114,7 @@ enum TransferScheduler {
             task.taskDescription = record.id
             try store.update(id: record.id) { current in
                 current.sessionIdentifier = identifier
+                current.transferStartedAt = Date()
                 current.status = .processing
                 current.phase = "FUPCJ Server is preparing your file"
                 current.lastError = nil
