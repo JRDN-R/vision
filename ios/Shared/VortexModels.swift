@@ -45,6 +45,9 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var pendingArchiveFilename: String?
     var completionNotificationPending: Bool?
     var completionNotificationAt: Date?
+    var failureNotificationAt: Date?
+    var failureNotificationPending: Bool?
+    var liveActivityJobID: String?
     var notificationError: String?
     var photoSaveAttemptAt: Date?
     var photoSaveAttempts: Int?
@@ -74,6 +77,28 @@ struct DownloadRecord: Codable, Identifiable, Equatable {
     var suggestedFilename: String { localFilename ?? (title + "." + (mode == .audio ? "m4a" : videoFormat)) }
     var canRetry: Bool { status == .failed || status == .pending }
     var canExport: Bool { localFilename != nil && [.ready, .saved].contains(status) }
+    var needsFailureNotification: Bool { status == .failed && failureNotificationPending == true && failureNotificationAt == nil }
+    var canStartLiveActivity: Bool { status.isActive && jobID != nil && liveActivityJobID != jobID }
+
+    mutating func trackStatusChange(from previous: DownloadStatus) {
+        guard previous != status else { return }
+        if status == .failed {
+            failureNotificationPending = true
+        } else {
+            failureNotificationPending = false
+            if status.isActive { failureNotificationAt = nil }
+        }
+    }
+
+    mutating func applyTransferProgress(received: Int64, expected: Int64) {
+        guard status.isActive else { return }
+        bytesReceived = received
+        if expected > 0 {
+            progress = min(1, Double(received) / Double(expected))
+            phase = "Transferring to iPhone"
+            status = .transferring
+        }
+    }
 }
 
 struct VortexJob: Decodable {

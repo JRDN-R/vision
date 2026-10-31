@@ -81,6 +81,7 @@ final class DownloadManager: NSObject, ObservableObject {
         refreshing = true
         defer { refreshing = false }
         loadPublished()
+        await reconcileDownloadState()
         guard let uid = NativeSession.currentUID else { return }
         do {
             await recoverPendingArchives()
@@ -134,6 +135,7 @@ final class DownloadManager: NSObject, ObservableObject {
             loadPublished()
             await pump()
         } catch { errorMessage = error.localizedDescription }
+        await reconcileDownloadState()
     }
 
     func retry(_ record: DownloadRecord) async {
@@ -148,6 +150,7 @@ final class DownloadManager: NSObject, ObservableObject {
             if let identifier = record.sessionIdentifier {
                 sessions.removeValue(forKey: identifier)?.invalidateAndCancel()
             }
+            await LiveActivityManager.shared.end(recordID: record.id)
             try DownloadStore.shared.update(id: record.id) { current in
                 current.sessionIdentifier = nil
                 if newServerJob { current.jobID = nil; current.retryAttempt += 1 }
@@ -156,6 +159,8 @@ final class DownloadManager: NSObject, ObservableObject {
                 current.lastError = nil
                 current.progress = nil
                 current.bytesReceived = 0
+                current.failureNotificationAt = nil
+                current.liveActivityJobID = nil
             }
             loadPublished()
             await pump()
@@ -171,6 +176,9 @@ final class DownloadManager: NSObject, ObservableObject {
                 current.progress = nil
                 current.sessionIdentifier = nil
             }
+            // Clear the local activity before contacting the server. A network
+            // error must not leave a cancelled download on Dynamic Island.
+            await LiveActivityManager.shared.end(recordID: record.id)
             if let identifier = record.sessionIdentifier { attach(identifier); sessions[identifier]?.invalidateAndCancel() }
             if let jobID = record.jobID { try await VortexClient(uid: record.uid).cancel(jobID) }
             if let updated = try DownloadStore.shared.record(id: record.id) { await LiveActivityManager.shared.update(updated) }
@@ -182,6 +190,7 @@ final class DownloadManager: NSObject, ObservableObject {
     func remove(_ record: DownloadRecord) async {
         guard record.uid == NativeSession.currentUID else { return }
         if record.status.isActive || record.sessionIdentifier != nil { await cancel(record) }
+        await LiveActivityManager.shared.end(recordID: record.id)
         do { try DownloadStore.shared.remove(id: record.id); loadPublished() }
         catch { errorMessage = error.localizedDescription }
     }
@@ -252,8 +261,11 @@ final class DownloadManager: NSObject, ObservableObject {
         session.getAllTasks { tasks in
             DispatchQueue.main.async {
                 let record = try? DownloadStore.shared.record(sessionIdentifier: identifier)
-                if record?.uid != NativeSession.currentUID || record?.status == .cancelled {
+                if record?.uid != NativeSession.currentUID || record?.status.isTerminal == true {
                     tasks.forEach { $0.cancel() }
+                    if tasks.isEmpty, let record, record.status.isTerminal {
+                        try? DownloadStore.shared.update(id: record.id) { $0.sessionIdentifier = nil }
+                    }
                 } else {
                     tasks.filter { $0.state == .suspended }.forEach { $0.resume() }
                     if tasks.isEmpty, self.pendingWork[identifier, default: 0] == 0,
@@ -265,7 +277,13 @@ final class DownloadManager: NSObject, ObservableObject {
                             current.lastError = "iOS no longer has this transfer. The server job is preserved."
                         }
                         self.loadPublished()
+                        Task { await self.reconcileDownloadState() }
                     }
+                }
+                if tasks.isEmpty, self.pendingWork[identifier, default: 0] == 0 {
+                    // Recheck on a later refresh, including sessions observed
+                    // empty before the crash-recovery grace period elapsed.
+                    self.sessions.removeValue(forKey: identifier)?.finishTasksAndInvalidate()
                 }
             }
         }
@@ -284,6 +302,15 @@ final class DownloadManager: NSObject, ObservableObject {
                 await LiveActivityManager.shared.update(record, allowStart: UIApplication.shared.applicationState == .active)
             }
         } catch { errorMessage = error.localizedDescription }
+        await reconcileDownloadState()
+    }
+
+    private func reconcileDownloadState() async {
+        await LiveActivityManager.shared.reconcile()
+        guard let uid = NativeSession.currentUID else { return }
+        for record in (try? DownloadStore.shared.records(uid: uid)) ?? [] where record.needsFailureNotification {
+            await CompletionNotification.sendFailure(record)
+        }
     }
 
     private func loadPublished() {
@@ -374,7 +401,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 current.lastError = error.localizedDescription
                 current.sessionIdentifier = nil
             }
-            DispatchQueue.main.async { self.loadPublished() }
+            DispatchQueue.main.async {
+                self.loadPublished()
+                Task { await self.reconcileDownloadState() }
+            }
         }
     }
 
@@ -387,14 +417,9 @@ extension DownloadManager: URLSessionDownloadDelegate {
             self.progressWriteTimes[identifier] = now
             guard let record = try? DownloadStore.shared.record(sessionIdentifier: identifier), record.uid == NativeSession.currentUID else { return }
             let updated = try? DownloadStore.shared.update(id: record.id) { current in
-                current.bytesReceived = totalBytesWritten
                 // The framed stream's final size is unknown during conversion.
                 // Never turn heartbeat bytes into a fabricated completion %.
-                if totalBytesExpectedToWrite > 0 {
-                    current.progress = min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
-                    current.phase = "Transferring to iPhone"
-                    current.status = .transferring
-                }
+                current.applyTransferProgress(received: totalBytesWritten, expected: totalBytesExpectedToWrite)
             }
             self.loadPublished()
             if let updated, totalBytesExpectedToWrite > 0 { Task { await LiveActivityManager.shared.update(updated) } }

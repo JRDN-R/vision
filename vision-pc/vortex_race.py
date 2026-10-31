@@ -24,6 +24,11 @@ PUBLIC_FAILURE_MESSAGES = {
     'access_denied': 'The media website denied this server access to the download. Use an original file or another source.',
     'authentication': 'The media website requires sign-in for this request. Vortex downloads public media without source-account cookies.',
     'rate_limited': 'The media website is limiting requests. Wait a few minutes before trying again.',
+    'spotify_link': 'Spotify supports individual public tracks. Paste a track link instead of an album, playlist or episode.',
+    'spotify_configuration': 'Spotify text search needs server API credentials. Paste a public Spotify track link instead.',
+    'spotify_metadata': 'Spotify could not return this track\'s public details. Check that the track opens, then retry.',
+    'spotify_match': 'No downloadable YouTube or YouTube Music match was found for this Spotify track. Try a direct link to the song.',
+    'missing_dependency': 'A required media tool is missing on FUPCJ Server. Update Vision PC and its Vortex tools, then retry.',
 }
 MAX_ENGINES = 12
 MAX_INSPECTIONS = 3
@@ -34,6 +39,7 @@ WORKER = Path(__file__).with_name('vortex_worker.py')
 CATEGORIES = {'unavailable', 'timeout', 'resource_limit', 'invalid_media', 'identity_mismatch', 'cancelled', 'complete',
               'authentication', 'rate_limited', 'network', 'unsupported', 'missing_dependency', 'not_configured', 'duration_limit',
               'file_size_limit', 'memory_limit', 'disk_limit', 'event_limit', 'drm', 'access_denied', 'verification_required'}
+CATEGORIES.update(PUBLIC_FAILURE_MESSAGES)
 SUPERVISOR_FAILURES = {'timeout', 'resource_limit', 'memory_limit', 'disk_limit', 'event_limit'}
 
 

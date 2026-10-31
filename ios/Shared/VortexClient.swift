@@ -118,17 +118,19 @@ enum TransferScheduler {
                 current.phase = "FUPCJ Server is preparing your file"
                 current.lastError = nil
                 current.bytesReceived = 0
+                current.failureNotificationAt = nil
             }
             task.resume()
             return session
         } catch {
-            try? store.update(id: record.id) { current in
+            let failed = try? store.update(id: record.id) { current in
                 guard current.status != .cancelled else { return }
                 current.sessionIdentifier = nil
                 current.status = .failed
                 current.phase = "Open Vision to retry the transfer"
                 current.lastError = error.localizedDescription
             }
+            if let failed { await CompletionNotification.sendFailure(failed) }
             throw error
         }
     }
@@ -154,11 +156,12 @@ enum TransferScheduler {
                 try DownloadStore.shared.update(id: record.id) { $0.phase = "Waiting for space in the server queue" }
                 break
             } catch {
-                try? DownloadStore.shared.update(id: record.id) { current in
+                let failed = try? DownloadStore.shared.update(id: record.id) { current in
                     current.status = .failed
                     current.phase = "Could not queue this link"
                     current.lastError = error.localizedDescription
                 }
+                if let failed { await CompletionNotification.sendFailure(failed) }
                 if (error as? VortexAPIError)?.statusCode == 401 || NativeSession.currentUID != uid { throw error }
             }
         }
