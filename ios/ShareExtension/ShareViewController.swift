@@ -161,6 +161,8 @@ final class ShareViewController: UIViewController {
                             current.status = current.jobID == nil ? .pending : .queued
                             current.sessionIdentifier = nil
                             current.lastError = nil
+                            current.failureNotificationAt = nil
+                            current.liveActivityJobID = nil
                         }
                     }
                 }
@@ -200,22 +202,28 @@ private final class ShareTransferDelegate: NSObject, URLSessionDownloadDelegate 
                 } catch {
                     // The shared finalizer keeps either a validated local file
                     // or a durable, explicit retry state for the main app.
+                    if let failed = try? DownloadStore.shared.record(id: record.id) {
+                        await CompletionNotification.sendFailure(failed)
+                    }
                 }
             }
         } catch {
-            try? DownloadStore.shared.update(id: record.id) { current in
+            let failed = try? DownloadStore.shared.update(id: record.id) { current in
                 current.status = .failed
                 current.phase = "Open Vision to retry the transfer"
                 current.lastError = error.localizedDescription
                 current.sessionIdentifier = nil
             }
+            if let failed { Task { await CompletionNotification.sendFailure(failed) } }
         }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error, let identifier = session.configuration.identifier else { return }
         Task {
-            _ = await TransferFailure.reconcile(error, sessionIdentifier: identifier)
+            if let failed = await TransferFailure.reconcile(error, sessionIdentifier: identifier) {
+                await CompletionNotification.sendFailure(failed)
+            }
         }
     }
 

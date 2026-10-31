@@ -70,7 +70,9 @@ final class DownloadStore: @unchecked Sendable {
         try locked { directory in
             var values = try decode(directory)
             guard let index = values.firstIndex(where: { $0.id == id }) else { return nil }
+            let previous = values[index].status
             try update(&values[index])
+            values[index].trackStatusChange(from: previous)
             values[index].updatedAt = Date()
             try encode(values, in: directory)
             return values[index]

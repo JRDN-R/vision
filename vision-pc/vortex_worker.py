@@ -177,7 +177,7 @@ def estimated_bytes(stream, duration):
     return estimate * 1.1 if estimate else None
 
 
-def bounded_selector(ydl, specification, duration, limit, *, audio=False):
+def bounded_selector(ydl, specification, duration, limit, *, audio=False, prefer_copy=False):
     """Keep yt-dlp's quality/codec rules, selecting the best whole file that fits.
 
     A long 1080p stream may exceed the cap even when a 720p/360p stream fits.
@@ -188,17 +188,39 @@ def bounded_selector(ydl, specification, duration, limit, *, audio=False):
 
     def bounded(context):
         bounded.size_limited = False
-        remaining = list(context['formats'])
-        has_video = any(f.get('vcodec') != 'none' for f in remaining)
+        formats = list(context['formats'])
+        # Multi-hour balanced/small downloads should finish as a phone-ready
+        # remux when possible. A smaller H.264 file can avoid hours of converting
+        # a more compact VP9/AV1 stream. Max retains the original quality order.
+        if prefer_copy and duration[0] >= 3600:
+            copy_formats = [f for f in formats
+                            if str(f.get('vcodec', 'none')).startswith(('avc', 'h264', 'none'))
+                            and str(f.get('acodec', 'none')).startswith(('mp4a', 'aac', 'none'))]
+        else:
+            copy_formats = []
+        remaining = copy_formats or formats
+        fallback = formats if copy_formats else []
+        has_video = any(f.get('vcodec') != 'none' for f in formats)
         while remaining:
             candidate = next(iter(select(dict(context, formats=remaining))), None)
             if candidate is None:
+                if fallback:
+                    remaining, fallback = fallback, []
+                    has_video = any(f.get('vcodec') != 'none' for f in remaining)
+                    continue
                 break
             parts = candidate.get('requested_formats') or [candidate]
             if not audio and has_video and all(p.get('vcodec') == 'none' for p in parts):
+                if fallback:
+                    remaining, fallback = fallback, []
+                    has_video = any(f.get('vcodec') != 'none' for f in remaining)
+                    continue
                 break  # Never replace an oversized video with an audio-only file.
             sizes = [estimated_bytes(p, duration[0]) for p in parts]
             if sum(s or 0 for s in sizes) <= limit * .98:
+                if fallback:
+                    original = next(iter(select(dict(context, formats=formats))), {})
+                    bounded.size_limited = bounded.size_limited or (number(candidate.get('height')) or 0) < (number(original.get('height')) or 0)
                 yield candidate
                 return
             # Remove the largest selected stream and let yt-dlp choose the next
@@ -206,6 +228,9 @@ def bounded_selector(ydl, specification, duration, limit, *, audio=False):
             largest = max(zip(parts, sizes), key=lambda pair: pair[1] or 0)[0]
             bounded.size_limited = True
             remaining = [f for f in remaining if f['format_id'] != largest['format_id']]
+            if not remaining and fallback:
+                remaining, fallback = fallback, []
+                has_video = any(f.get('vcodec') != 'none' for f in remaining)
         raise WorkerError('No complete stream fits the server download size limit.', category='file_size_limit')
     bounded.size_limited = False
     return bounded
@@ -341,6 +366,7 @@ def export_media(artifact, media, request, *, stem='export'):
     if streams and ((audio and audio_stream is None) or (not audio and video is None)):
         raise WorkerError('This source has no audio track.' if audio else 'This source has no video track.')
     duration = number((probe.get('format') or {}).get('duration')) or number(media.get('duration'))
+    cap_bytes = int(request.get('maxBytes', 2 * 1024**3))
     if duration and duration >= int(request.get('maxDuration', DEFAULT_MAX_DURATION)):
         raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
     output = local_path(directory / f'{stem}.{extension}', directory, exists=False)
@@ -361,6 +387,15 @@ def export_media(artifact, media, request, *, stem='export'):
         cap = {'small': 480, 'balanced': 1080}.get(request.get('quality', 'balanced'))
         can_copy = (video and video.get('codec_name') == 'h264' and video.get('pix_fmt') == 'yuv420p'
                     and (not cap or (number(video.get('height')) or cap + 1) <= cap))
+        audio_rate = (number((audio_stream or {}).get('bit_rate')) or 320_000) if audio_stream and audio_stream.get('codec_name') == 'aac' else 320_000 if audio_stream else 0
+        if processing and audio_stream:
+            audio_rate = 32_000
+        if can_copy and duration:
+            # A small source can grow when Opus becomes AAC. Include that
+            # growth and muxing headroom before deciding to stream-copy video.
+            source_audio_rate = number((audio_stream or {}).get('bit_rate')) or 0
+            estimated_output = artifact.stat().st_size + max(0, audio_rate - source_audio_rate) * duration / 8
+            can_copy = estimated_output <= cap_bytes * .94
         command += ['-map', '0:V:0', '-map', '0:a:0?']
         if can_copy:
             command += ['-c:v', 'copy']
@@ -368,9 +403,16 @@ def export_media(artifact, media, request, *, stem='export'):
             height = f'trunc(min(ih,{cap})/2)*2' if cap else 'trunc(ih/2)*2'
             command += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28' if processing else '18', '-threads', str(encode_cpu_threads(processing)),
                         '-vf', f"scale=w=-2:h='{height}',format=yuv420p"]
+            if duration:
+                # Source-size selection alone cannot bound an H.264 encode.
+                # Constrain its bitrate using the FULL recording's duration;
+                # retain the hard byte guard and complete-file verification.
+                video_rate = int(cap_bytes * .94 * 8 / duration - audio_rate)
+                if video_rate < 64_000:
+                    raise WorkerError('The complete video cannot fit the server size limit. Try audio instead.', category='file_size_limit')
+                command += ['-maxrate', str(video_rate), '-bufsize', str(video_rate * 2)]
         command += ['-c:a', 'aac', '-ac', '1', '-ar', '16000', '-b:a', '32k'] if processing else (['-c:a', 'copy'] if audio_stream and audio_stream.get('codec_name') == 'aac' else ['-c:a', 'aac', '-b:a', '320k'])
         command += ['-tag:v', 'avc1', '-movflags', '+faststart']
-    cap_bytes = int(request.get('maxBytes', 2 * 1024**3))
     # An over-limit encode is rejected, never offered as a truncated success.
     command += ['-fs', str(cap_bytes + 1024 * 1024), '-progress', 'pipe:1', '-nostats', str(output)]
     emit(phase='Converting to ' + extension.upper(), progress=None)
@@ -571,7 +613,8 @@ def run_ytdlp(request, *, input_value=None, audio=False, engine="yt-dlp"):
     vimeo_id = (re.fullmatch(r'/(\d+)/?', parsed_value.path)
                 if parsed_value.hostname in ('vimeo.com', 'www.vimeo.com') else None)
     with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.format_selector = bounded_selector(ydl, options['format'], source_duration, cap_bytes, audio=audio)
+        ydl.format_selector = bounded_selector(ydl, options['format'], source_duration, cap_bytes, audio=audio,
+                                              prefer_copy=not audio and request.get('quality') != 'max' and request.get('processingProfile') != 'vision')
         try:
             info = ydl.extract_info(value, download=False)
         except yt_dlp.utils.DownloadError as exc:
@@ -691,33 +734,34 @@ def run_spotify(request):
     value = request["input"]
     parsed = urlparse(value)
     query = value.partition(":")[2].strip() if value.lower().startswith("spotify:") and request["kind"] == "inspect" else None
-    if not query and (parsed.hostname not in ("open.spotify.com", "www.open.spotify.com") or not re.fullmatch(r"/(?:intl-[a-z]{2}/)?track/[A-Za-z0-9]{22}/?", parsed.path)):
-        raise WorkerError("Spotify currently supports a single public track link. Paste a Spotify track URL.")
+    track = re.fullmatch(r"/(?:intl-[a-z]{2}/)?track/([A-Za-z0-9]{22})/?", parsed.path)
+    if not query and (parsed.hostname not in ("open.spotify.com", "www.open.spotify.com") or not track):
+        raise WorkerError("Spotify currently supports a single public track link. Paste a Spotify track URL.", category='spotify_link')
     try:
         # Matching itself can invoke yt-dlp; configure its transport policy
         # before Spotdl creates providers or searches the external source.
         configure_ytdlp_safety(Path(request["directory"]).resolve(), request.get("ffmpeg"))
         from spotdl import Spotdl
         from spotdl.utils import config as spotdl_config
-        from spotdl.utils.config import SPOTIFY_OPTIONS
+        from spotdl.download.downloader import Downloader
         from spotdl.utils.spotify import SpotifyClient
     except ImportError as exc:
-        raise WorkerError("Spotify matching is not installed. Update Vision PC with the Vortex media engines.") from exc
+        raise WorkerError("Spotify matching is not installed. Update Vision PC with the Vortex media engines.", category='missing_dependency') from exc
     emit(phase="Searching Spotify" if query else "Reading Spotify track metadata", progress=None)
     cache_directory = Path(request["directory"]).resolve() / "cache" / "spotdl"
     cache_directory.mkdir(parents=True, exist_ok=True)
     spotdl_config.get_spotdl_path = lambda: cache_directory
-    # The default SpotipyFree provider uses libcurl and therefore bypasses
-    # Python's socket guard. Official Spotify metadata uses guarded requests.
-    client = Spotdl(
-        client_id=os.environ.get("VORTEX_SPOTIFY_CLIENT_ID") or SPOTIFY_OPTIONS["client_id"],
-        client_secret=os.environ.get("VORTEX_SPOTIFY_CLIENT_SECRET") or SPOTIFY_OPTIONS["client_secret"],
-        no_cache=True, headless=True, user_auth=False, use_official_api=True,
-        cache_path=str(cache_directory / "spotify-cache"),
-        downloader_settings={"threads": 1, "audio_providers": ["youtube-music", "youtube"], "lyrics_providers": [], "simple_tui": True,
-                             "ffmpeg": request.get("ffmpeg") or "ffmpeg", "scan_for_songs": False, "cookie_file": None},
-    )
+    settings = {"threads": 1, "audio_providers": ["youtube-music", "youtube"], "lyrics_providers": [], "simple_tui": True,
+                "ffmpeg": request.get("ffmpeg") or "ffmpeg", "scan_for_songs": False, "cookie_file": None}
     if query:
+        client_id, client_secret = os.environ.get('VORTEX_SPOTIFY_CLIENT_ID'), os.environ.get('VORTEX_SPOTIFY_CLIENT_SECRET')
+        if not client_id or not client_secret:
+            raise WorkerError('Spotify text search needs server API credentials. Paste a public Spotify track link instead.', category='spotify_configuration')
+        # Never fall back to shared/bundled credentials or the libcurl provider,
+        # which would bypass the worker's Python socket guard.
+        client = Spotdl(client_id=client_id, client_secret=client_secret, no_cache=True, headless=True,
+                        user_auth=False, use_official_api=True, cache_path=str(cache_directory / 'spotify-cache'),
+                        downloader_settings=settings)
         # Spotdl.search() resolves a text query to only the first match. Use
         # its initialized official client to return five selectable tracks.
         response = SpotifyClient().search(query, type="track", limit=5)
@@ -738,17 +782,24 @@ def run_spotify(request):
         if not results:
             raise WorkerError("No matching Spotify tracks were found. Try another search.")
         return {"complete": True, "results": results}
-    songs = client.search([value])
-    if len(songs) != 1:
-        raise WorkerError("Spotify could not identify one public track from that link.")
-    song = songs[0]
+    from vortex_spotify import public_track, matching_song
+    song = matching_song(public_track(track[1]))
     if (number(song.duration) or 0) >= int(request.get("maxDuration", DEFAULT_MAX_DURATION)):
         raise DurationLimitError(request.get('maxDuration', DEFAULT_MAX_DURATION))
     emit(phase="Matching track to a public audio source", progress=None)
-    matched = client.get_download_urls([song])
-    source = safe_url(matched[0]) if matched else None
+    # Construct only the matcher, not SpotifyClient. Public links do not need
+    # an API application, Premium account, artist lookup or album lookup.
+    source, failures = None, []
+    for provider in settings['audio_providers']:
+        try:
+            source = safe_url(Downloader(settings=dict(settings, audio_providers=[provider])).search(song))
+            if source:
+                break
+        except Exception as exc:
+            failures.append(error_category(exc))
     if not source:
-        raise WorkerError("No public audio match was found for this Spotify track.")
+        category = next((c for c in failures if c in ('verification_required', 'rate_limited', 'authentication', 'access_denied')), 'spotify_match')
+        raise WorkerError("No public audio match was found for this Spotify track.", category=category)
     result = run_ytdlp(request, input_value=source, audio=True, engine="spotdl")
     media = result["media"]
     media.update(title=text(" · ".join([song.name, ", ".join(song.artists)])), url=safe_url(value), source="Spotify / matched audio", note=SPOTIFY_NOTE, sourceUrl=source)
@@ -1024,8 +1075,11 @@ def verify_result(result, request):
                    str(encode_cpu_threads(request.get('processingProfile') == 'vision')),
                    '-protocol_whitelist', 'file,pipe', '-format_whitelist', MEDIA_DEMUXERS,
                    '-i', str(artifact), '-map', '0:V:0?', '-map', '0:a:0?', '-f', 'null', '-']
+        # Multi-hour files need more than the former fixed ten-minute decode
+        # window on slower hosts. The parent still enforces its job deadline.
+        verification_timeout = min(40 * 60, max(600, math.ceil(duration / 4)))
         checked = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, timeout=600, **SUBPROCESS_FLAGS)
+                                 stderr=subprocess.DEVNULL, timeout=verification_timeout, **SUBPROCESS_FLAGS)
         if checked.returncode:
             raise WorkerError('The downloaded media could not be verified.')
         apply_probe(media, data)
